@@ -31,7 +31,7 @@ Reach for **prompt work items** when the user wants the agent itself to periodic
 
 1. Start with a **temporary** monitor unless the workflow is obviously recurring.
 2. Choose a channel name that represents the concern, not the command.
-3. Subscribe with `delivery="important"` unless the stream is naturally sparse.
+3. Subscribe with `delivery="all"` if you want zero filtering at first, then move to `delivery="important"` once a `notifyPattern` exists.
 4. Start the classifier broad enough to learn the stream shape.
 5. Let a few events arrive.
 6. Inspect channel history.
@@ -60,10 +60,10 @@ Use these tools in roughly this order:
 - `scope="temporary"`
 - `managedBy="model"`
 - `subscribe=true`
-- `delivery="important"`
+- `delivery="all"` to start with no hidden filtering
 - broad or empty `includePattern`
 - empty `excludePattern`
-- obvious `notifyPattern` such as `error|fail|warning|ready|success|changes requested`
+- empty `notifyPattern` until the stream shape is clear
 
 ### For prompt-driven maintenance
 
@@ -106,6 +106,8 @@ Prefer this progression:
 2. **Exclude obvious noise.** Polling chatter, heartbeats, bot messages, deprecations, duplicate summaries.
 3. **Narrow inclusion only after step 2.** Do not accidentally cut off useful signal before you understand it.
 4. **Use `notifyPattern` as the interruption gate.** A line can be worth keeping in history without being worth surfacing live.
+
+There is no built-in default notify regex anymore. If you have not set `notifyPattern`, the subscribed stream is not filtered by a hidden fallback.
 
 Good examples:
 

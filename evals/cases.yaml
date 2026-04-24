@@ -1,0 +1,255 @@
+version: 1
+runner: real-copilot-cli
+description: >
+  End-to-end eval cases for copilot-channels-extension. These cases are meant
+  to be run with a real Copilot CLI session and the repo-scoped extension loaded.
+
+cases:
+  - id: E001
+    category: command-monitor
+    title: Start a continuous command monitor
+    user_prompt: >
+      Start a temporary monitor on the demo heartbeat script and keep me posted.
+    setup:
+      cwd: repo root
+      prerequisites:
+        - Node available
+      fixture:
+        command: node ./examples/heartbeat.mjs
+    expected_tool_usage:
+      must_call:
+        - copilot_channels_start_monitor
+      preferred:
+        scope: temporary
+        subscribe: true
+        command: node ./examples/heartbeat.mjs
+    pass_conditions:
+      - Session monitor exists with workType=command and execution=process
+      - Channel receives heartbeat lines
+      - Updates can be surfaced without waiting for transcript events
+
+  - id: E002
+    category: line-processing
+    title: Running script output is checked per line
+    user_prompt: >
+      Start the heartbeat script and then show me the last few channel entries so
+      we can confirm the extension is evaluating each emitted line separately.
+    setup:
+      fixture:
+        command: node ./examples/heartbeat.mjs
+    pass_conditions:
+      - History shows one entry per emitted line rather than one giant block
+      - stdout and stderr lines are represented independently
+
+  - id: E003
+    category: defaults
+    title: No hidden notify fallback when notifyPattern is absent
+    user_prompt: >
+      Start a temporary monitor on the heartbeat script with no classifier rules,
+      subscribe me to the channel, and do not invent any default notify pattern.
+    setup:
+      fixture:
+        command: node ./examples/heartbeat.mjs
+    pass_conditions:
+      - Monitor starts without includePattern, excludePattern, or notifyPattern
+      - No hidden default notify regex is added
+      - Subscribed delivery remains unfiltered until notifyPattern is explicitly set
+
+  - id: E004
+    category: command-loop
+    title: Start a fixed-interval command loop
+    user_prompt: >
+      Re-run a repo health command every 5 minutes instead of keeping one process open.
+    setup:
+      fixture:
+        command: git status --short
+    expected_tool_usage:
+      must_call:
+        - copilot_channels_start_monitor
+      preferred:
+        every: 5m
+    pass_conditions:
+      - Session monitor exists with workType=command and execution=loop
+      - Interval is stored as every=5m
+      - Work is scheduled as repeated command execution, not a long-lived process
+
+  - id: E005
+    category: prompt-once
+    title: Run one prompt work item once
+    user_prompt: >
+      Do one background maintenance pass on this repo and store the result in a channel.
+    pass_conditions:
+      - Copilot uses prompt work rather than a shell command
+      - Session monitor exists with workType=prompt and execution=once
+      - Response lines land in the channel and the monitor completes
+
+  - id: E006
+    category: prompt-loop
+    title: Start a prompt loop
+    user_prompt: >
+      Every 15 minutes, re-check whether there are new failing runs, review comments,
+      or issue escalations worth addressing.
+    expected_tool_usage:
+      must_call:
+        - copilot_channels_start_monitor
+      preferred:
+        prompt: present
+        every: 15m
+    pass_conditions:
+      - Session monitor exists with workType=prompt and execution=loop
+      - Prompt text is stored on the monitor definition
+      - Loop semantics are used instead of a one-shot prompt
+
+  - id: E007
+    category: classifier-tuning
+    title: Start broad, then tighten after observing output
+    user_prompt: >
+      Start the heartbeat monitor broadly, let it run, then tighten the classifier
+      only after seeing what the stream looks like.
+    pass_conditions:
+      - Initial start uses no strict classifier
+      - Copilot reads history or observes output before changing filters
+      - A later classifier update adds targeted exclusions or notifyPattern
+
+  - id: E008
+    category: delivery-mode
+    title: Switch from unfiltered delivery to important-only delivery
+    user_prompt: >
+      Start with full live delivery, then once you know the stream shape switch it
+      to important-only with a notify pattern.
+    pass_conditions:
+      - Initial subscription is effectively unfiltered
+      - Later state introduces notifyPattern
+      - Delivery mode becomes meaningfully selective only after the pattern exists
+
+  - id: E009
+    category: persistence
+    title: Persist a loop once it proves useful
+    user_prompt: >
+      Create a recurring repo maintenance loop, and if it looks like a stable workflow,
+      persist it for future sessions.
+    pass_conditions:
+      - Copilot starts temporary first or clearly justifies immediate persistence
+      - Persistent config is written only after value is established
+      - Saved monitor definition includes prompt or command plus every
+
+  - id: E010
+    category: ownership
+    title: Respect user-owned classifier settings
+    user_prompt: >
+      Set up a persistent user-controlled monitor, then try to change it only if I
+      explicitly ask.
+    pass_conditions:
+      - Persistent resource is marked managedBy=user
+      - Copilot does not silently override classifier or monitor settings
+      - Any attempted override requires explicit user direction or force semantics
+
+  - id: E011
+    category: lifecycle
+    title: Stop a temporary loop cleanly
+    user_prompt: >
+      Start a temporary prompt loop, let it run, then stop it cleanly and confirm it
+      will not fire again in this session.
+    pass_conditions:
+      - Stop path works for loops, not only long-lived processes
+      - Session monitor status becomes stopped
+      - No further loop iterations are scheduled after stop
+
+  - id: E012
+    category: lifecycle
+    title: Remove a persistent monitor definition
+    user_prompt: >
+      Create a persistent command loop, then remove it from config when I ask you to stop it permanently.
+    pass_conditions:
+      - Persistent definition is removed from config
+      - Session monitor is stopped
+      - Later session start would not auto-create the removed monitor
+
+  - id: E013
+    category: startup
+    title: Auto-start persistent monitors and loops on session start
+    user_prompt: >
+      Reload the extension and show me that my persistent monitors come back automatically.
+    setup:
+      prerequisites:
+        - persistent config already contains at least one command monitor and one loop
+    pass_conditions:
+      - onSessionStart restores persistent channel subscriptions
+      - Auto-start monitors are recreated
+      - Prompt loops are queued correctly after session start
+
+  - id: E014
+    category: pr-babysitting
+    title: PR babysitter as a prompt loop
+    user_prompt: >
+      Every 20 minutes, re-check this PR for failed checks, merge conflicts, and new
+      review comments, and summarize only actionable changes.
+    pass_conditions:
+      - Copilot chooses prompt work rather than raw shell streaming
+      - The chosen channel name reflects PR maintenance, not a generic name
+      - notifyPattern is focused on actionable review or CI events
+
+  - id: E015
+    category: build-watch
+    title: Build babysitter as a command monitor
+    user_prompt: >
+      Watch the local build output continuously and interrupt me only when something
+      actually fails.
+    pass_conditions:
+      - Copilot chooses a continuous command monitor rather than a loop
+      - Stream lands in a build-oriented channel
+      - notifyPattern is added only if needed after observing output
+
+  - id: E016
+    category: issues
+    title: Issue triage as looped work
+    user_prompt: >
+      Re-check for new urgent issues every 10 minutes and keep a triage channel warm.
+    pass_conditions:
+      - Copilot chooses a looped command or prompt, not a continuous monitor, unless justified
+      - The channel reflects triage intent
+      - Persistence is not assumed without user request
+
+  - id: E017
+    category: deploys
+    title: Deployment gate as a looped command
+    user_prompt: >
+      Every minute, check whether the deploy is healthy and tell me only when the state changes materially.
+    pass_conditions:
+      - Copilot uses every=1m or equivalent
+      - Material-change filtering is done with classifier tuning rather than hardcoded assumptions
+      - The channel history preserves full context while delivery remains selective once tuned
+
+  - id: E018
+    category: support
+    title: Support backlog polling
+    user_prompt: >
+      Poll the support backlog every 15 minutes and only surface SLA breaches after
+      we learn the shape of the queue.
+    pass_conditions:
+      - Initial setup is broad
+      - Later tuning introduces notifyPattern for SLA breaches
+      - The monitor is not prematurely made persistent without explicit intent
+
+  - id: E019
+    category: security
+    title: Persistent user-owned security watcher
+    user_prompt: >
+      Set up a persistent vulnerability watcher, but keep it user-controlled so you
+      do not rewrite the policy without me.
+    pass_conditions:
+      - Persistent monitor is managedBy=user
+      - Policy-sensitive classifier values are not silently changed
+      - Copilot still uses channels and history correctly for background context
+
+  - id: E020
+    category: mixed-scenario
+    title: Mixed command and prompt workflow
+    user_prompt: >
+      Tail the heartbeat script continuously, and every 15 minutes run a prompt-based
+      repo maintenance pass into a separate channel.
+    pass_conditions:
+      - Copilot starts two distinct work items
+      - One is command/process and one is prompt/loop
+      - Channels are not mixed together
+      - Classifier or subscription strategy is reasoned about independently per channel

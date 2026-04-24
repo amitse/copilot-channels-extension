@@ -38,6 +38,8 @@ The key idea is simple:
 6. If the workflow is recurring, add `every` and make it a loop.
 7. If the workflow is recurring across sessions, promote it to **persistent** and make it **user-controlled**.
 
+There is no hidden default classifier fallback. Until you add a `notifyPattern`, a subscribed stream is effectively unfiltered for live delivery.
+
 ## Command vs prompt
 
 Use a **command** when the signal already exists outside the agent:

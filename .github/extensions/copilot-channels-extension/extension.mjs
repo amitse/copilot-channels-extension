@@ -12,7 +12,6 @@ const CONFIG_LOCATIONS = [
 ];
 const MAX_CHANNEL_ENTRIES = 200;
 const DEFAULT_CHANNEL = "main";
-const DEFAULT_NOTIFY_PATTERN = /\b(error|warn|warning|fail|failed|healthy|ready|success|changed)\b/i;
 const LOOP_INTERVAL_PATTERN = /^\s*(?:every\s+)?(\d+)\s*(s|sec|secs|second|seconds|m|min|mins|minute|minutes|h|hr|hrs|hour|hours|d|day|days)\s*$/i;
 
 const channels = new Map();
@@ -478,7 +477,7 @@ function formatChannelHistory(channel, limit) {
 function formatClassifier(classifier) {
   const include = classifier.includePattern ?? "*";
   const exclude = classifier.excludePattern ?? "<none>";
-  const notify = classifier.notifyPattern ?? DEFAULT_NOTIFY_PATTERN.source;
+  const notify = classifier.notifyPattern ?? "<none>";
   return `include=${JSON.stringify(include)} exclude=${JSON.stringify(exclude)} notify=${JSON.stringify(notify)} scope=${classifier.scope} managedBy=${classifier.managedBy}`;
 }
 
@@ -623,7 +622,7 @@ function shouldNotifySubscribers(monitor, line, stream) {
     return monitor.classifier.notifyRegex.test(line);
   }
 
-  return DEFAULT_NOTIFY_PATTERN.test(line);
+  return true;
 }
 
 function isTerminalMonitorStatus(status) {

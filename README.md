@@ -80,6 +80,7 @@ examples/heartbeat.mjs
 
 - [Use cases and patterns](./docs/use-cases.md)
 - [Copilot instruction file](./.github/copilot-instructions.md)
+- [Real-Copilot eval infrastructure](./evals/infra.md)
 
 ## Work types
 
@@ -210,9 +211,9 @@ Use `managedBy="model"` on a temporary monitor so the agent can adjust `includeP
 2. The classifier decides whether that line enters the channel.
 3. If the channel is subscribed:
    - `delivery="all"` pushes every accepted line
-   - `delivery="important"` pushes only lines that match `notifyPattern`, or the built-in default signal regex when `notifyPattern` is omitted
+   - `delivery="important"` pushes only lines that match `notifyPattern`
 
-This keeps the channel history richer than the live delivery stream.
+There is no hidden default classifier fallback. If you have not set `notifyPattern`, subscribed updates are not filtered by default.
 
 Delivery is triggered directly from monitor output handling with `session.send()`. It does not wait for `user.message` or `assistant.message` transcript events.
 
