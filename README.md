@@ -91,16 +91,14 @@ Start with no rules and let all output through so you can see the stream shape. 
 3. Keep the rest:     { "match": ".*",                       "outcome": "keep" }
 ```
 
-## How is this different from built-in background tasks?
+## What this adds to built-in background tasks
 
-Copilot CLI can run tasks in the background. This extension layers on top:
-
-| Built-in background tasks | With tap-extension |
+| Without the extension | With the extension |
 | --- | --- |
-| You check task output manually | Output is filtered and injected automatically |
-| No filtering — you see everything or nothing | EventFilter rules drop noise, keep context, inject signal |
-| No scheduled re-checks | Timed emitters re-run on an interval |
-| Task results sit until you look | Important lines interrupt your session in real-time |
+| You check task output manually | Output is filtered and injected into your conversation |
+| All output or nothing -- no filtering | EventFilter rules drop noise, keep context, inject signal |
+| No scheduled re-checks | PromptEmitters re-run on an interval |
+| Results sit until you look | Important lines interrupt your session as they arrive |
 
 ## Repo layout
 
