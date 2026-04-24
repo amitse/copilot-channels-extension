@@ -1,4 +1,4 @@
-# copilot-channels-extension
+# copilot-tap-extension
 
 Public starter repo for a **Copilot CLI Extension** that approximates a practical Claude-style workflow:
 
