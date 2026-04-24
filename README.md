@@ -106,13 +106,15 @@ The prompt fires immediately, then re-fires after each idle period. It stops aft
 
 **Tune the filter live**
 
-Start with no rules and let all output through so you can see the stream shape. Then tighten progressively:
+The recommended approach is a **keep-all bootstrap**: start with no EventFilter rules so all output flows into the stream. Read the stream history to learn what the output looks like, then add rules progressively:
 
 ```
 1. Drop the noise:    { "match": "health_check|heartbeat", "outcome": "drop" }
 2. Inject the signal: { "match": "error|failure|rollback",  "outcome": "inject" }
 3. Keep the rest:     { "match": ".*",                       "outcome": "keep" }
 ```
+
+Rules can be added or changed while the emitter is running. You never need to restart it to adjust filtering.
 
 ## What the extension adds
 
