@@ -82,6 +82,8 @@ For CommandEmitters, an **EventFilter** decides what happens to each line. It is
 | **surface** | Stored and shown in the session timeline. |
 | **inject** | Stored, shown, and pushed into your conversation. |
 
+Outcomes are inclusive: **inject** implies **surface**, and **surface** implies **keep**. Only **drop** is outside this chain.
+
 PromptEmitter output bypasses the filter and always injects.
 
 A **SessionInjector** controls whether stream updates are pushed into your session proactively. Enable it when you want important events to arrive as they happen.
