@@ -1,18 +1,12 @@
 # copilot-tap-extension
 
-### Your Copilot CLI, but it watches things for you.
-
-> **Background commands. Filtered output. Smart interrupts. You keep coding.**
-
-[![Built for Copilot CLI](https://img.shields.io/badge/Copilot_CLI-Extension-blue?style=flat-square&logo=github)](https://github.com/features/copilot)
-[![Zero Dependencies](https://img.shields.io/badge/deps-0-brightgreen?style=flat-square)](./package.json)
-[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey?style=flat-square)]()
+Filtered background streams for Copilot CLI.
 
 ---
 
-Copilot CLI already has background tasks — but you have to manually check them, and their output doesn't flow back into your conversation. This extension adds **automatic filtering and injection**. Background commands and prompts run, a filter decides what matters, and important events get pushed into your session.
+Copilot CLI can already run tasks in the background, but you have to check their output manually, and nothing flows back into your conversation. This extension adds **filtering and auto-injection**: background commands and agent prompts run continuously, an EventFilter decides what matters per line, and important events get pushed into your session automatically.
 
-One `.github/extensions/` file. Zero dependencies.
+Single-file extension. Zero dependencies.
 
 ## Who is this for?
 
