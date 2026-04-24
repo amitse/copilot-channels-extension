@@ -120,7 +120,9 @@ docs/                                   # detailed docs
 | **[Copilot instructions](./.github/copilot-instructions.md)** | How the agent is told to use this extension |
 | **[Implementation plan](./PLAN.md)** | Design decisions and roadmap |
 
-## Validate locally
+## Contributing
+
+The extension is a single `.mjs` file with zero dependencies. Before opening a PR, run the local checks:
 
 ```bash
 npm run check              # syntax check
@@ -128,8 +130,4 @@ npm run evals:smoke        # smoke test
 npm run evals:validate-modes  # interactive vs prompt-mode gap
 ```
 
----
-
-**Ready to try it?** Clone, copy the config, launch `copilot`, and ask it to watch something. You'll see the difference in under a minute.
-
-**Want to contribute?** The extension is a single `.mjs` file with zero dependencies. Read the [reference](./docs/reference.md), explore the [use cases](./docs/use-cases.md), and open a PR.
+See the [reference](./docs/reference.md) for the full API and config schema, and the [use cases](./docs/use-cases.md) for workflow patterns.
