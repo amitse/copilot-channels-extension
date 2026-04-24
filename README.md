@@ -103,11 +103,15 @@ Start with no rules and let all output through so you can see the stream shape. 
 ## Repo layout
 
 ```text
-.github/extensions/tap/extension.mjs   # the extension
-.github/copilot-instructions.md        # agent guidance
-tap.config.example.json                 # starter config
-examples/heartbeat.mjs                  # demo emitter
-docs/                                   # detailed docs
+.github/
+  extensions/tap/extension.mjs  # the extension entry point
+  skills/loop/                  # /loop skill for scheduled prompts
+  copilot-instructions.md       # agent guidance
+src/                            # runtime: emitters, streams, filters, tools
+examples/heartbeat.mjs          # demo CommandEmitter
+evals/                          # eval harness and test cases
+docs/                           # reference, use cases, evals docs
+tap.config.example.json         # starter config
 ```
 
 ## Further reading
