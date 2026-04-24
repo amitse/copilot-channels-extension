@@ -228,17 +228,23 @@ Delivery is triggered directly from monitor output handling with `session.send()
 
 ```bash
 npm run check
+npm run evals:smoke
+npm run evals:validate-modes
 ```
 
-## Publish as a public GitHub repo
+For automated evals, `evals/run.mjs` starts one ACP server, creates fresh SDK sessions, and mounts the shared runtime from `src/copilot-channels-runtime.mjs` directly into those sessions. That means `smoke` and `run` exercise the same channels/monitor logic as the extension without depending on `.github/extensions` being discovered in a headless session. The runner writes prompt, response, error, and full event-transcript artifacts under `evals/results/...`.
 
-If `gh` is authenticated:
+**Caveat:** the reliable supported paths are **interactive foreground Copilot sessions** and **ACP/SDK sessions that mount the shared runtime directly**. Do **not** treat headless prompt-mode or other non-interactive repo-extension loading as reliable; use `validate-modes` when you need to prove that distinction.
+
+The real repo-scoped extension loader is still validated separately. Run `npm run evals:validate-modes` to probe `copilot -p` with the actual `.github/extensions` entrypoint, then compare it with the same prompt in an interactive `copilot` session. That command is the explicit proof for the current prompt-mode versus interactive-mode gap.
+
+For real extension-loader evals, use the interactive executor lane:
 
 ```bash
-git init
-git add .
-git commit -m "Initial scaffold
-
-Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>"
-gh repo create copilot-channels-extension --public --source=. --remote=origin --push
+node evals/run.mjs prepare-interactive --case E001
+# run the printed prompt inside an interactive `copilot` session
+# then run the printed /share command
+node evals/run.mjs judge-interactive --run-dir "<printed-run-dir>"
 ```
+
+That flow keeps the executor in a foreground Copilot session where the actual extension can attach, uses `/share <path>` to persist the interactive transcript for the case, and then runs a tool-free ACP judge against the shared transcript plus the config snapshots. If you reuse one interactive session for multiple cases, run `/clear` before each next case.

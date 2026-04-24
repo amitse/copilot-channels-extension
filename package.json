@@ -5,8 +5,12 @@
   "type": "module",
   "license": "MIT",
   "scripts": {
-    "check": "node --check ./.github/extensions/copilot-channels-extension/extension.mjs && node --check ./examples/heartbeat.mjs",
-    "demo:heartbeat": "node ./examples/heartbeat.mjs"
+    "check": "node --check ./src/copilot-channels-runtime.mjs && node --check ./.github/extensions/copilot-channels-extension/extension.mjs && node --check ./evals/run.mjs && node --check ./examples/heartbeat.mjs",
+    "demo:heartbeat": "node ./examples/heartbeat.mjs",
+    "evals:list": "node ./evals/run.mjs list",
+    "evals:smoke": "node ./evals/run.mjs smoke",
+    "evals:run": "node ./evals/run.mjs run --all",
+    "evals:validate-modes": "node ./evals/run.mjs validate-modes"
   },
   "keywords": [
     "copilot",
@@ -14,5 +18,9 @@
     "extensions",
     "monitor",
     "channels"
-  ]
+  ],
+  "devDependencies": {
+    "yaml": "^2.8.3",
+    "@github/copilot-sdk": "^0.2.2"
+  }
 }

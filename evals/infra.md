@@ -14,6 +14,30 @@ The goal is to answer:
 
 - `evals/cases.yaml` is the case catalog
 - this file describes how to run and score the cases
+- `evals/run.mjs` is the programmatic runner
+
+## Runner commands
+
+```bash
+npm run evals:list
+node evals/run.mjs smoke
+node evals/run.mjs run --case E001
+node evals/run.mjs run --all
+node evals/run.mjs run --case E001 --dry-run
+npm run evals:validate-modes
+node evals/run.mjs prepare-interactive --case E001
+node evals/run.mjs judge-interactive --run-dir "<prepared-run-dir>"
+```
+
+The automated runner uses **one ACP server plus fresh SDK sessions**:
+
+1. **Preflight session** checks whether `copilot_channels_*` tools are mounted into the ACP session.
+2. **Executor session** runs the case prompt against the shared channels runtime.
+3. **Judge session** reads the saved artifacts and returns a structured verdict.
+
+Artifacts are written under `evals/results/<timestamp>/<case-id>/`.
+The ACP path saves prompt, response, error, and full event transcript artifacts directly; it does not depend on `copilot --share`.
+The runner also writes a `preflight/` folder once per run to record whether the shared channels runtime is available in the ACP session.
 
 ## What is under test
 
@@ -44,12 +68,16 @@ Each case should test whether Copilot:
 
 ## Recommended environment
 
-Run each eval in a fresh Copilot CLI session with:
+Automated ACP evals need:
 
 - authenticated GitHub Copilot CLI
 - this repo as the current working directory
-- repo-scoped extension loaded with `/clear` or `extensions_reload`
+- `npm install` completed so the SDK package is available locally
 - a clean or intentionally prepared `copilot-channels.config.json`
+
+Interactive loader checks additionally need:
+
+- repo-scoped extension loaded with `/clear` or `extensions_reload`
 - transcript capture enabled if possible
 
 Recommended local context:
@@ -60,22 +88,38 @@ Recommended local context:
 
 ## Run model
 
-Each eval should be driven by a natural-language user prompt from `cases.yaml`.
+Each automated eval is driven by the natural-language `user_prompt` from `cases.yaml`, but the runner now mounts the shared channels runtime directly into ACP sessions instead of asking `copilot -p` to discover `.github/extensions`.
 
-Suggested run loop:
+That split is deliberate:
 
-1. Open a fresh Copilot CLI session in this repo.
-2. Ensure the extension is loaded.
-3. Prepare any case-specific setup from the YAML.
-4. Paste the `user_prompt`.
-5. Let Copilot work normally.
-6. Capture:
-   - tool calls
-   - resulting channel history
-   - monitor list output
-   - config diffs if persistence is involved
-   - whether the assistant respected ownership rules
-7. Score the case.
+1. `run` and `smoke` test the real channel/monitor behavior through the shared runtime module.
+2. `validate-modes` tests whether the actual repo-scoped extension loader attaches in prompt mode.
+3. `prepare-interactive` plus `judge-interactive` remain the reference path for true foreground-extension checks.
+
+For the specific interactive-vs-`-p` question, `validate-modes` is the dedicated check:
+
+1. it runs a prompt-mode probe that asks Copilot to persist a unique channel subscription via `copilot_channels_subscribe`
+2. it inspects `copilot-channels.config.json` to see whether that probe channel was actually written
+3. it cleans up the probe channel
+4. it prints an interactive follow-up using the exact same prompt, plus an inspect command that verifies and cleans up the interactive run
+
+## Current extension-loader limitation
+
+On the current Windows setup used for this repo, repo-scoped extension tools may still be unavailable in headless or prompt-mode sessions even when the working directory is correct.
+
+When that happens:
+
+- `validate-modes` records that the real `.github/extensions` tools were not visible in `copilot -p`
+- ACP runs can still exercise the same behavior because the shared runtime is injected directly through the SDK
+- the interactive control path remains the reference check for actual extension discovery: open Copilot CLI in this repo, run `/clear` or `extensions_reload`, and retry manually
+
+Because of that, the practical eval split is:
+
+1. **ACP automated evals** for the feature logic
+2. **interactive executor** for actual extension-loader behavior
+3. **non-interactive judge** for scoring saved artifacts after the interactive run
+
+`prepare-interactive` writes the exact executor prompt, captures the pre-run config snapshot, and gives you a `/share <path>` command for that case. `judge-interactive` then reads the shared transcript, any optional executor report, and the before/after config snapshots to produce the structured verdict through a tool-free ACP judge. If you keep one interactive session open across multiple cases, run `/clear` before each next case.
 
 ## Scoring rubric
 
