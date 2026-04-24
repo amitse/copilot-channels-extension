@@ -13,6 +13,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, "..");
 const extensionsRoot = path.join(repoRoot, ".github", "extensions");
+const repoSkillRoot = path.join(repoRoot, ".github", "skills");
 const casesPath = path.join(__dirname, "cases.yaml");
 const defaultResultsRoot = path.join(__dirname, "results");
 const configCandidatePaths = CONFIG_LOCATIONS.map((relativePath) => path.join(repoRoot, relativePath));
@@ -43,6 +44,7 @@ function usage() {
     "  --acp-port <n>        Bind the ACP server to a specific TCP port",
     "  --exec-timeout-ms <n> Timeout for the executor Copilot session",
     "  --judge-timeout-ms <n> Timeout for the judge Copilot session",
+    "  --concurrency <n>     Max simultaneous eval cases (default 1). Cases that touch persistent config still run serially.",
     "  --dry-run             Print prompts without invoking Copilot"
   ].join("\n");
 }
@@ -59,8 +61,9 @@ function parseArgs(argv) {
     resultsDir: defaultResultsRoot,
     acpPort: 0,
     dryRun: false,
-    execTimeoutMs: 180000,
-    judgeTimeoutMs: 120000
+    execTimeoutMs: 300000,
+    judgeTimeoutMs: 120000,
+    concurrency: 1
   };
 
   for (let index = 0; index < rest.length; index += 1) {
@@ -105,12 +108,17 @@ function parseArgs(argv) {
       continue;
     }
     if (token === "--exec-timeout-ms") {
-      options.execTimeoutMs = Number.parseInt(rest[index + 1] ?? "180000", 10);
+      options.execTimeoutMs = Number.parseInt(rest[index + 1] ?? "300000", 10);
       index += 1;
       continue;
     }
     if (token === "--judge-timeout-ms") {
       options.judgeTimeoutMs = Number.parseInt(rest[index + 1] ?? "120000", 10);
+      index += 1;
+      continue;
+    }
+    if (token === "--concurrency") {
+      options.concurrency = Number.parseInt(rest[index + 1] ?? "1", 10);
       index += 1;
       continue;
     }
@@ -120,6 +128,9 @@ function parseArgs(argv) {
 
   if (Number.isNaN(options.acpPort) || options.acpPort < 0) {
     throw new Error("Use a non-negative integer with --acp-port.");
+  }
+  if (!Number.isInteger(options.concurrency) || options.concurrency < 1) {
+    throw new Error("Use a positive integer with --concurrency.");
   }
   if (options.command === "run" && !options.runAll && !options.caseId) {
     throw new Error("Use --case <id> or --all with the run command.");
@@ -182,6 +193,9 @@ function buildExecutorPrompt(caseDef) {
     `You are running automated eval case ${caseDef.id}: ${caseDef.title}.`,
     "Work only inside the current repository.",
     "Execute the user request below as the real Copilot agent.",
+    "Work efficiently. Minimize tool calls and do not over-explore the repository - the copilot_channels_* tools are the only interface you need for this extension.",
+    "Do not write test scripts, spawn subagents, reload the extension, or restart sessions. If a case requires behavior that is only observable across sessions, describe what would happen instead of trying to simulate it.",
+    "If you need to change a monitor's cadence, command, or prompt, stop it with copilot_channels_stop_monitor and then call copilot_channels_start_monitor again with the same name and the new values.",
     "When practical inside a single run, inspect monitor state and channel history before finishing.",
     "If you create temporary monitors, loops, or prompt work items, stop them before finishing unless the case explicitly tests persistence.",
     "Do not leave background work running at the end of the run. The eval harness will time out if you do.",
@@ -206,6 +220,7 @@ function buildJudgePrompt(caseDef, artifacts) {
     "Do not use tools. Do not inspect the repository. Judge only from the observed facts below.",
     "Return exactly one JSON object on a single line, with no markdown fences and no extra commentary.",
     'Schema: {"caseId":"E001","verdict":"pass|partial|fail","summary":"short explanation","checks":[{"condition":"text","status":"pass|partial|fail","evidence":"text"}],"notes":["optional note"]}',
+    "Inside every string value, do not emit unescaped double-quote characters. Do not paste raw JSON or code snippets into evidence strings; paraphrase instead (for example, write: the monitors array is empty). If you must quote something, use single quotes or escape each inner double quote as \\\".",
     `Executor status: ${artifacts.executorStatus}`,
     `Executor timed out: ${artifacts.executorTimedOut ? "yes" : "no"}`,
     `Executor error: ${truncateText(artifacts.executorError || "[none]", 600)}`,
@@ -264,6 +279,7 @@ function buildInteractiveJudgePrompt(manifest, artifacts) {
     "Do not use tools. Do not inspect the repository. Judge only from the artifacts below.",
     "Return exactly one JSON object on a single line, with no markdown fences and no extra commentary.",
     'Schema: {"caseId":"E001","verdict":"pass|partial|fail","summary":"short explanation","checks":[{"condition":"text","status":"pass|partial|fail","evidence":"text"}],"notes":["optional note"]}',
+    "Inside every string value, do not emit unescaped double-quote characters. Do not paste raw JSON or code snippets into evidence strings; paraphrase instead (for example, write: the monitors array is empty). If you must quote something, use single quotes or escape each inner double quote as \\\".",
     `Shared transcript:\n${truncateText(artifacts.shareTranscript, 5000) || "[missing]"}`,
     `Executor summary:\n${truncateText(artifacts.executorSummary, 3000) || "[missing]"}`,
     `Config before:\n${truncateText(artifacts.configBefore, 3000) || "[empty]"}`,
@@ -425,11 +441,39 @@ function extractJsonObject(text) {
     return JSON.parse(trimmed);
   } catch {
     const match = trimmed.match(/\{[\s\S]*\}/);
-    if (!match) {
-      throw new Error("Validator output did not contain a JSON object.");
+    if (match) {
+      try {
+        return JSON.parse(match[0]);
+      } catch {
+        // Fall through to best-effort verdict salvage below.
+      }
     }
-    return JSON.parse(match[0]);
+
+    const salvage = salvageVerdictFromText(trimmed);
+    if (salvage) {
+      return salvage;
+    }
+
+    throw new Error("Validator output did not contain a JSON object.");
   }
+}
+
+function salvageVerdictFromText(text) {
+  const verdictMatch = text.match(/"verdict"\s*:\s*"(pass|partial|fail)"/i);
+  if (!verdictMatch) {
+    return null;
+  }
+
+  const caseIdMatch = text.match(/"caseId"\s*:\s*"([^"]+)"/);
+  const summaryMatch = text.match(/"summary"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+
+  return {
+    caseId: caseIdMatch?.[1] ?? null,
+    verdict: verdictMatch[1].toLowerCase(),
+    summary: summaryMatch?.[1] ?? "Judge emitted malformed JSON; summary could not be parsed.",
+    checks: [],
+    notes: ["Judge response was not valid JSON; verdict was salvaged from raw text."]
+  };
 }
 
 function terminateChildProcess(child) {
@@ -767,7 +811,8 @@ async function runAcpPrompt(client, prompt, options) {
     clientName: acpSessionClientName,
     onPermissionRequest: approveAll,
     workingDirectory: repoRoot,
-    streaming: false
+    streaming: false,
+    skillDirectories: [repoSkillRoot]
   };
 
   if (options.model) {
@@ -1307,6 +1352,42 @@ async function runSmokeTest(options) {
   }
 }
 
+const CONFIG_ISOLATED_CATEGORIES = new Set(["persistence", "ownership", "startup"]);
+
+function requiresConfigIsolation(caseDef) {
+  const category = String(caseDef.category ?? "").toLowerCase();
+  if (CONFIG_ISOLATED_CATEGORIES.has(category)) {
+    return true;
+  }
+  const title = String(caseDef.title ?? "").toLowerCase();
+  const prompt = String(caseDef.user_prompt ?? "").toLowerCase();
+  if (title.includes("persistent") || prompt.includes("persistent")) {
+    return true;
+  }
+  const conditions = ensureArray(caseDef.pass_conditions).join(" ").toLowerCase();
+  return conditions.includes("from config");
+}
+
+async function runCasesWithConcurrency(cases, concurrency, runner) {
+  const results = new Array(cases.length);
+  let nextIndex = 0;
+
+  async function worker() {
+    for (;;) {
+      const index = nextIndex;
+      nextIndex += 1;
+      if (index >= cases.length) {
+        return;
+      }
+      results[index] = await runner(cases[index], index);
+    }
+  }
+
+  const workerCount = Math.max(1, Math.min(concurrency, cases.length));
+  await Promise.all(Array.from({ length: workerCount }, worker));
+  return results;
+}
+
 async function runCases(options) {
   await ensureRepoScopedExtensionExists();
   const cases = await loadCaseCatalog();
@@ -1357,13 +1438,31 @@ async function runCases(options) {
       console.log(`ACP preflight: copilot-channels tools unavailable (${preflightSummary.detail})`);
     }
 
-    const summaries = [];
-    for (const caseDef of selectedCases) {
-      console.log(`Running ${caseDef.id}: ${caseDef.title}`);
+    const parallelCases = selectedCases.filter((caseDef) => !requiresConfigIsolation(caseDef));
+    const isolatedCases = selectedCases.filter(requiresConfigIsolation);
+    const effectiveConcurrency = Math.min(options.concurrency, parallelCases.length || 1);
+
+    console.log(
+      `Running ${parallelCases.length} case(s) with concurrency=${effectiveConcurrency}` +
+      (isolatedCases.length > 0 ? `, then ${isolatedCases.length} config-touching case(s) serially.` : ".")
+    );
+
+    const parallelSummaries = await runCasesWithConcurrency(parallelCases, options.concurrency, async (caseDef) => {
+      console.log(`[start] ${caseDef.id}: ${caseDef.title}`);
       const summary = await runCase(client, serverInfo, caseDef, options, sessionRoot, preflightSummary);
-      summaries.push(summary);
+      console.log(`[${summary.verdict.verdict}] ${caseDef.id}: ${summary.verdict.summary}`);
+      return summary;
+    });
+
+    const isolatedSummaries = [];
+    for (const caseDef of isolatedCases) {
+      console.log(`Running ${caseDef.id}: ${caseDef.title} (serial, touches persistent config)`);
+      const summary = await runCase(client, serverInfo, caseDef, options, sessionRoot, preflightSummary);
+      isolatedSummaries.push(summary);
       console.log(`  verdict: ${summary.verdict.verdict} - ${summary.verdict.summary}`);
     }
+
+    const summaries = [...parallelSummaries, ...isolatedSummaries];
 
     await writeJsonFile(path.join(sessionRoot, "summary.json"), summaries);
 

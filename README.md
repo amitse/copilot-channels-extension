@@ -89,7 +89,7 @@ examples/heartbeat.mjs
 | Continuous command monitor | `command` only | log tails, watch scripts, long-running jobs |
 | Looped command work | `command` + `every` | polling APIs, recurring validators, periodic checks |
 | One-shot prompt work | `prompt` only | ask the agent to do a background check once |
-| Prompt loop | `prompt` + `every` | session-scoped `/loop` style maintenance or re-check tasks |
+| Prompt loop | `prompt` + `every` | session-scoped `/loop`-style maintenance or re-check tasks |
 
 ## Quick start
 
@@ -110,6 +110,14 @@ This extension now supports a lightweight, session-scoped loop model inspired by
 - prompts without `every` run once
 - loops are tied to the session and do not try to catch up missed runs
 - persistent config makes a loop come back on the next session start, but this is still not a durable cloud scheduler
+
+This repo also ships a **`loop` skill** under `.github/skills/loop` for skill-aware sessions. Use it when you want a fast scheduled prompt setup such as:
+
+```text
+/loop 5m check the deploy
+```
+
+The skill tells Copilot to create a prompt-based looping monitor with `copilot_channels_start_monitor`, defaulting to a temporary loop and only subscribing the channel when you explicitly ask to be kept posted.
 
 ## Example config
 
