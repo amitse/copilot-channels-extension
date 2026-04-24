@@ -10,13 +10,11 @@ Single-file extension. Zero dependencies.
 
 ## Who is this for?
 
-- **You're debugging a deploy** and want to keep coding while logs stream in the background
-- **You maintain a repo** and want PR comments, CI failures, and issues surfaced automatically
-- **You run long builds** and don't want to babysit them
-- **You poll APIs or dashboards** and want Copilot to tell you when something changes
-- **You repeat the same prompt** every few minutes and want to automate it
-
-If you've ever wished Copilot could _watch something for you_, this is that.
+- You tail deploy logs and want failures injected into your session while you keep coding.
+- You maintain a repo and want PR reviews, CI failures, and new issues surfaced without checking manually.
+- You run long builds and want to know when they finish or break -- without watching.
+- You poll an API or dashboard and want the agent to tell you when something changes.
+- You re-ask the same prompt every few minutes and want it on a timer instead.
 
 ## Get started in 60 seconds
 
