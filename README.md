@@ -35,7 +35,9 @@ cp tap.config.example.json tap.config.json
 copilot
 ```
 
-On Windows, replace `cp` with `copy`. The config file is required -- it tells the extension which emitters to auto-start. The example config defines a heartbeat emitter:
+On Windows, replace `cp` with `copy`.
+
+The config file tells the extension which emitters to auto-start. The example defines a heartbeat emitter:
 
 ```json
 {
