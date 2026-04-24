@@ -42,7 +42,7 @@ The example config includes a demo heartbeat emitter that starts automatically, 
 An **EventEmitter** is a background worker attached to your session. There are two kinds:
 
 - A **CommandEmitter** runs a shell command and captures stdout line by line.
-- A **PromptEmitter** runs an agent prompt -- once, or on a recurring interval.
+- A **PromptEmitter** runs an agent prompt -- once, on a recurring interval, or whenever the session is idle.
 
 Each emitter writes to an **EventStream**, an in-memory log of accepted output. The stream is created automatically and shares the emitter's name.
 
@@ -61,33 +61,41 @@ A **SessionInjector** controls whether stream updates are pushed into your sessi
 
 Filters are hot-swappable while the emitter runs. `ownership="modelOwned"` lets the agent tune rules; `ownership="userOwned"` locks them to your specification.
 
-## Three things you can do
+## What you can do
 
-**1. Watch something in the background**
+**Watch something in the background**
 
-Tell Copilot to watch a log, build, or command. It creates a CommandEmitter that runs alongside your session, filters the output, and only interrupts you when something needs attention.
+Tell Copilot to watch a log, build, or command. It creates a CommandEmitter, filters the output, and only interrupts you when something needs attention.
 
 ```
 "Start a deploy watcher that tails our CI logs.
  Drop health checks, inject any failures or rollbacks."
-
--> You keep coding for 20 minutes.
--> Copilot interrupts: "Run 48291: deployment rollback triggered on prod"
 ```
 
-**2. Loop a prompt on a schedule**
+You keep coding. Twenty minutes later, Copilot interrupts: "Run 48291: deployment rollback triggered on prod."
 
-A PromptEmitter re-runs an agent prompt every N minutes -- PR comments, CI status, ticket queues -- without you asking again.
+**Loop a prompt on a schedule**
+
+A PromptEmitter re-runs an agent prompt at a fixed interval. Useful for PR comments, CI status, or ticket queues.
 
 ```
 /loop 15m Check for new failing CI runs or PR review comments.
          Summarize only actionable items.
-
--> Every 15 minutes, the agent scans and reports back.
--> No news = no interruption.
 ```
 
-**3. Tune the filter live**
+Every 15 minutes the agent scans and reports back. No news means no interruption.
+
+**Run a prompt when idle**
+
+Use `/loop idle` to re-run a prompt whenever the session has nothing else to do. Set `maxRuns` to cap iterations.
+
+```
+/loop idle Scan for new issues labeled urgent. Summarize what changed.
+```
+
+The prompt fires immediately, then re-fires after each idle period. It stops after reaching the iteration limit.
+
+**Tune the filter live**
 
 Start with no rules and let all output through so you can see the stream shape. Then tighten progressively:
 
@@ -103,7 +111,7 @@ Start with no rules and let all output through so you can see the stream shape. 
 | --- | --- |
 | You check task output manually | Output is filtered and injected into your conversation |
 | All output or nothing -- no filtering | EventFilter rules drop noise, keep context, inject signal |
-| No scheduled re-checks | PromptEmitters re-run on an interval |
+| No scheduled re-checks | PromptEmitters re-run on an interval or when idle |
 | Results sit until you look | Important lines interrupt your session as they arrive |
 
 ## Repo layout
