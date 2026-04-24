@@ -68,7 +68,7 @@ Use a **PromptEmitter** when the work is mainly reasoning, summarization, or mai
 - "look for new urgent issues or failing runs and summarize what changed"
 - "run a maintenance pass on the current branch"
 
-Use `runInterval` when either of those should repeat on a session-scoped interval. Timed PromptEmitters begin on their first interval instead of firing immediately, which avoids colliding with the active session turn that created them.
+Use `runInterval` when either of those should repeat on a session-scoped interval. Timed PromptEmitters fire immediately on creation, then repeat on the interval.
 
 ## Pattern library
 

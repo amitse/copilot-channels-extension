@@ -235,14 +235,8 @@ export function createLifecycle({ lineRouter, sessionPort }) {
     const scheduleLabel = emitter.runSchedule === RUN_SCHEDULE.TIMED
       ? `every ${emitter.every}`
       : RUN_SCHEDULE.ONE_TIME;
-    const initialDelayMs =
-      emitter.runSchedule === RUN_SCHEDULE.TIMED && emitter.emitterType === EMITTER_TYPE.PROMPT
-        ? emitter.everyMs
-        : 0;
-    const firstRunLabel =
-      emitter.runSchedule === RUN_SCHEDULE.TIMED && emitter.emitterType === EMITTER_TYPE.PROMPT
-        ? ` First run in ${emitter.every}.`
-        : "";
+    const initialDelayMs = 0;
+    const firstRunLabel = "";
     lineRouter.appendSystemMessage(
       emitter,
       `Emitter '${emitter.name}' queued ${emitter.emitterType} work (${scheduleLabel}) with ${describeEmitterWork(emitter)}.${firstRunLabel}`

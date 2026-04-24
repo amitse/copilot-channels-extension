@@ -25,7 +25,7 @@ means:
 - `runInterval = "5m"`
 - `prompt = "check the deploy"`
 
-The emitter runs on a timed schedule. For timed PromptEmitters, the first run happens after the first interval rather than immediately.
+The emitter runs on a timed schedule. The first run fires immediately, then repeats on the interval.
 
 ## Required behavior
 

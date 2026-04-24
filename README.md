@@ -1,285 +1,141 @@
 # copilot-tap-extension
 
-Public starter repo for a **Copilot CLI Extension** that approximates a practical Claude-style workflow:
+### Your Copilot CLI, but it watches things for you.
 
-- **EventEmitters** run background commands or agent prompts.
-- **EventStreams** collect accepted output from emitters.
-- **EventFilters** decide what gets dropped, kept, surfaced, or injected.
-- **SessionInjectors** control whether EventStream updates are proactively injected into the Copilot session.
+> **Background commands. Filtered output. Smart interrupts. You keep coding.**
 
-This is built on **Copilot CLI Extensions** in `.github/extensions/`, not MCP servers or custom agents.
+[![Built for Copilot CLI](https://img.shields.io/badge/Copilot_CLI-Extension-blue?style=flat-square&logo=github)](https://github.com/features/copilot)
+[![Zero Dependencies](https://img.shields.io/badge/deps-0-brightgreen?style=flat-square)](./package.json)
+[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey?style=flat-square)]()
 
-## Mental model
+---
 
-| Concept | Meaning in this repo |
-| --- | --- |
-| EventEmitter | The ONLY primary resource users define — a background shell command or agent prompt |
-| CommandEmitter | An EventEmitter backed by a shell command |
-| PromptEmitter | An EventEmitter backed by a prompt sent into the agent |
-| EventStream | A named stream that stores accepted emitter output and notes (auto-created, name = emitter name) |
-| EventFilter | Ordered rule list on the emitter: `[{ match, outcome }]` — first match wins |
-| SessionInjector | Controls whether EventStream updates are proactively delivered to the Copilot session (derived automatically) |
-| Temporary | Session-only state that disappears on `/clear` (`lifespan="temporary"`) |
-| Persistent | State written to `tap.config.json` and restored next session (`lifespan="persistent"`) |
+**Without this extension**, you alt-tab to check logs, poll dashboards, and re-ask Copilot the same question every few minutes.
 
-## Canonical runtime vocabulary
+**With it**, you say _"watch the deploy logs, tell me if anything breaks"_ — and go back to coding. The extension tails commands, filters noise, and injects only the important lines back into your conversation.
 
-This README follows the same vocabulary used in the code, tool descriptions, and config schema. If you are naming concepts in docs or discussions about the current implementation, prefer these terms:
+Not an MCP server. Not a custom agent. One `.github/extensions/` file.
 
-| Code term | Meaning |
-| --- | --- |
-| `emitter` | A running background unit managed by the extension (CommandEmitter or PromptEmitter) |
-| `stream` | The named EventStream where accepted emitter output and notes are stored |
-| `sessionInjector` | Per-stream proactive delivery state |
-| `eventFilter` | Ordered rule list on the emitter: `[{ match, outcome }]` |
-| `emitterType` | Work source: `command` or `prompt` |
-| `lifespan` | Lifecycle for config and runtime state: `temporary` or `persistent` |
-| `ownership` | Ownership label: `userOwned` or `modelOwned` |
-| `runSchedule` | Run schedule: `continuous`, `timed`, or `oneTime` |
-| `runInterval` | Repeat interval for timed work |
-| `autoStart` | Whether a persistent emitter starts automatically next session |
+## Who is this for?
 
-### Event outcomes
+- **You're debugging a deploy** and want to keep coding while logs stream in the background
+- **You maintain a repo** and want PR comments, CI failures, and issues surfaced automatically
+- **You run long builds** and don't want to babysit them
+- **You poll APIs or dashboards** and want Copilot to tell you when something changes
+- **You repeat the same prompt** every few minutes and want to automate it
 
-Each EventFilter rule maps a regex match to one of four outcomes:
+If you've ever wished Copilot could _watch something for you_, this is that.
 
-| Outcome | Behavior |
-| --- | --- |
-| `drop` | Discard — does not enter the EventStream |
-| `keep` | Store in the EventStream |
-| `surface` | Keep + show in the Copilot session timeline via `session.log()` |
-| `inject` | Keep + surface + inject into Copilot via `session.send()` |
+## Get started in 60 seconds
 
-PromptEmitter events always inject (no filter applied). CommandEmitter events go through the EventFilter.
+```bash
+git clone https://github.com/amitse/copilot-tap-extension
+cd copilot-tap-extension
+cp tap.config.example.json tap.config.json
+copilot
+```
 
-## How people actually use it
+Then say any of these:
 
-### Temporary watch
+> _"Watch my build logs and tell me if anything fails"_
 
-Use an emitter for one active task:
+> _"/loop 5m check for new PR review comments"_
 
-- Start a temporary CommandEmitter for a log, build, or poller
-- Enable the SessionInjector for this session
-- Tighten the EventFilter so only relevant lines enter the stream
-- Let the extension inject only important matches
+> _"Tail the API logs, inject errors, drop health checks"_
 
-### Permanent watch
+That's it. The example config auto-starts a demo heartbeat emitter so you see it working immediately.
 
-Use a persistent emitter for recurring signals:
+## Three things you can do right now
 
-- Save the emitter to config with `lifespan="persistent"`
-- Save the SessionInjector with `lifespan="persistent"`
-- Save EventFilter rules with `lifespan="persistent"`
-- The emitter is restored automatically next session if `autoStart` is true
+**1. Watch something in the background**
 
-### User-owned vs model-owned
+Tell Copilot to watch a log, build, or command. It creates a background emitter, filters the noise, and only interrupts you when something actually needs your attention.
 
-Ownership lives on the EventEmitter only:
+```
+"Start a deploy watcher that tails our CI logs.
+ Drop health checks, inject any failures or rollbacks."
 
-- `userOwned`: protected by default; the model must pass `transferOwnership=true` to override it
-- `modelOwned`: safe for the model to adjust through tools during the session
+→ You keep coding for 20 minutes.
+→ Copilot interrupts: "Run 48291: deployment rollback triggered on prod"
+```
 
-That gives you a clean split between rules the user owns and rules the model can tune on the fly.
+**2. Loop a prompt on a schedule**
 
-## Features
+Have the agent re-check something every N minutes — PR comments, CI status, ticket queues — without you asking again.
 
-- Repo-scoped extension at `.github/extensions/tap/extension.mjs`
-- Session-only and persistent EventEmitters
-- One-shot and timed PromptEmitters
-- Session-only and persistent SessionInjectors
-- Per-emitter EventFilter rules as ordered `[{ match, outcome }]` lists (first match wins)
-- Fixed-interval timed schedules with `runInterval: "5m"` style cadence
-- Batched agent notifications using SessionInjectors
-- Config-backed protection for `ownership: "userOwned"` resources
-- Cross-platform emitter launching for Windows and macOS/Linux
-- Demo heartbeat script so the repo works immediately
+```
+/loop 15m Check for new failing CI runs or PR review comments.
+         Summarize only actionable items.
+
+→ Every 15 minutes, the agent scans and reports back.
+→ No news = no interruption.
+```
+
+**3. Tune the filter live**
+
+Every emitter has an EventFilter — regex rules that decide what gets dropped, kept, surfaced, or injected. The agent can tune these in real-time while you work, or you can lock them down with `ownership="userOwned"` so they stay exactly how you set them.
+
+## How it works (30-second version)
+
+```
+                        Without tap              With tap
+                        ──────────────           ──────────────
+You:                    alt-tab, check logs      keep coding
+Build fails at 2:47pm:  you notice at 3:15pm     injected immediately
+PR gets reviewed:        you check manually       agent tells you
+CI flakes:               buried in notifications  filtered + surfaced
+```
+
+Under the hood:
+
+```
+You define an emitter (a command or a prompt)
+    |
+    v
+It runs in the background, producing output
+    |
+    v
+EventFilter decides per line: drop / keep / surface / inject
+    |
+    v
+Important events get injected into your Copilot session
+```
+
+- **drop** — discard, never stored
+- **keep** — store silently in the event stream
+- **surface** — store + show in the session timeline
+- **inject** — store + show + push into the conversation
+
+Prompt-based emitters always inject. Command-based emitters go through the filter.
 
 ## Repo layout
 
 ```text
-.github/extensions/tap/extension.mjs
-.github/copilot-instructions.md
-docs/use-cases.md
-tap.config.example.json
-examples/heartbeat.mjs
+.github/extensions/tap/extension.mjs   # the extension
+.github/copilot-instructions.md        # agent guidance
+tap.config.example.json                 # starter config
+examples/heartbeat.mjs                  # demo emitter
+docs/                                   # detailed docs
 ```
 
-## Guides
+## Go deeper
 
-- [Use cases and patterns](./docs/use-cases.md)
-- [Copilot instruction file](./.github/copilot-instructions.md)
-- [Implementation plan](./PLAN.md)
-- [Real-Copilot eval infrastructure](./evals/infra.md)
-
-## Emitter types
-
-| Shape | How to define it | Best for |
-| --- | --- | --- |
-| Continuous CommandEmitter | `command` only | log tails, watch scripts, long-running jobs |
-| Timed CommandEmitter | `command` + `runInterval` | polling APIs, recurring validators, periodic checks |
-| OneTime PromptEmitter | `prompt` only | ask the agent to do a background check once |
-| Timed PromptEmitter | `prompt` + `runInterval` | session-scoped `/loop`-style maintenance or re-check tasks |
-
-## Quick start
-
-1. Copy `tap.config.example.json` to `tap.config.json`.
-2. Open Copilot CLI in this repo.
-3. Run `/clear` or `extensions_reload`.
-4. Ask Copilot to list EventStreams or EventEmitters.
-
-The example config creates a persistent `ops` EventStream, enables its SessionInjector, and auto-starts a demo heartbeat emitter.
-
-## Loop semantics
-
-This extension now supports a lightweight, session-scoped timed schedule model inspired by Claude scheduled tasks:
-
-- use `runInterval: "5m"` or similar to re-run work on an interval
-- commands with `runInterval` re-run after each completion
-- timed PromptEmitters wait for the first interval before their first run, then re-send the prompt after each completion
-- prompts without `runInterval` run once
-- timed schedules are tied to the session and do not try to catch up missed runs
-- if a timed PromptEmitter fires while the current session is still busy, that run is deferred to the next interval instead of failing the emitter
-- persistent config makes a timed emitter come back on the next session start, but this is still not a durable cloud scheduler
-
-This repo also ships a **`loop` skill** under `.github/skills/loop` for skill-aware sessions. Use it when you want a fast scheduled prompt setup such as:
-
-```text
-/loop 5m check the deploy
-```
-
-The skill tells Copilot to create a timed PromptEmitter with `tap_start_emitter`, defaulting to a temporary emitter and only enabling the SessionInjector when you explicitly ask to be kept posted. Timed PromptEmitters start on their first interval rather than firing immediately.
-
-## Example config
-
-```json
-{
-  "streams": [
-    {
-      "name": "ops",
-      "description": "Operational events from background emitters",
-      "sessionInjector": {
-        "enabled": true,
-        "delivery": "important",
-        "ownership": "userOwned"
-      }
-    },
-    {
-      "name": "repo-maintenance",
-      "description": "Prompt-based maintenance loop",
-      "sessionInjector": {
-        "enabled": true,
-        "delivery": "important",
-        "ownership": "userOwned"
-      }
-    }
-  ],
-  "emitters": [
-    {
-      "name": "heartbeat",
-      "description": "Demo background status stream",
-      "command": "node ./examples/heartbeat.mjs",
-      "stream": "ops",
-      "autoStart": true,
-      "includeStderr": true,
-      "ownership": "userOwned",
-      "eventFilter": [
-        { "match": "booting", "outcome": "drop" },
-        { "match": "ready|healthy", "outcome": "surface" },
-        { "match": "warning|error", "outcome": "inject" },
-        { "match": ".*", "outcome": "keep" }
-      ]
-    },
-    {
-      "name": "repo-maintenance",
-      "description": "Prompt-based loop for repo health checks",
-      "prompt": "Check whether there are new failing runs, PR review comments, or issue escalations worth addressing. Summarize only actionable changes.",
-      "runInterval": "15m",
-      "stream": "repo-maintenance",
-      "autoStart": false,
-      "ownership": "userOwned"
-    }
-  ]
-}
-```
-
-## Tools exposed by the extension
-
-| Tool | Purpose |
+| Doc | What's in it |
 | --- | --- |
-| `tap_list_streams` | List EventStreams plus SessionInjector state |
-| `tap_post` | Append a note to an EventStream |
-| `tap_stream_history` | Read recent EventStream history |
-| `tap_enable_injector` | Enable a SessionInjector temporarily or persistently |
-| `tap_disable_injector` | Disable proactive delivery from an EventStream |
-| `tap_list_emitters` | Show running EventEmitters and persistent emitter definitions |
-| `tap_start_emitter` | Start a CommandEmitter, PromptEmitter, or timed emitter, optionally enabling the SessionInjector |
-| `tap_set_event_filter` | Update the EventFilter rules for an emitter |
-| `tap_stop_emitter` | Stop a running emitter; optionally remove the persistent definition |
-
-## Suggested usage patterns
-
-### Watch a file temporarily
-
-Start a session-only CommandEmitter with a strict EventFilter and an enabled SessionInjector:
-
-- `lifespan="temporary"`
-- `subscribe=true`
-- EventFilter: `[{ "match": "error|warning|ready", "outcome": "inject" }, { "match": ".*", "outcome": "drop" }]`
-
-### Keep a deploy watcher permanently
-
-Persist the emitter and SessionInjector:
-
-- `lifespan="persistent"`
-- `autoStart=true`
-- `ownership="userOwned"`
-
-### Let the model tune noise
-
-Use `ownership="modelOwned"` on a temporary emitter so the agent can adjust the EventFilter rules during the task.
-
-## Event processing pipeline
-
-1. An emitter produces a line.
-2. The EventFilter evaluates each rule in order (first match wins):
-   - `drop` — line is discarded
-   - `keep` — line is stored in the EventStream
-   - `surface` — stored + shown in session timeline via `session.log()`
-   - `inject` — stored + surfaced + injected into Copilot via `session.send()`
-3. If no rule matches, the bootstrap policy applies: **keep** (store in EventStream, no injection).
-
-PromptEmitter events always inject — they bypass the EventFilter entirely.
-
-The EventFilter is hot-swappable while the emitter runs. Start with a keep-all bootstrap policy, observe the stream, then add rules progressively.
-
-## Limits compared with Claude Code
-
-- This is an extension-level approximation, not a native runtime primitive.
-- State held in memory is reset on `/clear`.
-- Notifications are batched to reduce session spam.
-- Emitters run with the extension's trust level, so only run commands you trust.
+| **[Reference](./docs/reference.md)** | Full vocabulary, all tools, config schema, event pipeline details |
+| **[Use cases and patterns](./docs/use-cases.md)** | Real-world workflows and recipes |
+| **[Evals](./docs/evals.md)** | Testing infrastructure, smoke tests, interactive eval runner |
+| **[Copilot instructions](./.github/copilot-instructions.md)** | How the agent is told to use this extension |
+| **[Implementation plan](./PLAN.md)** | Design decisions and roadmap |
 
 ## Validate locally
 
 ```bash
-npm run check
-npm run evals:smoke
-npm run evals:validate-modes
+npm run check              # syntax check
+npm run evals:smoke        # smoke test
+npm run evals:validate-modes  # interactive vs prompt-mode gap
 ```
 
-For automated evals, `evals/run.mjs` starts one ACP server, creates fresh SDK sessions, and mounts the shared runtime from `src/tap-runtime.mjs` directly into those sessions. That means `smoke` and `run` exercise the same EventStream/EventEmitter logic as the extension without depending on `.github/extensions` being discovered in a headless session. The runner writes prompt, response, error, and full event-transcript artifacts under `evals/results/...`.
+---
 
-**Caveat:** the reliable supported paths are **interactive foreground Copilot sessions** and **ACP/SDK sessions that mount the shared runtime directly**. Do **not** treat headless prompt-mode or other non-interactive repo-extension loading as reliable; use `validate-modes` when you need to prove that distinction.
-
-The real repo-scoped extension loader is still validated separately. Run `npm run evals:validate-modes` to probe `copilot -p` with the actual `.github/extensions` entrypoint, then compare it with the same prompt in an interactive `copilot` session. That command is the explicit proof for the current prompt-mode versus interactive-mode gap.
-
-For real extension-loader evals, use the interactive executor lane:
-
-```bash
-node evals/run.mjs prepare-interactive --case E001
-# run the printed prompt inside an interactive `copilot` session
-# then run the printed /share command
-node evals/run.mjs judge-interactive --run-dir "<printed-run-dir>"
-```
-
-That flow keeps the executor in a foreground Copilot session where the actual extension can attach, uses `/share <path>` to persist the interactive transcript for the case, and then runs a tool-free ACP judge against the shared transcript plus the config snapshots. If you reuse one interactive session for multiple cases, run `/clear` before each next case.
+**Ready to try it?** Clone the repo, copy the example config, launch `copilot`, and ask it to watch something. You'll see the difference in under a minute.
