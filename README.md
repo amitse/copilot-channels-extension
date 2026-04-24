@@ -164,13 +164,13 @@ PLAN.md                         # ubiquitous language and design decisions
 
 ## Further reading
 
-| Document | Contents |
+| Document | When to read it |
 | --- | --- |
-| [Reference](./docs/reference.md) | All tools, config schema, event pipeline, and vocabulary |
-| [Use cases and patterns](./docs/use-cases.md) | Workflow recipes: deploy watchers, PR monitors, log tailers |
-| [Evals](./docs/evals.md) | Smoke tests and the interactive eval runner |
-| [Copilot instructions](./.github/copilot-instructions.md) | Guidance the agent follows when using this extension |
-| [Implementation plan](./PLAN.md) | Ubiquitous language, design decisions, and naming conventions |
+| [Reference](./docs/reference.md) | Look up tool parameters, config fields, or the event pipeline |
+| [Use cases and patterns](./docs/use-cases.md) | Recipes for deploy watchers, PR monitors, log tailers, and more |
+| [Evals](./docs/evals.md) | Run or extend the automated test suite |
+| [Copilot instructions](./.github/copilot-instructions.md) | Understand or customize how the agent uses this extension |
+| [Implementation plan](./PLAN.md) | Ubiquitous language and naming conventions for contributors |
 
 ## Contributing
 
