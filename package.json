@@ -1,9 +1,13 @@
 {
   "name": "copilot-tap-extension",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "description": "Copilot CLI extension for background event emitters, event streams, and session injection.",
   "type": "module",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/amitse/copilot-tap-extension"
+  },
   "bin": {
     "copilot-tap-extension": "bin/install.mjs"
   },
