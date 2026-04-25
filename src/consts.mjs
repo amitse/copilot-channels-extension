@@ -17,7 +17,8 @@ export const RUN_INTERVAL_PATTERN =
 
 export const NOTIFICATION_BATCH_SIZE = 4;
 
-export const LOG_PREFIX = "※ tap:";
+export const BRAND = "※ tap";
+export const LOG_PREFIX = `${BRAND}:`;
 
 export const LIFESPAN = Object.freeze({
   TEMPORARY: "temporary",

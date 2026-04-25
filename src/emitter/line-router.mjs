@@ -1,4 +1,4 @@
-import { EVENT_OUTCOME, SOURCE, STREAM } from "../consts.mjs";
+import { BRAND, EVENT_OUTCOME, SOURCE, STREAM } from "../consts.mjs";
 import { evaluateEventFilter } from "../format/event-filter.mjs";
 import { splitTextLines } from "../util/text.mjs";
 
@@ -43,7 +43,7 @@ export function createLineRouter({ streams, notifications, sessionPort }) {
 
     if (outcome === EVENT_OUTCOME.SURFACE) {
       if (sessionPort && sessionPort.log) {
-        sessionPort.log(`※ ${emitter.name}: ${text}`);
+        sessionPort.log(`${BRAND} ${emitter.name}: ${text}`);
       }
     } else if (outcome === EVENT_OUTCOME.INJECT) {
       notifications.enqueue({
