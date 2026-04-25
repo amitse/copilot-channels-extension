@@ -75,13 +75,6 @@ export function createLineRouter({ streams, notifications, sessionPort }) {
         monitorName: emitter.name,
         stream: STREAM.PROMPT
       });
-
-      notifications.enqueue({
-        channel: emitter.stream,
-        monitorName: emitter.name,
-        stream: STREAM.PROMPT,
-        text
-      });
     }
   }
 

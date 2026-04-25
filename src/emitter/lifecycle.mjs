@@ -9,7 +9,7 @@ import {
   STREAM
 } from "../consts.mjs";
 import { nowIso } from "../util/time.mjs";
-import { toText } from "../util/text.mjs";
+
 import { isTerminalEmitterStatus } from "../util/policy.mjs";
 import { describeEmitterWork } from "../format/emitter.mjs";
 import { readLines, spawnEmitterProcess } from "./spawn.mjs";
@@ -121,22 +121,13 @@ export function createLifecycle({ lineRouter, sessionPort }) {
 
   async function runPromptIteration(emitter) {
     try {
-      const response = await sessionPort.sendAndWait(emitter.prompt);
+      await sessionPort.send(emitter.prompt);
 
       if (emitter.stopRequested) {
         return { ok: true };
       }
 
-      const responseText = toText(response?.data?.content ?? response?.data ?? response);
-
-      if (responseText.trim()) {
-        lineRouter.handlePromptResult(emitter, responseText);
-      } else {
-        lineRouter.appendSystemMessage(
-          emitter,
-          `Emitter '${emitter.name}' received an empty response from prompt work.`
-        );
-      }
+      emitter.lineCount += 1;
 
       return { ok: true };
     } catch (error) {

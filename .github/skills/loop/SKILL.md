@@ -67,12 +67,11 @@ When this skill is invoked:
 
 ## Why subscribe defaults to false
 
-PromptEmitter output is already delivered through two paths:
+PromptEmitter output is delivered through a single path:
 
-1. **`session.sendAndWait()`** -- the prompt runs inside the session, so Copilot processes and responds to it directly.
-2. **Notification dispatcher** -- each result line is also enqueued via `handlePromptResult` and injected as a background event stream update via `session.send()`.
+1. **`session.send()`** -- the prompt is dispatched fire-and-forget; Copilot processes and responds to it directly inside the session.
 
-The `subscribe` flag controls a third layer: the **SessionInjector**. When enabled, it additionally pushes system-level messages (emitter started, stopped, errored) into the session.
+The `subscribe` flag controls the **SessionInjector**. When enabled, it additionally pushes system-level messages (emitter started, stopped, errored) into the session.
 
 For PromptEmitters, the main results already reach the session without the SessionInjector. Setting `subscribe = true` adds system noise on top of content that is already being delivered. Default to `false` to keep things clean.
 
