@@ -1,6 +1,13 @@
-# copilot-tap-extension
+<p align="center">
+  <img src="./tap.svg" width="80" height="80" alt="※ tap">
+</p>
 
-Background event filtering and injection for Copilot CLI.
+<h1 align="center">※ tap</h1>
+
+<p align="center">
+  <em>Background event filtering and injection for Copilot CLI.</em><br>
+  <sub>Look here, this matters.</sub>
+</p>
 
 ---
 
@@ -161,9 +168,11 @@ src/
   util/                         # normalization, text, time, path helpers
   hooks.mjs                     # session lifecycle hooks
   tap-runtime.mjs               # runtime factory (wires everything together)
+tap.svg                         # ※ mark — the tap icon
+docs/
+  evolution-of-tap-icon.html    # design evolution: 20 agents, 20 metaphors, one mark
 examples/heartbeat.mjs          # demo CommandEmitter
 evals/                          # eval harness and test cases
-docs/                           # reference, use cases, evals docs
 tap.config.example.json         # starter config (copy to tap.config.json)
 PLAN.md                         # ubiquitous language and design decisions
 ```
@@ -177,6 +186,7 @@ PLAN.md                         # ubiquitous language and design decisions
 | [Evals](./docs/evals.md) | Run or extend the automated test suite |
 | [Copilot instructions](./.github/copilot-instructions.md) | Understand or customize how the agent uses this extension |
 | [Implementation plan](./PLAN.md) | Ubiquitous language and naming conventions for contributors |
+| [Evolution of the ※ icon](./docs/evolution-of-tap-icon.html) | 20 metaphors, 10 variants, one mark — the design story behind ※ tap |
 
 ## Contributing
 
