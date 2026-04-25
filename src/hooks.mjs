@@ -1,4 +1,5 @@
 import { BRAND, COPILOT_INSTRUCTIONS_PATH, DEFAULT_STREAM, DEFAULT_STREAM_DESCRIPTION, OWNERSHIP, LIFESPAN } from "./consts.mjs";
+import { checkAndUpdate } from "./update/checker.mjs";
 
 function sessionInjectorSummary(streams) {
   const subscribed = streams.list().filter((stream) => stream.sessionInjector.enabled);
@@ -62,6 +63,9 @@ export function createHooks({ streams, configStore, supervisor, sessionPort, set
   return {
     onSessionStart: async (input) => {
       streams.ensure(DEFAULT_STREAM, DEFAULT_STREAM_DESCRIPTION);
+
+      // Fire-and-forget update check — never blocks session start.
+      checkAndUpdate(sessionPort).catch(() => {});
 
       let configSummary = "No config loaded.";
       try {

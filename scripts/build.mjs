@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { build } from "esbuild";
-import { copyFileSync, mkdirSync } from "node:fs";
+import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
@@ -41,3 +41,11 @@ copyFileSync(
   path.join(dist, "copilot-instructions.md")
 );
 console.log("✓ dist/copilot-instructions.md copied");
+
+// 4. Write version.json
+const pkg = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8"));
+writeFileSync(
+  path.join(dist, "version.json"),
+  JSON.stringify({ version: pkg.version }, null, 2) + "\n"
+);
+console.log(`✓ dist/version.json written (v${pkg.version})`);

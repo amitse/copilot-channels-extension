@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { existsSync, mkdirSync, copyFileSync } from "node:fs";
+import { existsSync, mkdirSync, copyFileSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import os from "node:os";
@@ -10,6 +10,14 @@ const distDir = path.join(pkgRoot, "dist");
 
 const BRAND = "※ tap";
 const EXT_DIR_NAME = "tap";
+
+function getPackageVersion() {
+  try {
+    return JSON.parse(readFileSync(path.join(distDir, "version.json"), "utf8")).version;
+  } catch {
+    return JSON.parse(readFileSync(path.join(pkgRoot, "package.json"), "utf8")).version;
+  }
+}
 
 function usage() {
   console.log(`
@@ -22,10 +30,12 @@ Options:
   --global, -g     Install to ~/.copilot/  (default)
   --local,  -l     Install to .github/  (project-scoped)
   --force,  -f     Overwrite existing files without prompting
+  --update, -u     Update core files only (extension + version), skip customizable artifacts
   --help,   -h     Show this help message
 
 Installs:
   extensions/tap/extension.mjs    The bundled ※ tap extension
+  extensions/tap/version.json     Installed version metadata
   skills/loop/SKILL.md            The /loop skill for prompt-based loops
   copilot-instructions.md         Agent instructions for using ※ tap
 `);
@@ -33,7 +43,7 @@ Installs:
 
 function parseArgs(argv) {
   const args = argv.slice(2);
-  const flags = { scope: "global", force: false, help: false };
+  const flags = { scope: "global", force: false, help: false, update: false };
   for (const arg of args) {
     switch (arg) {
       case "--global":
@@ -46,6 +56,11 @@ function parseArgs(argv) {
         break;
       case "--force":
       case "-f":
+        flags.force = true;
+        break;
+      case "--update":
+      case "-u":
+        flags.update = true;
         flags.force = true;
         break;
       case "--help":
@@ -83,18 +98,46 @@ function copyArtifact(src, dest, label, flags) {
   return true;
 }
 
+function getInstalledVersion(targetRoot) {
+  try {
+    const versionFile = path.join(targetRoot, "extensions", EXT_DIR_NAME, "version.json");
+    return JSON.parse(readFileSync(versionFile, "utf8")).version;
+  } catch {
+    return null;
+  }
+}
+
 function install(flags) {
   const targetRoot = getTargetRoot(flags.scope);
   const scopeLabel = flags.scope === "global" ? "global (~/.copilot)" : "local (.github)";
+  const packageVersion = getPackageVersion();
 
-  console.log(`\n${BRAND} — installing (${scopeLabel})\n`);
+  if (flags.update) {
+    const installedVersion = getInstalledVersion(targetRoot);
+    if (installedVersion && installedVersion === packageVersion) {
+      console.log(`\n${BRAND} — already up to date (v${installedVersion})\n`);
+      process.exit(0);
+    }
+    const fromLabel = installedVersion ? `v${installedVersion}` : "unknown";
+    console.log(`\n${BRAND} — updating ${fromLabel} → v${packageVersion} (${scopeLabel})\n`);
+  } else {
+    console.log(`\n${BRAND} — installing v${packageVersion} (${scopeLabel})\n`);
+  }
 
-  const artifacts = [
+  const coreArtifacts = [
     {
       src: path.join(distDir, "extension.mjs"),
       dest: path.join(targetRoot, "extensions", EXT_DIR_NAME, "extension.mjs"),
       label: "extensions/tap/extension.mjs"
     },
+    {
+      src: path.join(distDir, "version.json"),
+      dest: path.join(targetRoot, "extensions", EXT_DIR_NAME, "version.json"),
+      label: "extensions/tap/version.json"
+    }
+  ];
+
+  const ancillaryArtifacts = [
     {
       src: path.join(distDir, "skills", "loop", "SKILL.md"),
       dest: path.join(targetRoot, "skills", "loop", "SKILL.md"),
@@ -107,6 +150,8 @@ function install(flags) {
     }
   ];
 
+  const artifacts = flags.update ? coreArtifacts : [...coreArtifacts, ...ancillaryArtifacts];
+
   let allOk = true;
   for (const { src, dest, label } of artifacts) {
     if (!copyArtifact(src, dest, label, flags)) {
@@ -116,9 +161,10 @@ function install(flags) {
 
   console.log();
   if (allOk) {
-    console.log(`✓ ${BRAND} installed to ${targetRoot}`);
+    const verb = flags.update ? "updated" : "installed";
+    console.log(`✓ ${BRAND} ${verb} to ${targetRoot}`);
   } else {
-    console.error(`⚠  Some artifacts could not be installed.`);
+    console.error(`⚠  Some artifacts could not be ${flags.update ? "updated" : "installed"}.`);
     process.exit(1);
   }
 }
