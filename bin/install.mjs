@@ -79,9 +79,13 @@ function parseArgs(argv) {
   return flags;
 }
 
+function getCopilotHome() {
+  return process.env.COPILOT_HOME || path.join(os.homedir(), ".copilot");
+}
+
 function getTargetRoot(scope) {
   if (scope === "global") {
-    return path.join(os.homedir(), ".copilot");
+    return getCopilotHome();
   }
   return path.join(process.cwd(), ".github");
 }
@@ -111,7 +115,7 @@ function isAlreadyInstalled(targetRoot) {
 }
 
 function isCopilotCliInstalled() {
-  if (existsSync(path.join(os.homedir(), ".copilot"))) {
+  if (existsSync(getCopilotHome())) {
     return true;
   }
   try {

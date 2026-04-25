@@ -6,8 +6,10 @@ import os from "node:os";
 const PKG_NAME = "copilot-tap-extension";
 const REGISTRY_URL = `https://registry.npmjs.org/${PKG_NAME}/latest`;
 
-const UPDATE_STATE_DIR = path.join(os.homedir(), ".copilot");
-const UPDATE_STATE_FILE = path.join(UPDATE_STATE_DIR, ".tap-update-state.json");
+function getCopilotHome() {
+  return process.env.COPILOT_HOME || path.join(os.homedir(), ".copilot");
+}
+
 const CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
 function getInstalledVersion() {
@@ -29,9 +31,13 @@ function getInstalledVersion() {
   }
 }
 
+function getUpdateStateFile() {
+  return path.join(getCopilotHome(), ".tap-update-state.json");
+}
+
 function readUpdateState() {
   try {
-    return JSON.parse(readFileSync(UPDATE_STATE_FILE, "utf8"));
+    return JSON.parse(readFileSync(getUpdateStateFile(), "utf8"));
   } catch {
     return {};
   }
@@ -39,8 +45,9 @@ function readUpdateState() {
 
 function writeUpdateState(state) {
   try {
-    mkdirSync(UPDATE_STATE_DIR, { recursive: true });
-    writeFileSync(UPDATE_STATE_FILE, JSON.stringify(state, null, 2) + "\n");
+    const stateDir = getCopilotHome();
+    mkdirSync(stateDir, { recursive: true });
+    writeFileSync(getUpdateStateFile(), JSON.stringify(state, null, 2) + "\n");
   } catch {
     // Best-effort — never interrupt the session for state persistence.
   }
