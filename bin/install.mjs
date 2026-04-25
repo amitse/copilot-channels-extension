@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { existsSync, mkdirSync, copyFileSync, readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import os from "node:os";
@@ -109,10 +110,30 @@ function isAlreadyInstalled(targetRoot) {
   return existsSync(path.join(targetRoot, "extensions", EXT_DIR_NAME, "extension.mjs"));
 }
 
+function isCopilotCliInstalled() {
+  if (existsSync(path.join(os.homedir(), ".copilot"))) {
+    return true;
+  }
+  try {
+    execFileSync("copilot", ["--version"], { stdio: "ignore", timeout: 5000 });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function install(flags) {
   const targetRoot = getTargetRoot(flags.scope);
   const scopeLabel = flags.scope === "global" ? "global (~/.copilot)" : "local (.github)";
   const packageVersion = getPackageVersion();
+
+  if (flags.scope === "global" && !isCopilotCliInstalled()) {
+    console.log(`\n⚠  Copilot CLI does not appear to be installed.`);
+    console.log(`   Install it first: https://docs.github.com/en/copilot/github-copilot-in-the-cli`);
+    console.log(`   Then re-run: npx copilot-tap-extension\n`);
+    process.exit(1);
+  }
+
   const installed = isAlreadyInstalled(targetRoot);
   const isUpdate = installed && !flags.full;
 
