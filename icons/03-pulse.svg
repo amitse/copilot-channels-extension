@@ -6,7 +6,7 @@
     </linearGradient>
   </defs>
   <path d="M15.5 4.5 L4.5 15.5" stroke="#2D7D9E" stroke-width="1.8" stroke-linecap="round" fill="none"/>
-  <path d="M4.5 4.5 L8.5 8.5 L7.9 12.1 L11.4 8.6 L12 12 L15.5 15.5" stroke="url(#i3-ekg)" stroke-width="2.0" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+  <path d="M4.5 4.5 L8.5 8.5 L8.2 11.5 L11.0 9.0 L11.5 11.5 L15.5 15.5" stroke="url(#i3-ekg)" stroke-width="2.0" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
   <circle cx="10" cy="4.0" r="1.5" fill="#5BB8DA"/>
   <circle cx="16.0" cy="10" r="1.5" fill="#3994BC"/>
   <circle cx="10" cy="16.0" r="1.5" fill="#2D7D9E"/>
