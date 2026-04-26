@@ -5,15 +5,66 @@
 ```
 Extension (Gateway + Hook API)        Provider (tap, browser, anything)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Owns the Copilot SDK session          Knows nothing about Copilot SDK
+Owns the Copilot SDK sessions         Knows nothing about Copilot SDK
 Runs the WS server on :9400           Connects as WS client
-Calls registerTools()                 Announces tool definitions
+Calls registerTools() per session     Announces tool definitions
 Executes hooks in-process             Sends hook rules
 Holds EventStreams                    Pushes events
 Manages session lifecycle             Stateless (can reconnect anytime)
+Tracks multiple sessions              Optionally picks a session
 ```
 
 One extension, installed once. Unlimited providers, no install needed.
+
+## Session binding
+
+The gateway manages multiple concurrent Copilot sessions. Providers are bound to sessions:
+
+| Provider type | Session binding | Who decides |
+|---|---|---|
+| **Internal** (spawned by gateway from project config) | Bound to the session that started it | Automatic — gateway stamps it, provider never sees a session ID |
+| **External** (self-connects via WS) | Picks a session from the list, or binds to all | Provider decides, using session list from gateway |
+
+### How external providers discover sessions
+
+On connect, the gateway sends a `sessions` message listing all active sessions:
+
+```json
+{
+  "type": "sessions",
+  "active": [
+    { "id": "abc123", "label": "PR #42 review", "cwd": "/code/foo" },
+    { "id": "def456", "label": "feature/auth", "cwd": "/code/bar" }
+  ]
+}
+```
+
+The provider picks one (e.g., shows a UI picker to the user) and includes it in `hello`:
+
+```json
+{ "type": "hello", "name": "browser", "session": "abc123", "tools": [...] }
+```
+
+Or broadcasts to all sessions:
+
+```json
+{ "type": "hello", "name": "browser", "session": "all", "tools": [...] }
+```
+
+Internal providers don't need to pick — the gateway fills in the session ID automatically. The provider just sends:
+
+```json
+{ "type": "hello", "name": "ci-watcher", "tools": [...] }
+```
+
+And the gateway binds it to the session that spawned it.
+
+### What "bound to a session" means
+
+- Provider's tools are registered only in that session (`registerTools()` scoped)
+- Provider's `push` events are injected into that session only
+- Provider's hook rules apply to that session only
+- When `session: "all"`, tools/events/hooks are registered in every active session
 
 ## Provider lifecycle
 
@@ -24,10 +75,13 @@ Provider starts
 Connect: ws://localhost:9400
     │
     ▼
-Send: hello (name, tools, hooks, context)
+Receive: sessions (list of active Copilot sessions)
     │
     ▼
-Gateway registers tools + hook rules
+Send: hello (name, session, tools, hooks, context)
+    │
+    ▼
+Gateway registers tools + hook rules in the bound session(s)
     │
     ├─── Copilot calls a tool ──► Gateway sends: tool.call
     │                              Provider sends: tool.result
@@ -47,12 +101,15 @@ Gateway removes provider's tools + hook rules
 
 ### `hello` — register as a provider
 
-Sent immediately after connecting. Everything is optional except `name`.
+Sent immediately after receiving the `sessions` list. Everything is optional except `name`.
+
+For external providers, `session` selects which Copilot session to bind to (`"all"` for broadcast). For internal providers (spawned by the gateway), omit `session` — the gateway fills it in automatically.
 
 ```json
 {
   "type": "hello",
   "name": "my-provider",
+  "session": "abc123",
   "tools": [
     {
       "name": "my_tool",
@@ -341,48 +398,63 @@ ws.on("message", (raw) => {
 });
 ```
 
-### Browser (injected via Detour, 40 lines)
+### Browser (injected via Detour, with session picker)
 
 ```js
 const ws = new WebSocket("ws://localhost:9400");
-
-ws.onopen = () => {
-  ws.send(JSON.stringify({
-    type: "hello",
-    name: "browser",
-    tools: [{
-      name: "page_title",
-      description: "Get the current page title",
-      parameters: {}
-    }, {
-      name: "page_screenshot",
-      description: "Screenshot the current viewport",
-      parameters: {}
-    }]
-  }));
-};
+let sessions = [];
 
 ws.onmessage = (e) => {
   const msg = JSON.parse(e.data);
-  if (msg.type !== "tool.call") return;
 
-  if (msg.tool === "page_title") {
-    ws.send(JSON.stringify({
-      type: "tool.result", id: msg.id,
-      data: document.title
-    }));
+  // Gateway sends session list on connect
+  if (msg.type === "sessions") {
+    sessions = msg.active;
+    if (sessions.length === 1) {
+      // Only one session — auto-bind
+      register(sessions[0].id);
+    } else if (sessions.length > 1) {
+      // Multiple sessions — show picker
+      showSessionPicker(sessions, (chosen) => register(chosen.id));
+    }
+    return;
   }
 
-  if (msg.tool === "page_screenshot") {
-    // Use html2canvas or canvas API
-    html2canvas(document.body).then(canvas => {
+  // Handle tool calls
+  if (msg.type === "tool.call") {
+    if (msg.tool === "page_title") {
       ws.send(JSON.stringify({
         type: "tool.result", id: msg.id,
-        data: { image: canvas.toDataURL("image/png") }
+        data: document.title
       }));
-    });
+    }
   }
 };
+
+function register(sessionId) {
+  ws.send(JSON.stringify({
+    type: "hello",
+    name: "browser",
+    session: sessionId,
+    tools: [
+      { name: "page_title", description: "Get the current page title", parameters: {} },
+      { name: "page_screenshot", description: "Screenshot the viewport", parameters: {} }
+    ]
+  }));
+}
+
+function showSessionPicker(sessions, onPick) {
+  // Small overlay UI — the provider decides how to present this
+  const el = document.createElement("div");
+  el.innerHTML = sessions.map(s =>
+    `<button data-id="${s.id}">${s.label} (${s.cwd})</button>`
+  ).join("");
+  el.addEventListener("click", (e) => {
+    const id = e.target.dataset.id;
+    if (id) { onPick(sessions.find(s => s.id === id)); el.remove(); }
+  });
+  document.body.appendChild(el);
+}
 ```
 
 ### Python (30 lines)
@@ -426,7 +498,8 @@ asyncio.run(provider())
 
 | Concern | Provider sends | Gateway sends |
 |---|---|---|
-| **Identity** | `hello` | — |
+| **Sessions** | — | `sessions` (on connect, lists active sessions) |
+| **Identity** | `hello` (includes `session` binding) | — |
 | **Tools** | `hello.tools`, `tools.update` | `tool.call` |
 | **Tool results** | `tool.result` | — |
 | **Events** | `push` | — |
@@ -436,4 +509,4 @@ asyncio.run(provider())
 | **Session events** | — | `session.event` (if subscribed) |
 | **Lifecycle** | `goodbye` | `session.lifecycle` |
 
-13 message types total. That's the full contract.
+14 message types total. That's the full contract.
