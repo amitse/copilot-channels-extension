@@ -161,18 +161,17 @@ The gateway generates a one-time **gateway secret** on first startup, written to
 
 Gateway responds with `sessions` on success, or closes the socket on failure. Internal providers (LocalProviderTransport) skip auth. The gateway spawns project providers with the secret as env var `TAP_GATEWAY_SECRET`.
 
-### Session IDs on all session-scoped messages
+**External provider bootstrap:** The gateway also serves a one-shot HTTP endpoint at `http://localhost:9400/secret?origin=localhost` that returns the secret. This endpoint only responds to requests from `127.0.0.1`/`::1` and requires the caller to present a valid origin. Browser scripts can fetch this to obtain the secret before opening the WebSocket.
 
-All messages that are session-scoped include a `sessionId` field:
+### Session IDs and correlation IDs
 
-- `session.lifecycle` → `{ "state": "...", "sessionId": "abc123" }`
-- `session.event` → `{ "event": "...", "sessionId": "abc123", "data": {...} }`
-- `tool.call` → `{ "id": "...", "tool": "...", "args": {...}, "sessionId": "abc123" }`
-- `gate.check` → `{ ..., "sessionId": "abc123" }`
-- `transform.request` → `{ ..., "sessionId": "abc123" }`
-- `shutdown.ready` → `{ "sessionId": "abc123" }`
+All `id` and `callId` values are **globally unique** (UUIDs or equivalent). A provider can safely correlate responses without `sessionId` because IDs never collide across sessions.
 
-Providers bound to a single session can ignore `sessionId`. Providers bound to `"all"` use it to route responses.
+All session-scoped gateway→provider messages include `sessionId`:
+
+- `session.lifecycle`, `session.event`, `tool.call`, `tool.cancel`, `gate.check`, `transform.request`
+
+Provider→gateway responses do NOT need `sessionId` — the gateway correlates via the globally unique `id`/`callId`. Exception: `shutdown.ready` includes `sessionId` because it's not a response to a specific call.
 
 ### Error responses
 
@@ -201,7 +200,7 @@ A tool call has one terminal state. The first terminal message wins:
 
 - `tool.result` arrives → call is complete. Any later `tool.result` for the same `id` is ignored.
 - `tool.cancel` sent → if `tool.result` hasn't arrived, call is cancelled. If `tool.result` arrives after `tool.cancel`, gateway ignores it.
-- Provider disconnects with in-flight calls → gateway returns `errorCode: "DISCONNECTED"` to Copilot.
+- Provider disconnects with in-flight calls → gateway returns `errorCode: "DISCONNECTED"` to Copilot. The call is NOT replayed on reconnect (side effects may have partially executed).
 
 ### Gate timeout behavior: fail closed
 
@@ -214,33 +213,35 @@ gate.check sent → 5s timeout → no gate.result → permissionDecision: "deny"
 
 Providers can opt into fail-open per gate rule: `{ "action": "gate", "gateId": "...", "failOpen": true }`.
 
+If a provider **disconnects** with a pending `gate.check`, the gate is denied (fail closed). Pending `transform.request` calls fall back to `current` content unchanged on disconnect.
+
 ### Reconnect protocol
 
 1. Gateway generates `reconnectToken` in `hello.ack`. Token is valid for 30 seconds.
 2. On reconnect, provider includes `reconnectToken` in `hello`. Gateway:
    - Invalidates the old connection (if still open)
    - Restores provider binding (session, tools, hooks)
-   - Re-sends any `pendingCalls` (tool calls that had no result)
-3. Provider MUST idempotently handle re-sent `pendingCalls` (same `id` = same call).
+3. Any in-flight `tool.call` at disconnect time is **failed** with `errorCode: "DISCONNECTED"` (not replayed). The provider starts clean — no `pendingCalls`.
 4. Token expires after 30s — reconnect after that is a fresh `hello`.
 5. Only one active connection per `name` + `instance`. New connection with same identity kills the old one.
 
 ### Push loop prevention
 
-The gateway enforces a per-provider push budget:
-- Max 10 `push` messages per second per provider.
-- A `push` with `level: "inject"` triggers an AI turn. The gateway will not deliver another `inject`-level push from the same provider until the current turn completes (indicated by `session.lifecycle: idle`).
-- Providers subscribed to `assistant.message` that react with `push { level: "inject" }` are rate-limited. After 3 consecutive inject→response→inject cycles from the same provider, the gateway pauses that provider's pushes and logs a warning.
+The gateway enforces push budgets scoped by **(provider, sessionId)**:
+- Max 10 `push` messages per second per (provider, session).
+- A `push` with `level: "inject"` triggers an AI turn. The gateway will not deliver another `inject`-level push from the same provider to the same session until that session becomes idle.
+- After 3 consecutive inject→response→inject cycles from the same provider in the same session, the gateway pauses that provider's inject pushes to that session and logs a warning.
 
 ### Stream access control
 
 - Providers can query their **own** streams via `stream.query` by default.
-- To query another provider's streams, the `hello` must include `"streamAccess": "all"`. The gateway may restrict this based on trust level.
+- To query another provider's streams, the `hello` must include `"streamAccess": "all"`. The gateway logs cross-provider stream reads for auditability.
 - `filter.set` only works on the provider's own streams. A provider cannot set filters on another provider's streams.
 
 ### Payload limits
 
-- Max message size: **2 MB** per WebSocket frame. Messages exceeding this are rejected with `PAYLOAD_TOO_LARGE`.
+- Max message size: **5 MB** for `tool.result` messages (screenshots, large outputs). **2 MB** for all other messages.
+- For payloads exceeding 5 MB, providers should write to a temp file and return a `{ "file": "/tmp/screenshot-abc.png" }` reference instead of inline data.
 - Max tools per provider: **100**.
 - Max hook rules per provider: **50**.
 - Max streams per provider: **20**.
@@ -250,20 +251,18 @@ The gateway enforces a per-provider push budget:
 ### `"all"` binding and session churn
 
 When a provider is bound to `"all"`:
-- Its tools, hooks, and context are registered in all **currently active** sessions at `hello` time.
-- When a new session starts, the gateway **automatically** registers the provider's tools/hooks/context in the new session before sending `sessions.updated`.
+- Its tools and context are registered in all **currently active** sessions at `hello` time.
+- When a new session starts, the gateway registers the provider's tools and context in the new session. **Fail-closed gate rules are NOT activated** until the provider receives `sessions.updated` and has a chance to initialize session-specific state. Gates become active after a 5s grace period or after the provider sends `hooks.update` for that session.
 - When a session ends, the provider receives `session.lifecycle: shutdown.pending` with that session's `sessionId`. After cleanup, provider sends `shutdown.ready` with the same `sessionId`. The provider remains connected for other sessions.
 
-### Gateway ownership and process model
+### Gateway process model
 
 The gateway runs as a **detached background process**, not inside any single Copilot session's extension process.
 
 1. First Copilot session starts → extension checks if gateway is running (attempts WS connect to `:9400`).
 2. Not running → extension spawns the gateway as a detached process (survives session end). Extension connects to it as an internal client registering its session.
 3. Already running → extension connects and registers its session.
-4. Gateway exits when the last session disconnects (after a 10s grace period for reconnects).
-
-This avoids the ownership-transfer problem entirely. The gateway is independent of any single session.
+4. Gateway exits when the last session disconnects (after a **30s** grace period — matches reconnect token TTL, so reconnecting providers and late-arriving sessions have time).
 
 ### Regex execution safety
 
@@ -341,7 +340,7 @@ Sent when a tool call exceeds its timeout or the session is interrupted. Provide
 }
 ```
 
-Timeout: 5s. If no response, gateway allows the action.
+Timeout: 5s. If no response, gateway **denies** the action (fail closed). See Protocol Rules.
 
 ### `transform.request` — dynamic transform callback
 
@@ -479,6 +478,7 @@ Always sent, no opt-in needed.
 | `tools` | no | Tool definitions with JSON Schema parameters. `timeout` (ms) per tool is optional. |
 | `hooks` | no | Hook rules and transform declarations. |
 | `subscribe` | no | Session event types to receive. |
+| `streamAccess` | no | `"own"` (default) or `"all"`. Controls whether `stream.query` can read other providers' streams. |
 | `context` | no | Ambient context injected on every user prompt. |
 
 ### `tool.result` — respond to a tool invocation
@@ -774,8 +774,18 @@ Multiple providers can append to the same section. Gateway concatenates in regis
 
 ```js
 import WebSocket from "ws";
+import { readFileSync } from "fs";
+import { join } from "path";
+import { homedir } from "os";
+
+const secret = process.env.TAP_GATEWAY_SECRET
+  || readFileSync(join(process.env.COPILOT_HOME || join(homedir(), ".copilot"), ".tap-gateway-secret"), "utf8").trim();
 
 const ws = new WebSocket("ws://localhost:9400");
+
+ws.on("open", () => {
+  ws.send(JSON.stringify({ type: "auth", secret }));
+});
 
 ws.on("message", (raw) => {
   const msg = JSON.parse(raw);
