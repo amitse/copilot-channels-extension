@@ -10,10 +10,9 @@ Copilot CLI (※ tap)  ◄─ws─►  Bridge Server  ◄─ws─►  Injected J
 ```
 
 1. A standalone **bridge server** runs locally on a WebSocket port.
-2. **Detour injects a client script** into target pages — no changes to Detour itself.
-3. **tap tools** connect to the bridge, send requests, and return results to Copilot.
-
-Detour already runs arbitrary JS in the MAIN world and bypasses CSP. The bridge client is just another script it injects.
+2. **Detour injects a client script** into target pages — no changes to Detour needed. Detour already runs arbitrary JS in the MAIN world and bypasses CSP. The bridge client is just another script it injects.
+3. **tap dynamically registers tools** when the bridge connects via `session.registerTools()` — Copilot sees browser tools appear and disappear as the bridge connects/disconnects.
+4. **Push events** (console, annotations) flow from the browser through a tap emitter into the Copilot session.
 
 ## Architecture
 
@@ -38,15 +37,32 @@ A self-contained JS file hosted locally or on a CDN. Added to Detour as a script
 - Handles action requests (screenshot, DOM query, JS exec)
 - Pushes events (console, annotations) to the bridge
 
-### tap integration
+### tap integration — dynamic tool registration
 
-New tools in ※ tap that connect to the bridge on demand:
+The Copilot SDK supports `session.registerTools()` at runtime (`CopilotSession.registerTools`). tap doesn't need to predefine browser tools — it registers them when the bridge connects and removes them when it disconnects.
 
-- `tap_browser_screenshot` — capture viewport
-- `tap_browser_query` — querySelector, return HTML/text/attributes
-- `tap_browser_react_context` — React component name, file, line, props
-- `tap_browser_exec` — execute arbitrary JS, return result
-- `tap_browser_navigate` — go to a URL
+```js
+// When bridge connects and browser is available:
+session.registerTools([
+  ...existingTapTools,
+  {
+    name: "browser_screenshot",
+    description: "Capture the visible browser viewport as a PNG screenshot",
+    handler: async () => bridge.request("screenshot")
+  },
+  {
+    name: "browser_exec",
+    description: "Execute JS in the page MAIN world, return result",
+    parameters: { type: "object", properties: { js: { type: "string" } }, required: ["js"] },
+    handler: async ({ js }) => bridge.request("js.exec", { js })
+  }
+]);
+
+// When bridge disconnects — re-register without browser tools:
+session.registerTools(existingTapTools);
+```
+
+This pattern generalizes: any WebSocket-connected service can surface tools into Copilot at runtime — not just the browser bridge. The bridge announces what actions the connected browser supports, and tap materializes them as tools.
 
 ## Protocol
 
