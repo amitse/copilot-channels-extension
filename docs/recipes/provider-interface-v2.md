@@ -70,7 +70,7 @@ The gateway maintains a registry of active sessions:
 | Event | Gateway behavior |
 |---|---|
 | **New session registers** | Added to registry. Gateway sends `sessions.updated` to all connected providers. Internal providers spawned from that session's config are bound to it. |
-| **Session ends** | Removed from registry. Internal providers bound to it are stopped. External providers bound to it receive `session.lifecycle: shutdown.pending` with a deadline. Providers bound to `"all"` are unaffected. Gateway sends `sessions.updated` to all providers. |
+| **Session ends** | Removed from registry. Internal providers bound to it are stopped. External providers bound to it receive `session.lifecycle: shutdown.pending` with a deadline. Providers bound to `"all"` remain connected for other sessions but still receive `shutdown.pending` for the ended session and must send `shutdown.ready`. Gateway sends `sessions.updated` to all providers. |
 | **Gateway-owning session ends** | If other sessions remain, gateway ownership transfers — the WS server keeps running. If no sessions remain, the gateway shuts down. |
 | **All sessions end** | Gateway shuts down. WS server closes. External providers disconnect. |
 | **External provider is bound to a session that ends** | Provider receives `session.lifecycle: shutdown.pending`. Its tools are deregistered from that session. The provider stays connected and can re-bind to another session via a new `hello`. |
@@ -856,6 +856,8 @@ ws.on("message", (raw) => {
 ```js
 const GATEWAY = "localhost:9400";
 let ws, sessions = [], registered = false, secret;
+let reconnectToken = null;
+const INSTANCE = "tab-" + Math.random().toString(36).slice(2, 6);
 
 // Step 1: fetch auth secret from gateway HTTP endpoint
 fetch(`http://${GATEWAY}/secret`)
@@ -874,7 +876,7 @@ function connect() {
   ws.onmessage = (e) => {
     const msg = JSON.parse(e.data);
 
-    // Step 3: receive session list
+    // Step 3: receive session list or ack
     if (msg.type === "sessions" || msg.type === "sessions.updated") {
       sessions = msg.active;
       if (!registered) {
@@ -882,6 +884,11 @@ function connect() {
         else if (sessions.length === 1) register(sessions[0].id);
         else showSessionPicker(sessions, (s) => register(s.id));
       }
+      return;
+    }
+
+    if (msg.type === "hello.ack") {
+      reconnectToken = msg.reconnectToken;  // persist for reconnect
       return;
     }
 
@@ -900,7 +907,8 @@ function register(sessionId) {
   ws.send(JSON.stringify({
     type: "hello",
     name: "browser",
-    instance: "tab-" + Math.random().toString(36).slice(2, 6),
+    instance: INSTANCE,
+    reconnectToken,  // restore binding on reconnect (null on first connect)
     session: sessionId,
     metadata: { url: location.href, title: document.title },
     tools: [
