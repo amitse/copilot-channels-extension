@@ -70,10 +70,10 @@ The gateway maintains a registry of active sessions:
 | Event | Gateway behavior |
 |---|---|
 | **New session registers** | Added to registry. Gateway sends `sessions.updated` to all connected providers. Internal providers spawned from that session's config are bound to it. |
-| **Session ends** | Removed from registry. Internal providers bound to it are stopped. External providers bound to it receive `session.lifecycle: shutdown`. Providers bound to `"all"` are unaffected. Gateway sends `sessions.updated` to all providers. |
+| **Session ends** | Removed from registry. Internal providers bound to it are stopped. External providers bound to it receive `session.lifecycle: shutdown.pending` with a deadline. Providers bound to `"all"` are unaffected. Gateway sends `sessions.updated` to all providers. |
 | **Gateway-owning session ends** | If other sessions remain, gateway ownership transfers — the WS server keeps running. If no sessions remain, the gateway shuts down. |
 | **All sessions end** | Gateway shuts down. WS server closes. External providers disconnect. |
-| **External provider is bound to a session that ends** | Provider receives `session.lifecycle: shutdown`. Its tools are deregistered from that session. The provider stays connected and can re-bind to another session via a new `hello`. |
+| **External provider is bound to a session that ends** | Provider receives `session.lifecycle: shutdown.pending`. Its tools are deregistered from that session. The provider stays connected and can re-bind to another session via a new `hello`. |
 
 ### Provider perspective
 
@@ -82,7 +82,7 @@ Providers never manage sessions. They see:
 1. `sessions` message on connect — list of active sessions
 2. `sessions.updated` when sessions come or go — updated list
 3. They pick a session in `hello` (or `"all"`)
-4. If their session ends, they get `session.lifecycle: shutdown` and can re-bind
+4. If their session ends, they get `session.lifecycle: shutdown.pending` and can re-bind
 
 ---
 
@@ -199,8 +199,8 @@ Error codes: `INVALID_JSON`, `UNKNOWN_TYPE`, `INVALID_SESSION`, `AUTH_FAILED`, `
 A tool call has one terminal state. The first terminal message wins:
 
 - `tool.result` arrives → call is complete. Any later `tool.result` for the same `id` is ignored.
-- `tool.cancel` sent → if `tool.result` hasn't arrived, call is cancelled. If `tool.result` arrives after `tool.cancel`, gateway ignores it.
-- Provider disconnects with in-flight calls → gateway returns `errorCode: "DISCONNECTED"` to Copilot. The call is NOT replayed on reconnect (side effects may have partially executed).
+- `tool.cancel` sent → provider MUST respond with `tool.result { errorCode: "CANCELLED" }` as the terminal state. If a non-cancelled `tool.result` arrives after `tool.cancel`, gateway ignores it.
+- Provider disconnects with in-flight calls → gateway returns `errorCode: "DISCONNECTED"` to Copilot. The call is NOT replayed on reconnect.
 
 ### Gate timeout behavior: fail closed
 
@@ -296,14 +296,12 @@ Same shape as `sessions`. Sent when a session starts or ends.
 {
   "type": "hello.ack",
   "reconnectToken": "tok-xyz789",
-  "persistDir": "/home/user/.copilot/providers/my-provider/",
-  "pendingCalls": []
+  "persistDir": "/home/user/.copilot/providers/my-provider/"
 }
 ```
 
 - `reconnectToken` — include in future `hello` to restore binding after disconnect
 - `persistDir` — filesystem path for cross-session state (local providers only)
-- `pendingCalls` — tool calls that were in-flight during a previous disconnection
 
 ### `tool.call` — Copilot invoked a provider's tool
 
@@ -311,6 +309,7 @@ Same shape as `sessions`. Sent when a session starts or ends.
 {
   "type": "tool.call",
   "id": "call-123",
+  "sessionId": "abc123",
   "tool": "my_tool",
   "args": { "query": "find active users" }
 }
@@ -322,11 +321,12 @@ Same shape as `sessions`. Sent when a session starts or ends.
 {
   "type": "tool.cancel",
   "id": "call-123",
+  "sessionId": "abc123",
   "reason": "timeout"
 }
 ```
 
-Sent when a tool call exceeds its timeout or the session is interrupted. Provider should abort and may send a `tool.result` with `errorCode: "CANCELLED"`.
+Sent when a tool call exceeds its timeout or the session is interrupted. Provider should abort and send `tool.result` with `errorCode: "CANCELLED"` as the terminal state.
 
 ### `gate.check` — a hook rule matched, provider evaluates
 
@@ -335,6 +335,7 @@ Sent when a tool call exceeds its timeout or the session is interrupted. Provide
   "type": "gate.check",
   "gateId": "check-before-push",
   "callId": "gate-456",
+  "sessionId": "abc123",
   "tool": "shell",
   "args": { "command": "git push origin main" }
 }
@@ -350,6 +351,7 @@ Sent during `onUserPromptSubmitted` when a provider registered a `"callback"` tr
 {
   "type": "transform.request",
   "callId": "tx-789",
+  "sessionId": "abc123",
   "section": "custom_instructions",
   "current": "...existing section content..."
 }
@@ -362,6 +364,7 @@ Timeout: 2s. Falls back to `current` unchanged if no response.
 ```json
 {
   "type": "session.event",
+  "sessionId": "abc123",
   "event": "user.message",
   "data": { "content": "fix the auth bug" }
 }
@@ -394,7 +397,17 @@ Always sent, no opt-in needed.
 
 - `started` — session is ready
 - `idle` — session is idle (no in-flight work). Providers can use this to trigger scheduled work.
-- `shutdown.pending` — session is ending. Provider has `deadline` ms to do async cleanup, then send `shutdown.ready`. Gateway tears down after deadline even if no response.
+- `shutdown.pending` — session is ending. Provider has `deadline` milliseconds to do async cleanup, then send `shutdown.ready`. Gateway tears down after deadline even if no response.
+
+### Rebinding (repeat `hello` on existing connection)
+
+A provider can send a new `hello` on an existing connection to change its session binding (e.g., after its session ends). Behavior:
+
+1. Gateway atomically removes the provider's tools/hooks/context from the old session(s).
+2. Gateway cancels any in-flight `tool.call`, `gate.check`, or `transform.request` for this provider.
+3. Gateway processes the new `hello` as a fresh registration (validates session, registers tools).
+4. Gateway sends a new `hello.ack` with a new `reconnectToken`.
+5. If the new `hello` fails validation, gateway sends `error` and the provider remains unbound (connected but not registered to any session).
 
 ### `stream.history` — response to stream query
 
@@ -556,6 +569,7 @@ Gateway surfaces via `session.log()`. Final result still comes via `tool.result`
 | Field | Required | Description |
 |---|---|---|
 | `stream` | no | Named stream. Defaults to provider name if omitted. One provider can manage multiple streams. |
+| `sessionId` | no | Target session. Required for `"all"`-bound providers to target a specific session. Omit to target all bound sessions. Single-session providers can always omit. |
 | `event` | yes (unless `prompt`) | Event text to store/surface/inject. |
 | `prompt` | no | When present, triggers a full AI turn via `session.send({ prompt })`. Use for PromptEmitter-style injections. |
 | `level` | yes | `"inject"` = `session.send()`, triggers AI turn. `"surface"` = `session.log()`, visible in timeline. `"keep"` = store in EventStream only. |
@@ -566,6 +580,7 @@ Gateway surfaces via `session.log()`. Final result still comes via `tool.result`
 ```json
 {
   "type": "tools.update",
+  "sessionId": "abc123",
   "tools": [
     { "name": "new_tool", "description": "Just appeared", "parameters": {} }
   ],
@@ -573,11 +588,14 @@ Gateway surfaces via `session.log()`. Final result still comes via `tool.result`
 }
 ```
 
+`sessionId` is optional. Omit to apply to all bound sessions. `"all"`-bound providers use it to update tools in one session only.
+
 ### `hooks.update` — change hook rules or transforms
 
 ```json
 {
   "type": "hooks.update",
+  "sessionId": "abc123",
   "onPreToolUse": [
     {
       "match": { "tool": "edit", "file": "*.sql" },
@@ -592,7 +610,7 @@ Gateway surfaces via `session.log()`. Final result still comes via `tool.result`
 }
 ```
 
-Setting a transform to `null` removes it. `"callback"` triggers `transform.request` round-trips.
+Setting a transform to `null` removes it. `"callback"` triggers `transform.request` round-trips. `sessionId` is optional — omit to apply to all bound sessions.
 
 ### `context.update` — change ambient context
 
@@ -729,7 +747,7 @@ Multiple providers can append to the same section. Gateway concatenates in regis
 
 ## Summary: the complete interface
 
-### Gateway → Provider (12 message types)
+### Gateway → Provider (11 message types)
 
 | Message | When | Round-trip? |
 |---|---|---|
@@ -764,7 +782,7 @@ Multiple providers can append to the same section. Gateway concatenates in regis
 | `stream.query` | Read EventStream history |
 | `shutdown.ready` | Async cleanup complete (includes `sessionId`) |
 
-### Total: 26 message types
+### Total: 25 message types
 
 ---
 
