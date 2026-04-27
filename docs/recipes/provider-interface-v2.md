@@ -175,17 +175,74 @@ Provider includes `protocolVersion` in `hello`. Gateway includes `protocolVersio
 
 Gateway assigns a stable `providerId` in `hello.ack`. This ID is included in `error` messages and can be used for debugging. It persists across reconnects (same `reconnectToken` → same `providerId`).
 
-### Authentication
+### Authentication and trust levels
 
-The gateway generates a one-time **gateway secret** on first startup, written to `$COPILOT_HOME/.tap-gateway-secret`. All WS connections must include the secret as the first message:
+The gateway uses a **tiered trust model**, not a single shared secret.
+
+#### Trust levels
+
+| Level | Who | Capabilities | How authenticated |
+|---|---|---|---|
+| **internal** | In-process providers (tap) | Full: all sessions, all hooks, all transforms | LocalProviderTransport — no auth needed |
+| **project** | Spawned from `tap.config.json` | Bound to spawning session, tools + push + gates + context | Per-provider token issued at spawn time via env `TAP_PROVIDER_TOKEN` |
+| **external** | Self-connecting processes | Tools + push only. No transforms, no hook callbacks, no cross-provider streams | User-approved pairing flow |
+
+#### Internal providers
+
+LocalProviderTransport — in-process, fully trusted, no auth message needed.
+
+#### Project providers
+
+Gateway generates a unique, short-lived token per provider at spawn time, passed as `TAP_PROVIDER_TOKEN` env var. Provider sends it in `auth`:
 
 ```json
-{ "type": "auth", "secret": "gw-a8f3..." }
+{ "type": "auth", "token": "ptk-a8f3..." }
 ```
 
-Gateway responds with `sessions` on success, or closes the socket on failure. Internal providers (LocalProviderTransport) skip auth. The gateway spawns project providers with the secret as env var `TAP_GATEWAY_SECRET`.
+Token is scoped to the spawning session. Provider cannot access other sessions.
 
-**External provider bootstrap:** The gateway also serves a one-shot HTTP endpoint at `http://localhost:9400/secret` that returns the secret. This endpoint only responds to requests from `127.0.0.1`/`::1`. No origin or CORS restrictions — any local process or injected page script can fetch it. The security boundary is localhost network access, not origin.
+#### External providers (browser, standalone scripts)
+
+External providers use a **user-approved pairing flow**:
+
+1. Provider connects via WS and sends: `{ "type": "auth", "mode": "pair" }`
+2. Gateway generates a 6-digit pairing code and shows it in the Copilot session timeline via `session.log()`:
+   ```
+   ※ tap: Provider 'browser' requesting access. Pairing code: 847293
+   ```
+3. Provider shows the code to the user (e.g., browser overlay). User confirms they match.
+4. Provider sends: `{ "type": "auth.confirm", "code": "847293" }`
+5. Gateway issues a short-lived provider token in `sessions` response.
+6. On reconnect, provider uses the issued token (valid for the session lifetime, not persisted across gateway restarts).
+
+This prevents silent hijacking by malicious tabs or npm packages — the user must visually confirm the pairing.
+
+#### Identity protection
+
+Provider identity (`name` + `instance`) is bound to the issued token. A new connection claiming the same identity without a valid `reconnectToken` does NOT evict the existing connection — it gets `error` with code `DUPLICATE_INSTANCE`. Only a connection with a valid `reconnectToken` can take over an identity.
+
+### Provider capabilities
+
+Each trust level has a fixed capability set. The gateway enforces these on every message:
+
+| Capability | internal | project | external |
+|---|---|---|---|
+| Register tools | ✓ | ✓ | ✓ |
+| Push events (inject/surface/keep) | ✓ | ✓ | ✓ |
+| Register hook gate rules | ✓ | ✓ | ✗ |
+| Register transform callbacks | ✓ | ✓ | ✗ |
+| Register static transforms (append) | ✓ | ✓ | ✓ |
+| Query own streams | ✓ | ✓ | ✓ |
+| Query cross-provider streams | ✓ | ✗ | ✗ |
+| Subscribe to session events | ✓ | ✓ | tools only |
+| Bind to any session / "all" | ✓ | ✗ (spawning session only) | ✗ (paired session only) |
+| Set context / startup_context | ✓ | ✓ | ✗ |
+
+Unauthorized messages receive `error` with code `UNAUTHORIZED`.
+
+### Protected prompt sections
+
+The system prompt sections `safety` and `identity` are **immutable** — no provider can replace or prepend to them, regardless of trust level. Providers can only `append` to these sections. The gateway applies provider transforms BEFORE the protected sections, ensuring safety content always has the last word.
 
 ### Session IDs and correlation IDs
 
@@ -305,9 +362,14 @@ The gateway enforces push budgets scoped by **(provider, sessionId)**:
 
 ### Stream access control
 
-- Providers can query their **own** streams via `stream.query` by default.
-- To query another provider's streams, the `hello` must include `"streamAccess": "all"`. The gateway logs cross-provider stream reads for auditability.
-- `filter.set` only works on the provider's own streams. A provider cannot set filters on another provider's streams.
+- All providers can query their **own** streams via `stream.query`.
+- Cross-provider stream reads require **internal** trust level. Project and external providers cannot read other providers' streams.
+- `filter.set` only works on the provider's own streams.
+- The gateway enforces these per-message based on the provider's trust level.
+
+### Session scope enforcement
+
+The gateway MUST reject any session-scoped provider→gateway message (`push`, `tools.update`, `hooks.update`, `context.update`, `filter.set`, `stream.query`, `session.ready`, `shutdown.ready`) where the `sessionId` is outside the provider's authorized session set. Violation returns `error` with code `INVALID_SESSION`.
 
 ### Payload limits
 
@@ -326,6 +388,9 @@ The gateway enforces push budgets scoped by **(provider, sessionId)**:
 - Max streams per provider: **20**.
 - EventStream retention: **200 events** per stream (oldest evicted).
 - `stream.query` max `last`: **100**.
+- Max concurrent WS connections: **50**. New connections beyond this are rejected.
+- Max pairing attempts per minute: **5**. Prevents brute-force of pairing codes.
+- Max `hello` rebinds per connection per minute: **10**. Prevents identity-churn attacks.
 
 ### `"all"` binding and session churn
 
@@ -576,9 +641,8 @@ Stream keys use `stream@provider` format matching the query.
 | `metadata` | no | Provider-specific info exposed to Copilot for routing decisions. |
 | `tools` | no | Tool definitions with JSON Schema parameters. `timeout` (ms) per tool is optional. |
 | `hooks` | no | Hook rules and transform declarations. |
-| `subscribe` | no | Session event types to receive. |
-| `streamAccess` | no | `"own"` (default) or `"all"`. Controls whether `stream.query` can read other providers' streams. |
-| `context` | no | Ambient context injected on every user prompt. |
+| `subscribe` | no | Session event types to receive. External providers limited to tool events. |
+| `context` | no | Ambient context injected on every user prompt. Not available for external providers. |
 
 ### `tool.result` — respond to a tool invocation
 
@@ -934,24 +998,29 @@ let ws, sessions = [], registered = false, secret;
 let reconnectToken = null;
 const INSTANCE = "tab-" + Math.random().toString(36).slice(2, 6);
 
-// Step 1: fetch auth secret from gateway HTTP endpoint
+// Step 1: connect and request pairing
 fetch(`http://${GATEWAY}/secret`)
-  .then(r => r.text())
-  .then(s => { secret = s.trim(); connect(); })
-  .catch(() => showOverlay("No Copilot session — start one to connect"));
+  .catch(() => null);  // no secret endpoint anymore — we use pairing
 
 function connect() {
   ws = new WebSocket(`ws://${GATEWAY}`);
 
   ws.onopen = () => {
-    // Step 2: authenticate
-    ws.send(JSON.stringify({ type: "auth", secret }));
+    // Step 2: request pairing (user will see a code in Copilot)
+    ws.send(JSON.stringify({ type: "auth", mode: "pair" }));
   };
 
   ws.onmessage = (e) => {
     const msg = JSON.parse(e.data);
 
-    // Step 3: receive session list or ack
+    // Step 3: handle pairing
+    if (msg.type === "auth.pairing") {
+      showOverlay(`Pairing code: ${msg.code} — confirm in your Copilot session`);
+      ws.send(JSON.stringify({ type: "auth.confirm", code: msg.code }));
+      return;
+    }
+
+    // Step 4: receive session list or ack
     if (msg.type === "sessions" || msg.type === "sessions.updated") {
       sessions = msg.active;
       if (!registered) {
