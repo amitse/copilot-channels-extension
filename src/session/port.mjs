@@ -44,11 +44,31 @@ export function createSessionPort(initialSession = null) {
     return session.sendAndWait({ prompt });
   }
 
+  function registerTools(tools) {
+    if (!session) return;
+    try {
+      session.registerTools(tools);
+    } catch {
+      // registerTools may not be available in all SDK versions
+    }
+  }
+
+  async function reloadExtension() {
+    if (!session) return;
+    try {
+      await session.rpc.extensions.reload();
+    } catch {
+      // extensions.reload is experimental and may not be available
+    }
+  }
+
   return {
     attach,
     current,
     log,
     send,
-    sendAndWait
+    sendAndWait,
+    registerTools,
+    reloadExtension
   };
 }

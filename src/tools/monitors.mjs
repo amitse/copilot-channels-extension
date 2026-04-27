@@ -34,13 +34,13 @@ export function createEmitterTools({ streams, configStore, supervisor, getBaseCw
     },
     {
       name: "tap_start_emitter",
-      description: "Starts a command emitter, prompt emitter, or timed work item with event filter rules and optional session injector.",
+      description: "Starts a command emitter or prompt emitter. Use 'command' for shell commands whose stdout needs filtering (CommandEmitter) — requires notifyPattern for injection. Use 'prompt' for agent-driven tasks (PromptEmitter) — always injects, no filter needed. Prefer prompt for simple repeated messages or agent actions; prefer command for log tailing, process monitoring, or noisy output that needs filtering.",
       parameters: {
         type: "object",
         properties: {
           name: { type: "string", description: "Unique emitter name." },
-          command: { type: "string", description: "Shell command to run. Optional when prompt is provided." },
-          prompt: { type: "string", description: "Prompt to send to the agent. Optional when command is provided." },
+          command: { type: "string", description: "Shell command to run (creates a CommandEmitter). Output goes through EventFilter — requires notifyPattern to inject lines into the session. Use for log tailing, process monitoring, or any external command with stdout." },
+          prompt: { type: "string", description: "Prompt to send to the agent (creates a PromptEmitter). Always injects — bypasses EventFilter entirely, no notifyPattern needed. Use for repeated agent tasks, status checks, or simple messages." },
           description: { type: "string", description: "Short summary." },
           channel: { type: "string", description: "EventStream to receive accepted events." },
           cwd: { type: "string", description: "Optional working directory relative to the session cwd." },
@@ -51,9 +51,9 @@ export function createEmitterTools({ streams, configStore, supervisor, getBaseCw
           includeStderr: { type: "boolean", description: "Whether stderr lines are eligible for event outcome evaluation." },
           includePattern: { type: "string", description: "Only matching lines are admitted into the stream. (Legacy: prefer eventFilter rules.)" },
           excludePattern: { type: "string", description: "Matching lines are dropped before they reach the stream. (Legacy: prefer eventFilter rules.)" },
-          notifyPattern: { type: "string", description: "Matching lines trigger session injection when delivery='important'. (Legacy: prefer eventFilter rules.)" },
+          notifyPattern: { type: "string", description: "Regex pattern — matching lines are injected into the session. Without this, lines are stored/surfaced but never injected. This is the trigger that decides which lines actually interrupt the conversation." },
           subscribe: { type: "boolean", description: "Whether to attach a session injector to the stream as part of emitter creation." },
-          delivery: { type: "string", description: "Session injector event outcome mode: 'important' or 'all'." },
+          delivery: { type: "string", description: "Session injector delivery ceiling: 'important' (only notifyPattern matches inject) or 'all' (all lines eligible). delivery opens the door, notifyPattern decides which lines walk through it. Without notifyPattern, no lines are injected regardless of delivery setting." },
           maxRuns: { type: "integer", description: "Maximum number of iterations before the emitter auto-completes. Useful for idle and timed loops." },
           force: { type: "boolean", description: "Required only when transferring ownership of a protected emitter." }
         },

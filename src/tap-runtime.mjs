@@ -6,6 +6,7 @@ import { createConfigStore } from "./config/store.mjs";
 import { createEmitterSupervisor } from "./emitter/supervisor.mjs";
 import { createTools } from "./tools/index.mjs";
 import { createHooks } from "./hooks.mjs";
+import { createProviderGateway } from "./provider/gateway.mjs";
 
 export function createCopilotChannelsRuntime(options = {}) {
   let baseCwd = options.cwd ?? process.cwd();
@@ -31,12 +32,44 @@ export function createCopilotChannelsRuntime(options = {}) {
   const tools = createTools({ streams, configStore, supervisor, sessionPort, getBaseCwd, persist });
   const hooks = createHooks({ streams, configStore, supervisor, sessionPort, setBaseCwd });
 
+  const tapToolsFn = () => tools;
+  const gateway = createProviderGateway({
+    sessionPort,
+    tapTools: tapToolsFn,
+    getSessionInfo: () => {
+      const session = sessionPort.current();
+      if (!session) return null;
+      return { id: session.id ?? "default", label: session.label ?? "Copilot CLI", cwd: getBaseCwd() };
+    },
+    log: (msg) => void sessionPort.log(msg),
+  });
+
+  // When provider tools change, re-register all tools and trigger extension reload
+  gateway.onToolsChanged((mergedTools) => {
+    sessionPort.registerTools(mergedTools);
+    void sessionPort.reloadExtension();
+  });
+
   return {
-    attachSession: (nextSession) => sessionPort.attach(nextSession),
+    attachSession: (nextSession) => {
+      sessionPort.attach(nextSession);
+      if (!gateway.isRunning()) {
+        try {
+          gateway.start();
+        } catch {
+          // Gateway startup must never block session attach
+        }
+      }
+    },
     tools,
     hooks,
-    stopAllEmitters: () => supervisor.stopAll(),
+    stopAllEmitters: async () => {
+      gateway.stop();
+      await supervisor.stopAll();
+    },
     appendStreamMessage: (name, entry) => streams.append(name, entry),
+    gateway,
+    getTools: () => gateway.isRunning() ? gateway.getAllTools(tools) : tools,
     DEFAULT_STREAM
   };
 }

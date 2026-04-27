@@ -18,7 +18,12 @@ const result = await build({
   outfile: path.join(dist, "extension.mjs"),
   external: ["@github/copilot-sdk", "@github/copilot-sdk/*"],
   banner: {
-    js: "// ※ tap — copilot-tap-extension (bundled)\n// https://github.com/amitse/copilot-tap-extension\n"
+    js: [
+      "// ※ tap — copilot-tap-extension (bundled)",
+      "// https://github.com/amitse/copilot-tap-extension",
+      "import { createRequire as __tap_createRequire } from 'node:module';",
+      "const require = __tap_createRequire(import.meta.url);"
+    ].join("\n")
   },
   logLevel: "info"
 });

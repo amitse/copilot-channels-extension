@@ -377,6 +377,117 @@ asyncio.run(connect())
 
 ---
 
+## Dynamic tool registration
+
+The Copilot SDK does **not** expose a `tools.add` or `tools.update` RPC. Tools are declared once at session creation/resume time and sent to the CLI in that initial handshake. To add or remove provider tools mid-session the Gateway uses two mechanisms together:
+
+### 1. Local handler map — `session.registerTools()`
+
+`CopilotSession.registerTools(tools)` replaces the in-memory handler map (a `Map<name, handler>`). This controls which tool calls the SDK can dispatch locally. The Gateway calls this whenever the combined set of tap + provider tools changes:
+
+```js
+// Provider connects — merge its tools into the existing set
+session.registerTools([...tapTools, ...providerTools]);
+
+// Provider disconnects — remove its tools
+session.registerTools([...tapTools]);
+```
+
+This alone is **not sufficient** — the CLI still has the old tool list from the original session handshake.
+
+### 2. Extension reload — `session.rpc.extensions.reload()`
+
+The SDK exposes an experimental RPC:
+
+```js
+await session.rpc.extensions.reload();
+// Tells the CLI to reload this extension, which re-runs joinSession()
+// and picks up the updated tool list
+```
+
+This triggers a full re-join: the CLI tears down the current extension session and calls `joinSession()` again, which sends the new `tools` array via the `session.resume` RPC.
+
+### Gateway lifecycle
+
+```
+Provider connects
+  → Gateway validates auth, receives hello with tool defs
+  → Gateway merges provider tools into the session tool set
+  → Gateway calls session.registerTools([...tapTools, ...providerTools])
+  → Gateway calls session.rpc.extensions.reload()
+  → CLI re-joins, sees updated tools, provider tools become available
+
+Provider disconnects
+  → Gateway removes provider tools from the session tool set
+  → Gateway calls session.registerTools([...tapTools])
+  → Gateway calls session.rpc.extensions.reload()
+  → CLI re-joins, provider tools disappear cleanly
+```
+
+### Surviving reloads — `globalThis` singleton
+
+`session.rpc.extensions.reload()` re-runs the extension entry point (`extension.mjs`) from scratch. A naïve implementation would lose all runtime state (running emitters, stream history, config). The solution is to cache the runtime on `globalThis` so it persists across reloads:
+
+```js
+// extension.mjs — reload-safe pattern
+import { joinSession } from "@github/copilot-sdk/extension";
+import { createCopilotChannelsRuntime } from "./tap-runtime.mjs";
+
+// First run: creates runtime and caches it.
+// Reload: reuses the existing runtime — emitters, streams, config all intact.
+const runtime = globalThis.__tapRuntime ??= createCopilotChannelsRuntime({
+  cwd: process.cwd()
+});
+
+const session = await joinSession({
+  tools: runtime.tools,   // includes provider tools if any are connected
+  hooks: runtime.hooks
+});
+
+runtime.attachSession(session);  // re-wires session port to the new session handle
+
+session.on("session.shutdown", () => {
+  void runtime.stopAllEmitters();
+});
+```
+
+The existing `sessionPort` abstraction already supports session swapping via `attachSession()`, so the new session handle is wired in cleanly without disrupting running emitters or streams.
+
+### Reload frequency — one per provider, not per tool
+
+A provider sends **one `hello` message** containing **all** its tools:
+
+```json
+{
+  "type": "hello",
+  "tools": [tool1, tool2, ..., tool10]
+}
+```
+
+**1 provider connection = 1 `hello` = 1 reload**, regardless of how many tools it declares.
+
+For multiple providers connecting around the same time, the Gateway should **debounce** the reload call to batch them into a single reload:
+
+```js
+let reloadTimer = null;
+function scheduleReload() {
+  clearTimeout(reloadTimer);
+  reloadTimer = setTimeout(() => {
+    session.registerTools([...tapTools, ...allProviderTools]);
+    session.rpc.extensions.reload();
+  }, 200); // batch connections within a 200ms window
+}
+```
+
+This ensures that even 5 providers connecting simultaneously result in a single reload.
+
+### Caveats
+
+- `session.rpc.extensions.reload()` is marked **`@experimental`** in the SDK (`dist/generated/rpc.js`). Its behavior or availability may change.
+- There is no incremental tool update — each reload sends the full tool list. This is fine for the expected scale (≤100 tools per provider, per spec).
+
+---
+
 ## What's not in Core
 
 These are in the [full spec](./provider-interface-v2.md), not here:

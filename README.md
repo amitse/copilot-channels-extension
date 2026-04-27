@@ -29,6 +29,7 @@ Background commands and agent prompts produce output line by line. An EventFilte
 - You run long builds and want to know when they finish or break -- without watching.
 - You poll an API or dashboard and want the agent to react when something changes.
 - You re-ask the same prompt periodically and want it on a timer or running whenever idle.
+- You build external tools in any language and want them available inside Copilot without touching the SDK.
 
 ## Get started
 
@@ -142,6 +143,21 @@ Emitters are **temporary** by default and last only for the current session. Set
 
 Run schedules control timing: **continuous** (command runs until stopped), **timed** (repeats on an interval), **oneTime** (runs once), or **idle** (prompt re-runs when the session has nothing else to do).
 
+## Extend with providers
+
+External processes can register tools with your Copilot session through the **Provider Interface**. A provider connects via WebSocket to the ※ tap gateway (port 9400), authenticates with a token, and declares tools — no Copilot SDK knowledge required.
+
+```bash
+# Provider connects and registers a "greet" tool
+TAP_PROVIDER_TOKEN=ptk-... node my-provider.mjs
+```
+
+Once connected, the tool appears alongside the existing ※ tap tools. Copilot can invoke it like any other tool, and the call is routed through the gateway to your provider.
+
+Providers can be written in **any language** that supports WebSocket — Node.js, Python, Go, Rust, or anything else.
+
+→ **[Provider guide](./docs/providers.md)** — Quick start, protocol reference, and examples.
+
 ## What you can do
 
 **Watch something in the background**
@@ -198,6 +214,7 @@ Rules can be added or changed while the emitter is running. You never need to re
 src/
   emitter/                      # supervisor, lifecycle, spawn, line router
   streams/                      # EventStream store and notification dispatcher
+  provider/                     # WebSocket gateway for external tool providers
   tools/                        # tool definitions (emitters, streams, filters)
   config/                       # persistent config store (tap.config.json)
   format/                       # display formatters for emitters and streams
@@ -219,6 +236,7 @@ PLAN.md                         # ubiquitous language and design decisions
 | Document | When to read it |
 | --- | --- |
 | [Reference](./docs/reference.md) | Look up tool parameters, config fields, or the event pipeline |
+| [Provider guide](./docs/providers.md) | Add external tools to Copilot via the WebSocket provider interface |
 | [Use cases and patterns](./docs/use-cases.md) | Recipes for deploy watchers, PR monitors, log tailers, and more |
 | [Evals](./docs/evals.md) | Run or extend the automated test suite |
 | [Copilot instructions](./src/copilot-instructions.md) | Understand or customize how the agent uses this extension |
