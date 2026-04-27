@@ -294,7 +294,7 @@ This prevents silent hijacking by malicious tabs or npm packages — the user mu
 
 #### Identity protection
 
-Provider identity (`name` + `instance`) is bound to the issued token. A new connection claiming the same identity without a valid `reconnectToken` does NOT evict the existing connection — it gets `error` with code `DUPLICATE_INSTANCE`. Only a connection with a valid `reconnectToken` can take over an identity.
+Provider identity (`name` + `instance`) is bound to the issued token. Only a connection with a valid `reconnectToken` can take over an existing identity — the gateway closes the old connection and transfers the binding. A new connection claiming the same identity **without** a valid `reconnectToken` gets `error` with code `DUPLICATE_INSTANCE` and the existing connection is unaffected.
 
 ### Provider capabilities
 
@@ -374,19 +374,23 @@ Errors include `providerId` and `sessionId` when applicable for debugging:
 
 ### Update acknowledgments
 
-All state-changing provider→gateway messages (`tools.update`, `hooks.update`, `context.update`, `filter.set`) receive an `ack`:
+All state-changing provider→gateway messages (`tools.update`, `hooks.update`, `context.update`, `filter.set`) MUST include a provider-supplied `requestId`. The gateway responds with `ack`:
 
 ```json
-{
-  "type": "ack",
-  "replyTo": "tools.update",
-  "revision": 3
-}
+// Provider sends:
+{ "type": "tools.update", "requestId": "req-42", "sessionId": "abc123", "tools": [...] }
+
+// Gateway responds:
+{ "type": "ack", "requestId": "req-42", "sessionId": "abc123", "revision": 3 }
 ```
 
-The `revision` is a monotonically increasing counter per (provider, session). After a provider receives `ack` with revision N, the gateway guarantees all dispatches (tool calls, gate checks, transforms) use revision N state. This prevents races between updates and dispatches.
+- `requestId` — provider-chosen, echoed in `ack` for correlation
+- `sessionId` — which session this revision applies to. If the update targeted all sessions (omitted `sessionId`), the gateway sends one `ack` per session.
+- `revision` — monotonically increasing per (provider, session). After a provider receives `ack` with revision N, the gateway guarantees all subsequent dispatches to that session use revision N state.
 
-On failure, the gateway sends `error` instead of `ack`.
+Only one state update per (provider, session, message type) can be in-flight at a time. Sending a second `tools.update` for the same session before the first is acked results in `error` with code `RATE_LIMITED`.
+
+On failure, the gateway sends `error` with the same `requestId` instead of `ack`.
 
 ### Tool concurrency
 
@@ -437,11 +441,12 @@ If a provider **disconnects** with a pending `gate.check`, the gate is denied (f
 
 1. Gateway generates `reconnectToken` in `hello.ack`. Token is valid for 30 seconds.
 2. On reconnect, provider includes `reconnectToken` in `hello`. Gateway:
-   - Invalidates the old connection (if still open)
+   - Validates the token against the original identity (`name` + `instance`)
+   - Closes the old connection if still open
    - Restores provider binding (session, tools, hooks)
-3. Any in-flight `tool.call` at disconnect time is **failed** with `errorCode: "DISCONNECTED"` (not replayed). The provider starts clean — no `pendingCalls`.
-4. Token expires after 30s — reconnect after that is a fresh `hello`.
-5. Only one active connection per `name` + `instance`. New connection with same identity kills the old one.
+3. Any in-flight `tool.call` at disconnect time is **failed** with `errorCode: "DISCONNECTED"` (not replayed). The provider starts clean.
+4. Token expires after 30s — reconnect after that is a fresh `hello` (full re-auth required).
+5. Without a valid `reconnectToken`, a new connection claiming an existing identity gets `DUPLICATE_INSTANCE`. See Identity Protection.
 
 ### Push loop prevention
 
@@ -502,6 +507,49 @@ The gateway runs as a **detached background process**, not inside any single Cop
 2. Not running → extension spawns the gateway as a detached process (survives session end). Extension connects to it as an internal client registering its session.
 3. Already running → extension connects and registers its session.
 4. Gateway exits when the last session disconnects (after a **30s** grace period — matches reconnect token TTL, so reconnecting providers and late-arriving sessions have time).
+
+### Gateway crash recovery
+
+If the gateway process crashes:
+
+1. All WS connections drop. Providers detect disconnect via WS `onclose`.
+2. All session registrations, provider bindings, reconnect tokens, and revision counters are lost (not persisted).
+3. The next Copilot session start (or an existing session's heartbeat failure) spawns a new gateway.
+4. Providers must treat a gateway restart as a **fresh connection**: re-authenticate, send a new `hello`, re-register tools. `reconnectToken` from the old gateway is invalid.
+5. Copilot sessions must re-register themselves with the new gateway.
+
+The gateway is designed to be **stateless and reconstructable**. All durable state lives in providers (their own config files) and sessions (Copilot SDK session state). The gateway is a relay, not a store.
+
+### Ordering guarantees
+
+- **Per-connection FIFO**: messages on a single WS connection are delivered in send order (guaranteed by WebSocket/TCP). LocalProviderTransport provides the same guarantee via synchronous dispatch.
+- **No total ordering across sessions**: messages for session A and session B on the same provider connection may interleave freely.
+- **Per-call terminal semantics**: for a given `tool.call` ID, only the first terminal message (`tool.result` or gateway-generated `DISCONNECTED`/`CANCELLED`) is accepted.
+- **Revision barrier**: after `ack(revision=N)` for a (provider, session), all subsequent dispatches to that session use revision N state. No dispatch uses stale state.
+- **Rebind barrier**: when a provider sends a new `hello` (rebind), the gateway completes removal of old state before processing the new registration. No dispatches from the old binding arrive after rebind starts.
+
+### Connection states
+
+A provider connection has these states:
+
+```
+Connected → AwaitAuth → AwaitPairing (external only) → AwaitHello → Bound → Disconnected
+                                                                      ↕
+                                                                   Rebinding
+                                                                      ↓
+                                                              Unbound (on error)
+```
+
+Legal messages per state:
+
+| State | Legal provider messages |
+|---|---|
+| `AwaitAuth` | `auth` only |
+| `AwaitPairing` | `auth.confirm` only |
+| `AwaitHello` | `hello` only |
+| `Bound` | All provider→gateway messages |
+| `Rebinding` | None (gateway is processing) |
+| `Unbound` | `hello`, `goodbye` only |
 
 ### Regex execution safety
 
