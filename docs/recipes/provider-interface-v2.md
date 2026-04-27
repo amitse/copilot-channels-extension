@@ -1,5 +1,80 @@
 # Provider Interface v2 — The Contract Between Gateway and Providers
 
+## Quickstart: build a provider in 5 minutes
+
+A provider is any process that connects to the gateway and exposes tools. Here's the complete happy path:
+
+```
+1. Connect:    ws://localhost:9400
+2. Auth:       { "type": "auth", "token": "<your TAP_PROVIDER_TOKEN>" }
+3. Receive:    { "type": "sessions", "active": [...] }
+4. Register:   { "type": "hello", "name": "my-provider", "protocolVersion": 2,
+                  "session": "<pick one from sessions>", "tools": [...] }
+5. Receive:    { "type": "hello.ack", "providerId": "p-xxx", ... }
+6. Handle:     { "type": "tool.call", "id": "c-1", "tool": "my_tool", "args": {...} }
+7. Respond:    { "type": "tool.result", "id": "c-1", "data": "result" }
+8. If cancel:  { "type": "tool.cancel", "id": "c-1" }
+   Respond:    { "type": "tool.result", "id": "c-1", "errorCode": "CANCELLED" }
+```
+
+That's it for a simple tool provider. **If you only want to expose tools, you can ignore**: hooks, transforms, push events, streams, filters, multi-instance, `"all"` binding, and reconnect tokens.
+
+### Minimal Node.js provider (complete, correct)
+
+```js
+import WebSocket from "ws";
+
+const TOKEN = process.env.TAP_PROVIDER_TOKEN;
+const ws = new WebSocket("ws://localhost:9400");
+
+ws.on("open", () => {
+  ws.send(JSON.stringify({ type: "auth", token: TOKEN }));
+});
+
+ws.on("message", (raw) => {
+  const msg = JSON.parse(raw);
+
+  if (msg.type === "sessions") {
+    ws.send(JSON.stringify({
+      type: "hello",
+      name: "my-provider",
+      protocolVersion: 2,
+      session: msg.active[0]?.id ?? "all",
+      tools: [{
+        name: "greet",
+        description: "Say hello",
+        parameters: { type: "object", properties: { name: { type: "string" } }, required: ["name"] }
+      }]
+    }));
+  }
+
+  if (msg.type === "tool.call" && msg.tool === "greet") {
+    ws.send(JSON.stringify({ type: "tool.result", id: msg.id, data: `Hello, ${msg.args.name}!` }));
+  }
+
+  if (msg.type === "tool.cancel") {
+    ws.send(JSON.stringify({ type: "tool.result", id: msg.id, error: "Cancelled", errorCode: "CANCELLED" }));
+  }
+
+  if (msg.type === "error") {
+    console.error(`Gateway error: ${msg.code} — ${msg.message}`);
+  }
+});
+```
+
+### What's optional (ignore until you need it)
+
+| Feature | When you need it |
+|---|---|
+| Push events | You want to proactively send data into the Copilot session |
+| Hook rules / transforms | You want to gate or modify tool calls, or inject into the system prompt |
+| Streams / filters | You produce continuous output that needs noise filtering |
+| Multi-instance | Multiple instances of your provider run simultaneously (e.g., browser tabs) |
+| `"all"` binding | Your provider serves multiple Copilot sessions at once |
+| Reconnect tokens | Your provider may disconnect and reconnect mid-session |
+
+---
+
 ## The split
 
 ```
@@ -267,7 +342,7 @@ The gateway sends `error` for any invalid message:
 }
 ```
 
-Error codes: `INVALID_JSON`, `UNKNOWN_TYPE`, `INVALID_SESSION`, `AUTH_FAILED`, `DUPLICATE_INSTANCE`, `TOOL_CONFLICT`, `RATE_LIMITED`, `PAYLOAD_TOO_LARGE`, `UNSUPPORTED_VERSION`.
+Error codes: `INVALID_JSON`, `UNKNOWN_TYPE`, `INVALID_SESSION`, `AUTH_FAILED`, `DUPLICATE_INSTANCE`, `TOOL_CONFLICT`, `RATE_LIMITED`, `PAYLOAD_TOO_LARGE`, `UNSUPPORTED_VERSION`, `UNAUTHORIZED`.
 
 Errors include `providerId` and `sessionId` when applicable for debugging:
 
@@ -281,6 +356,21 @@ Errors include `providerId` and `sessionId` when applicable for debugging:
   "sessionId": "abc123"
 }
 ```
+
+#### Error recovery guide
+
+| Code | Fatal? | What to do |
+|---|---|---|
+| `AUTH_FAILED` | Yes | Connection will close. Re-pair or check `TAP_PROVIDER_TOKEN`. |
+| `UNSUPPORTED_VERSION` | Yes | Connection will close. Update your provider to a supported protocol version. |
+| `INVALID_SESSION` | No | Session doesn't exist or you're not authorized. Wait for `sessions.updated`, then send new `hello`. |
+| `DUPLICATE_INSTANCE` | No | Another connection has this `name`+`instance`. Pick a new `instance` or reconnect with `reconnectToken`. |
+| `TOOL_CONFLICT` | No | Rename the conflicting tool and send `tools.update`. |
+| `PAYLOAD_TOO_LARGE` | No | Compress/downscale the payload, or use a file ref (local providers only). Retry with smaller data. |
+| `RATE_LIMITED` | No | Back off. Retry after 1 second. |
+| `UNAUTHORIZED` | No | Your trust level doesn't allow this operation. Check the capability matrix. |
+| `INVALID_JSON` | No | Fix the malformed message and retry. |
+| `UNKNOWN_TYPE` | No | Gateway doesn't recognize this message type. Check protocol version. |
 
 ### Update acknowledgments
 
@@ -423,7 +513,20 @@ The gateway runs as a **detached background process**, not inside any single Cop
 
 ## Messages: Gateway → Provider
 
-### `sessions` — active session list (sent on connect)
+### `auth.pairing` — pairing code for external providers
+
+Sent after receiving `{ "type": "auth", "mode": "pair" }` from an external provider.
+
+```json
+{
+  "type": "auth.pairing",
+  "code": "847293"
+}
+```
+
+The gateway displays the same code in the Copilot session timeline. The provider shows it to the user. After user confirms, provider sends `auth.confirm`. On success, gateway sends `sessions`.
+
+### `sessions` — active session list (sent after successful auth)
 
 ```json
 {
@@ -444,6 +547,8 @@ Same shape as `sessions`. Sent when a session starts or ends.
 ```json
 {
   "type": "hello.ack",
+  "protocolVersion": 2,
+  "providerId": "p-8f3a",
   "reconnectToken": "tok-xyz789",
   "persistDir": "/home/user/.copilot/providers/my-provider/"
 }
@@ -582,12 +687,35 @@ Stream keys use `stream@provider` format matching the query.
 
 ## Messages: Provider → Gateway
 
+### `auth` — authenticate on connect
+
+```json
+{ "type": "auth", "token": "ptk-a8f3..." }
+```
+
+For project providers (spawned by gateway). Or for external providers using the pairing flow:
+
+```json
+{ "type": "auth", "mode": "pair" }
+```
+
+Gateway responds with `auth.pairing` (external) or `sessions` (project/token).
+
+### `auth.confirm` — confirm pairing code
+
+```json
+{ "type": "auth.confirm", "code": "847293" }
+```
+
+Sent by external providers after receiving `auth.pairing` and the user has verified the code matches. Gateway responds with `sessions` on success, `error` with `AUTH_FAILED` on wrong code.
+
 ### `hello` — register as a provider
 
 ```json
 {
   "type": "hello",
   "name": "my-provider",
+  "protocolVersion": 2,
   "session": "abc123",
   "instance": "tab-a3f8",
   "reconnectToken": "tok-xyz789",
@@ -803,6 +931,17 @@ When a filter exists, the gateway applies it to `push` events on that stream. Th
 
 Stream names use the format `stream@provider` to avoid collisions. Omit `@provider` to query your own streams. Cross-provider reads require `streamAccess: "all"` in `hello`.
 
+### `session.ready` — acknowledge readiness for a new session
+
+```json
+{
+  "type": "session.ready",
+  "sessionId": "new-session-id"
+}
+```
+
+Only used by `"all"`-bound providers. When a new session starts, the gateway sends `sessions.updated` but does NOT register the provider's tools in the new session until `session.ready` is received. This gives the provider time to initialize session-specific state.
+
 ### `shutdown.ready` — async cleanup complete
 
 ```json
@@ -900,11 +1039,12 @@ Multiple providers can append to the same section. Gateway concatenates in regis
 
 ## Summary: the complete interface
 
-### Gateway → Provider (12 message types)
+### Gateway → Provider (13 message types)
 
 | Message | When | Round-trip? |
 |---|---|---|
-| `sessions` | On connect (after auth) | — |
+| `auth.pairing` | After external provider requests pairing | Expects `auth.confirm` |
+| `sessions` | After successful auth | — |
 | `sessions.updated` | Session starts/ends | — |
 | `hello.ack` | After `hello` (includes `providerId`, `protocolVersion`) | — |
 | `ack` | After `tools.update`, `hooks.update`, `context.update`, `filter.set` | — |
@@ -917,11 +1057,12 @@ Multiple providers can append to the same section. Gateway concatenates in regis
 | `session.lifecycle` | Session state change (includes `sessionId`) | — |
 | `stream.history` | Response to `stream.query` | — |
 
-### Provider → Gateway (16 message types)
+### Provider → Gateway (18 message types)
 
 | Message | When |
 |---|---|
-| `auth` | First message on connect |
+| `auth` | First message on connect (token or pairing mode) |
+| `auth.confirm` | Confirm pairing code (external providers) |
 | `hello` | After receiving `sessions` (includes `protocolVersion`) |
 | `goodbye` | Graceful disconnect |
 | `session.ready` | Acknowledge readiness for a new session (`"all"`-bound providers) |
@@ -937,7 +1078,7 @@ Multiple providers can append to the same section. Gateway concatenates in regis
 | `stream.query` | Read EventStream history |
 | `shutdown.ready` | Async cleanup complete (includes `sessionId`) |
 
-### Total: 28 message types
+### Total: 31 message types
 
 ---
 
