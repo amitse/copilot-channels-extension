@@ -278,19 +278,31 @@ Token is scoped to the spawning session. Provider cannot access other sessions.
 
 #### External providers (browser, standalone scripts)
 
-External providers use a **user-approved pairing flow**:
+External providers use a **user-approved pairing flow** with out-of-band verification:
 
 1. Provider connects via WS and sends: `{ "type": "auth", "mode": "pair" }`
 2. Gateway generates a 6-digit pairing code and shows it in the Copilot session timeline via `session.log()`:
    ```
    ※ tap: Provider 'browser' requesting access. Pairing code: 847293
    ```
-3. Provider shows the code to the user (e.g., browser overlay). User confirms they match.
-4. Provider sends: `{ "type": "auth.confirm", "code": "847293" }`
-5. Gateway issues a short-lived provider token in `sessions` response.
-6. On reconnect, provider uses the issued token (valid for the session lifetime, not persisted across gateway restarts).
+3. The provider displays a prompt asking the user to **type the code they see in Copilot**. The provider does NOT receive the code from the gateway — it must come from the user.
+4. User reads the code from the Copilot timeline and types it into the provider's UI.
+5. Provider sends: `{ "type": "auth.confirm", "code": "847293" }`
+6. Gateway verifies the code. On success, responds with `sessions` including a `token` field for subsequent reconnects. On failure, sends `error` with `AUTH_FAILED`.
 
-This prevents silent hijacking by malicious tabs or npm packages — the user must visually confirm the pairing.
+```json
+{
+  "type": "sessions",
+  "token": "ext-tok-9f2b...",
+  "active": [
+    { "id": "abc123", "label": "PR #42 review" }
+  ]
+}
+```
+
+7. On reconnect, external providers use the issued token: `{ "type": "auth", "token": "ext-tok-9f2b..." }`. Token is valid for the session lifetime, not persisted across gateway restarts.
+
+This prevents silent hijacking — the code travels through the user, not the WS connection.
 
 #### Identity protection
 
@@ -561,30 +573,33 @@ Legal messages per state:
 
 ## Messages: Gateway → Provider
 
-### `auth.pairing` — pairing code for external providers
+### `auth.pairing` — pairing initiated for external providers
 
 Sent after receiving `{ "type": "auth", "mode": "pair" }` from an external provider.
 
 ```json
 {
   "type": "auth.pairing",
-  "code": "847293"
+  "prompt": "Enter the pairing code shown in your Copilot session"
 }
 ```
 
-The gateway displays the same code in the Copilot session timeline. The provider shows it to the user. After user confirms, provider sends `auth.confirm`. On success, gateway sends `sessions`.
+The gateway displays the code in the Copilot session timeline. The provider shows a text input asking the user to type the code. The code is NOT sent to the provider — it travels through the user. After the user enters the code, the provider sends `auth.confirm`.
 
 ### `sessions` — active session list (sent after successful auth)
 
 ```json
 {
   "type": "sessions",
+  "token": "ext-tok-9f2b...",
   "active": [
     { "id": "abc123", "label": "PR #42 review", "cwd": "/code/foo" },
     { "id": "def456", "label": "feature/auth", "cwd": "/code/bar" }
   ]
 }
 ```
+
+`token` is only present for external providers after successful pairing. Project providers (token-based auth) and internal providers do not receive it. `cwd` is only visible for sessions the provider is authorized to access.
 
 ### `sessions.updated` — session list changed
 
@@ -810,6 +825,7 @@ Sent by external providers after receiving `auth.pairing` and the user has verif
 | Field | Required | Description |
 |---|---|---|
 | `name` | yes | Provider identity |
+| `protocolVersion` | yes | Protocol version (currently `2`) |
 | `session` | no | Session to bind to. Omit for internal providers (gateway auto-stamps). `"all"` for broadcast. |
 | `instance` | no | Unique instance ID for multi-instance providers (e.g., browser tabs). Gateway uses `name` + `instance` as compound key. |
 | `reconnectToken` | no | Token from previous `hello.ack` to restore binding after disconnect. |
@@ -977,7 +993,7 @@ When a filter exists, the gateway applies it to `push` events on that stream. Th
 
 `sessionId` is optional for single-session providers, required for `"all"`-bound providers.
 
-Stream names use the format `stream@provider` to avoid collisions. Omit `@provider` to query your own streams. Cross-provider reads require `streamAccess: "all"` in `hello`.
+Stream names use the format `stream@provider` to avoid collisions. Omit `@provider` to query your own streams. Cross-provider reads are restricted to **internal** trust level only (see Provider Capabilities).
 
 ### `session.ready` — acknowledge readiness for a new session
 
@@ -1132,21 +1148,18 @@ Multiple providers can append to the same section. Gateway concatenates in regis
 
 ## What a minimal provider looks like
 
-### Node.js — 50 lines
+These examples are the **normative happy path** — they include all required fields.
+
+### Node.js (project provider — token auth)
 
 ```js
 import WebSocket from "ws";
-import { readFileSync } from "fs";
-import { join } from "path";
-import { homedir } from "os";
 
-const secret = process.env.TAP_GATEWAY_SECRET
-  || readFileSync(join(process.env.COPILOT_HOME || join(homedir(), ".copilot"), ".tap-gateway-secret"), "utf8").trim();
-
+const TOKEN = process.env.TAP_PROVIDER_TOKEN;
 const ws = new WebSocket("ws://localhost:9400");
 
 ws.on("open", () => {
-  ws.send(JSON.stringify({ type: "auth", secret }));
+  ws.send(JSON.stringify({ type: "auth", token: TOKEN }));
 });
 
 ws.on("message", (raw) => {
@@ -1156,6 +1169,7 @@ ws.on("message", (raw) => {
     ws.send(JSON.stringify({
       type: "hello",
       name: "hello-provider",
+      protocolVersion: 2,
       session: msg.active[0]?.id ?? "all",
       tools: [{
         name: "say_hello",
@@ -1176,15 +1190,28 @@ ws.on("message", (raw) => {
       data: `Hello, ${msg.args.name}!`
     }));
   }
+
+  if (msg.type === "tool.cancel") {
+    ws.send(JSON.stringify({
+      type: "tool.result",
+      id: msg.id,
+      error: "Cancelled",
+      errorCode: "CANCELLED"
+    }));
+  }
+
+  if (msg.type === "error") {
+    console.error(`Gateway error: ${msg.code} — ${msg.message}`);
+  }
 });
 ```
 
-### Browser — injected via Detour, with session picker and auth
+### Browser (external provider — pairing auth)
 
 ```js
 const GATEWAY = "localhost:9400";
-let ws, sessions = [], registered = false, secret;
-let reconnectToken = null;
+let ws, sessions = [], registered = false;
+let reconnectToken = null, authToken = null;
 const INSTANCE = "tab-" + Math.random().toString(36).slice(2, 6);
 
 // Step 1: connect and request pairing
@@ -1195,23 +1222,30 @@ function connect() {
   ws = new WebSocket(`ws://${GATEWAY}`);
 
   ws.onopen = () => {
-    // Step 2: request pairing (user will see a code in Copilot)
-    ws.send(JSON.stringify({ type: "auth", mode: "pair" }));
+    // Step 2: authenticate (use issued token on reconnect, pair on first connect)
+    if (authToken) {
+      ws.send(JSON.stringify({ type: "auth", token: authToken }));
+    } else {
+      ws.send(JSON.stringify({ type: "auth", mode: "pair" }));
+    }
   };
 
   ws.onmessage = (e) => {
     const msg = JSON.parse(e.data);
 
-    // Step 3: handle pairing
+    // Step 3: handle pairing — show input for user to type the code from Copilot
     if (msg.type === "auth.pairing") {
-      showOverlay(`Pairing code: ${msg.code} — confirm in your Copilot session`);
-      ws.send(JSON.stringify({ type: "auth.confirm", code: msg.code }));
+      const code = prompt("Enter the pairing code from your Copilot session:");
+      if (code) {
+        ws.send(JSON.stringify({ type: "auth.confirm", code }));
+      }
       return;
     }
 
     // Step 4: receive session list or ack
     if (msg.type === "sessions" || msg.type === "sessions.updated") {
       sessions = msg.active;
+      if (msg.token) authToken = msg.token;  // store issued token for reconnect
       if (!registered) {
         if (sessions.length === 0) showOverlay("Waiting for Copilot session...");
         else if (sessions.length === 1) register(sessions[0].id);
@@ -1240,8 +1274,9 @@ function register(sessionId) {
   ws.send(JSON.stringify({
     type: "hello",
     name: "browser",
+    protocolVersion: 2,
     instance: INSTANCE,
-    reconnectToken,  // restore binding on reconnect (null on first connect)
+    reconnectToken,
     session: sessionId,
     metadata: { url: location.href, title: document.title },
     tools: [
@@ -1275,13 +1310,17 @@ function handleCancel(msg) {
 }
 ```
 
-### Python — 35 lines
+### Python (project provider — token auth)
 
 ```python
-import asyncio, json, websockets
+import asyncio, json, os, websockets
+
+TOKEN = os.environ["TAP_PROVIDER_TOKEN"]
 
 async def provider():
     async with websockets.connect("ws://localhost:9400") as ws:
+        await ws.send(json.dumps({"type": "auth", "token": TOKEN}))
+
         async for raw in ws:
             msg = json.loads(raw)
 
@@ -1289,6 +1328,7 @@ async def provider():
                 await ws.send(json.dumps({
                     "type": "hello",
                     "name": "python-provider",
+                    "protocolVersion": 2,
                     "session": msg["active"][0]["id"] if msg["active"] else "all",
                     "tools": [{
                         "name": "compute",
@@ -1310,6 +1350,14 @@ async def provider():
                     "type": "tool.result",
                     "id": msg["id"],
                     "data": result
+                }))
+
+            if msg["type"] == "tool.cancel":
+                await ws.send(json.dumps({
+                    "type": "tool.result",
+                    "id": msg["id"],
+                    "error": "Cancelled",
+                    "errorCode": "CANCELLED"
                 }))
 
 asyncio.run(provider())
