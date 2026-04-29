@@ -4,6 +4,26 @@ export function nowIso() {
   return new Date().toISOString();
 }
 
+export function parseIntervalSchedule(value) {
+  if (!Array.isArray(value) || value.length === 0) {
+    return null;
+  }
+  return value.map((item, index) => {
+    const parsed = parseLoopInterval(item);
+    if (
+      parsed === null ||
+      parsed.idle === true ||
+      !Number.isFinite(parsed.ms) ||
+      parsed.ms <= 0
+    ) {
+      throw new Error(
+        `Invalid interval schedule entry at index ${index}: '${item}'. Schedule entries must be non-blank intervals greater than 0 and cannot be 'idle'.`
+      );
+    }
+    return parsed;
+  });
+}
+
 export function parseLoopInterval(value) {
   if (value === undefined || value === null || String(value).trim() === "") {
     return null;

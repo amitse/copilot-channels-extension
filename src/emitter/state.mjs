@@ -10,7 +10,7 @@ import {
   normalizeLifespan,
   normalizeOwnership
 } from "../util/normalize.mjs";
-import { nowIso, parseLoopInterval } from "../util/time.mjs";
+import { nowIso, parseLoopInterval, parseIntervalSchedule } from "../util/time.mjs";
 import { resolveRequestedCwd } from "../util/path.mjs";
 import { createEventFilter, getEventFilterInput } from "../format/event-filter.mjs";
 
@@ -28,7 +28,11 @@ export function buildEmitterState(spec, baseCwd, defaults = {}) {
     throw new Error(`Emitter '${name}' cannot define both command and prompt. Choose one emitter type.`);
   }
 
-  const interval = parseLoopInterval(spec.every);
+  const schedule = parseIntervalSchedule(spec.everySchedule);
+  if (schedule && spec.every != null && String(spec.every).trim() !== "") {
+    throw new Error(`Emitter '${name}': 'every' and 'everySchedule' are mutually exclusive. Use one or the other.`);
+  }
+  const interval = schedule ? null : parseLoopInterval(spec.every);
   const lifespan = normalizeLifespan(spec.scope, defaults.scope ?? LIFESPAN.TEMPORARY);
   const ownership = normalizeOwnership(spec.managedBy, defaults.managedBy ?? OWNERSHIP.MODEL_OWNED);
   const eventFilter = createEventFilter(
@@ -44,7 +48,7 @@ export function buildEmitterState(spec, baseCwd, defaults = {}) {
       throw new Error(`Emitter '${name}': every='idle' is only valid for prompt emitters, not command emitters.`);
     }
     runSchedule = RUN_SCHEDULE.IDLE;
-  } else if (interval) {
+  } else if (interval || schedule) {
     runSchedule = RUN_SCHEDULE.TIMED;
   } else if (prompt) {
     runSchedule = RUN_SCHEDULE.ONE_TIME;
@@ -61,8 +65,10 @@ export function buildEmitterState(spec, baseCwd, defaults = {}) {
     prompt: prompt || null,
     emitterType,
     runSchedule,
-    every: interval?.text ?? null,
-    everyMs: interval?.ms ?? null,
+    every: interval?.text ?? (schedule ? schedule[0].text : null),
+    everyMs: interval?.ms ?? (schedule ? schedule[0].ms : null),
+    everySchedule: schedule ? schedule.map((s) => s.text) : null,
+    everyScheduleMs: schedule ? schedule.map((s) => s.ms) : null,
     requestedCwd: spec.cwd ?? null,
     cwd: resolveRequestedCwd(baseCwd, spec.cwd),
     stream: normalizeName(spec.channel, name),

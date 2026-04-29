@@ -1,7 +1,7 @@
 ---
 name: monitor
 description: "Start a self-tuning command monitor. Use when the user says 'monitor', 'watch', 'tail', 'track', 'keep an eye on', or wants a shell command to run continuously while Copilot automatically reviews and tunes the output filters over time."
-argument-hint: "[review-interval] <shell-command>"
+argument-hint: "<shell-command>"
 user-invocable: true
 ---
 
@@ -9,32 +9,17 @@ Start a CommandEmitter for the given shell command paired with a companion Promp
 
 ## Expected input
 
-Interpret the invocation as:
+The entire invocation is the shell command to run continuously.
 
-1. An **optional** first argument that is the review interval for the companion (e.g. `5m`, `10m`, `1h`). Defaults to `5m` when omitted.
-2. The rest of the input is the shell command to run continuously.
-
-Example (with explicit interval):
+Example:
 
 ```text
-/monitor 10m tail -f /var/log/app.log
+/monitor tail -f /var/log/app.log
 ```
 
 means:
 
-- `reviewInterval = "10m"` — companion reviews the stream every 10 minutes
 - `command = "tail -f /var/log/app.log"`
-
-Example (default interval):
-
-```text
-/monitor docker logs -f mycontainer
-```
-
-means:
-
-- `reviewInterval = "5m"` (default)
-- `command = "docker logs -f mycontainer"`
 
 If the command is missing, ask the user for it instead of guessing.
 
@@ -57,7 +42,7 @@ Use `tap_start_emitter` to start the CommandEmitter:
 Use `tap_start_emitter` to start a second emitter immediately after the command emitter:
 
 - `prompt` — a **fully self-contained** instruction (see template below).
-- `every = <reviewInterval>` — timed schedule.
+- `everySchedule: ["10s", "20s", "30s", "1m", "2m", "5m", "10m"]` — backoff schedule: reviews start very frequent to validate the monitor quickly, then space out as it stabilises.
 - `scope = "temporary"`, `managedBy = "modelOwned"`.
 - Name it `<command-emitter-name>-review`.
 - `subscribe = false` — review is internal housekeeping, not user-facing.
@@ -89,13 +74,13 @@ Substitute the real emitter name and stream name into the prompt before passing 
 
 When this skill is invoked:
 
-1. Parse the review interval and command from the invocation.
+1. Parse the command from the invocation.
 2. Start the CommandEmitter.
-3. Start the companion PromptEmitter using the self-contained prompt template above.
+3. Start the companion PromptEmitter using the self-contained prompt template and the hardcoded backoff schedule.
 4. Confirm to the user:
    - Command emitter name and stream.
    - Initial filter patterns (or "none set — companion will tune on first review").
-   - Companion reviewer name and review interval.
+   - Companion reviewer name and its review schedule (first check in 10s, backing off to 10m).
 5. Stop there — do not immediately inspect stream history or simulate a review.
 
 ## Stopping the monitor
@@ -124,6 +109,4 @@ Remind the companion (via the prompt) to be conservative:
 
 ## If the input is incomplete
 
-If the review interval looks like part of the command (e.g. `/monitor tail -f …`), treat the first token as the command start and use the default interval `5m`.
-
-If only an interval is given with no command, ask for the command.
+If the invocation contains no recognisable shell command, ask the user for it.
