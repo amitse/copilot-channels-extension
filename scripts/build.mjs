@@ -63,7 +63,7 @@ copyFileSync(
 );
 console.log("✓ dist/copilot-instructions.md copied");
 
-// 4. Write version.json
+// 6. Write version.json
 const pkg = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8"));
 writeFileSync(
   path.join(dist, "version.json"),

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { existsSync, mkdirSync, copyFileSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, copyFileSync, readFileSync, unlinkSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
@@ -212,6 +212,28 @@ function install(flags) {
   } else {
     console.error(`⚠  Some artifacts could not be ${isUpdate ? "updated" : "installed"}.`);
     process.exit(1);
+  }
+
+  // Remove deprecated pre-1.2.0 skill files so old /loop, /monitor, /create-provider
+  // commands no longer appear alongside the new tap-* namespaced ones.
+  if (isUpdate) {
+    const deprecated = ["loop", "monitor", "create-provider"];
+    let removedAny = false;
+    for (const name of deprecated) {
+      const oldPath = path.join(targetRoot, "skills", name, "SKILL.md");
+      if (existsSync(oldPath)) {
+        try {
+          unlinkSync(oldPath);
+          if (!removedAny) { console.log(); removedAny = true; }
+          console.log(`  ✓ Removed deprecated skill: skills/${name}/SKILL.md`);
+        } catch {
+          console.warn(`  ⚠  Could not remove deprecated skill at ${oldPath} — remove it manually`);
+        }
+      }
+    }
+    if (removedAny) {
+      console.log(`\n  Use the new namespaced commands: /tap-loop  /tap-monitor  /tap-create-provider`);
+    }
   }
 }
 

@@ -28,27 +28,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   | `skills/monitor/SKILL.md`      | `skills/tap-monitor/SKILL.md`      |
   | `skills/create-provider/SKILL.md` | `skills/tap-create-provider/SKILL.md` |
 
-  **Migration:** After updating, the old skill files at the old paths are no
-  longer installed or overwritten. Remove them manually from your Copilot
-  config directory:
-
-  ```bash
-  # global install (~/.copilot)
-  rm ~/.copilot/skills/loop/SKILL.md
-  rm ~/.copilot/skills/monitor/SKILL.md
-  rm ~/.copilot/skills/create-provider/SKILL.md
-
-  # local install (.github/)
-  rm .github/skills/loop/SKILL.md
-  rm .github/skills/monitor/SKILL.md
-  rm .github/skills/create-provider/SKILL.md
-  ```
-
-  Then re-run the installer to get the new namespaced skill files:
-
-  ```bash
-  npx copilot-tap-extension --full
-  ```
+  **Migration:** Run `npx copilot-tap-extension` — the installer automatically
+  removes the old deprecated skill files and installs the new namespaced ones.
+  No manual cleanup required.
 
 ### Fixed
 

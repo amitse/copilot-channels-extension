@@ -224,6 +224,7 @@ Rules can be added or changed while the emitter is running. You never need to re
   extensions/tap/extension.mjs  # extension entry point (loads the runtime)
   skills/tap-loop/                  # /tap-loop skill for scheduled and idle prompts
   skills/tap-monitor/               # /tap-monitor skill for self-tuning command monitors
+  skills/tap-create-provider/       # /tap-create-provider skill for scaffolding external tool providers
   copilot-instructions.md       # agent guidance for using this extension
 src/
   emitter/                      # supervisor, lifecycle, spawn, line router
