@@ -1,5 +1,5 @@
 ---
-name: create-provider
+name: tap-create-provider
 description: "Create an external tool provider that connects to ※ tap. Use when the user says 'create a provider', 'build a provider', 'scaffold a provider', 'add an external tool', 'connect a service to tap', or wants to extend Copilot with tools written in any language."
 argument-hint: "<what the provider should do>"
 user-invocable: true

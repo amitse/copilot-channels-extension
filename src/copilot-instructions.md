@@ -146,7 +146,7 @@ If the work is mostly reasoning rather than data collection, prefer a PromptEmit
 - prompt once for a background check (oneTime)
 - prompt + `runInterval` for a fixed maintenance loop (timed)
 
-This is the closest analogue to Claude's session-scoped `/loop` behavior in this extension.
+This is the closest analogue to Claude's session-scoped `/tap-loop` behavior in this extension.
 
 ## Borrow from the official SDK examples
 

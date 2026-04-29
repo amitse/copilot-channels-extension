@@ -39,9 +39,9 @@ Options:
 Installs:
   extensions/tap/extension.mjs    The bundled ※ tap extension
   extensions/tap/version.json     Installed version metadata
-  skills/loop/SKILL.md            The /loop skill for prompt-based loops
-  skills/create-provider/SKILL.md The /create-provider skill for scaffolding providers
-  skills/monitor/SKILL.md         The /monitor skill for self-tuning command monitors
+  skills/tap-loop/SKILL.md            The /tap-loop skill for prompt-based loops
+  skills/tap-create-provider/SKILL.md The /tap-create-provider skill for scaffolding providers
+  skills/tap-monitor/SKILL.md         The /tap-monitor skill for self-tuning command monitors
   copilot-instructions.md         Agent instructions for using ※ tap
 `);
 }
@@ -170,19 +170,19 @@ function install(flags) {
 
   const ancillaryArtifacts = [
     {
-      src: path.join(distDir, "skills", "loop", "SKILL.md"),
-      dest: path.join(targetRoot, "skills", "loop", "SKILL.md"),
-      label: "skills/loop/SKILL.md"
+      src: path.join(distDir, "skills", "tap-loop", "SKILL.md"),
+      dest: path.join(targetRoot, "skills", "tap-loop", "SKILL.md"),
+      label: "skills/tap-loop/SKILL.md"
     },
     {
-      src: path.join(distDir, "skills", "create-provider", "SKILL.md"),
-      dest: path.join(targetRoot, "skills", "create-provider", "SKILL.md"),
-      label: "skills/create-provider/SKILL.md"
+      src: path.join(distDir, "skills", "tap-create-provider", "SKILL.md"),
+      dest: path.join(targetRoot, "skills", "tap-create-provider", "SKILL.md"),
+      label: "skills/tap-create-provider/SKILL.md"
     },
     {
-      src: path.join(distDir, "skills", "monitor", "SKILL.md"),
-      dest: path.join(targetRoot, "skills", "monitor", "SKILL.md"),
-      label: "skills/monitor/SKILL.md"
+      src: path.join(distDir, "skills", "tap-monitor", "SKILL.md"),
+      dest: path.join(targetRoot, "skills", "tap-monitor", "SKILL.md"),
+      label: "skills/tap-monitor/SKILL.md"
     },
     {
       src: path.join(distDir, "copilot-instructions.md"),

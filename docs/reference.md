@@ -26,7 +26,7 @@ These terms are used consistently across the code, tool descriptions, and config
 | **Continuous Command** | `command` only | Log tails, watch scripts, long-running jobs |
 | **Timed Command** | `command` + `runInterval` | API polling, recurring validators |
 | **One-shot Prompt** | `prompt` only | Background agent check (runs once) |
-| **Timed Prompt** | `prompt` + `runInterval` | `/loop`-style maintenance tasks |
+| **Timed Prompt** | `prompt` + `runInterval` | `/tap-loop`-style maintenance tasks |
 
 ## Event outcomes
 
@@ -86,10 +86,10 @@ The extension supports session-scoped timed schedules:
 - If a timed PromptEmitter fires while the session is busy, that run defers to the next interval
 - Persistent config restores the emitter next session, but this is not a durable cloud scheduler
 
-The repo also ships a **`loop` skill** (`src/skills/loop`) for quick setup:
+The repo also ships a **`tap-loop` skill** (`src/skills/tap-loop`) for quick setup:
 
 ```text
-/loop 5m check the deploy
+/tap-loop 5m check the deploy
 ```
 
 ## Ownership model

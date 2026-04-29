@@ -1,5 +1,5 @@
 ---
-name: loop
+name: tap-loop
 description: "Run a prompt on a recurring schedule or when idle. Use when the user says 'loop', 'every 5 minutes', 'check periodically', 'keep watching', 'repeat this', 'run when idle', or wants any prompt to re-run automatically."
 argument-hint: "<interval|idle> <prompt>"
 user-invocable: true
@@ -17,7 +17,7 @@ Interpret the invocation as:
 Example (timed):
 
 ```text
-/loop 5m check the deploy
+/tap-loop 5m check the deploy
 ```
 
 means:
@@ -28,7 +28,7 @@ means:
 Example (idle):
 
 ```text
-/loop idle check the deploy
+/tap-loop idle check the deploy
 ```
 
 means:

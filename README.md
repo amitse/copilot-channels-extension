@@ -62,7 +62,7 @@ npx copilot-tap-extension
 npx copilot-tap-extension --local
 ```
 
-This installs the bundled extension, the `/loop` skill, the `/monitor` skill, and the agent instructions to the appropriate Copilot directory. Run `npx copilot-tap-extension --help` for all options.
+This installs the bundled extension, the `/tap-loop` skill, the `/tap-monitor` skill, and the agent instructions to the appropriate Copilot directory. Run `npx copilot-tap-extension --help` for all options.
 
 To update to the latest version, re-run the same command with `--force`:
 
@@ -103,13 +103,13 @@ The config file tells the extension which emitters to auto-start. The example de
 
 This runs the heartbeat script on session start, drops boot messages, injects warnings and errors, and keeps everything else in the stream.
 
-Once inside the session, describe what you want in natural language. You can also use `/loop` to set up scheduled prompts directly:
+Once inside the session, describe what you want in natural language. You can also use `/tap-loop` to set up scheduled prompts directly:
 
 > _"Watch my build logs and tell me if anything fails"_
 
-> _"/loop 5m check for new PR review comments"_
+> _"/tap-loop 5m check for new PR review comments"_
 
-> _"/monitor tail -f /var/log/app.log"_
+> _"/tap-monitor tail -f /var/log/app.log"_
 
 > _"Tail the API logs, inject errors, drop health checks"_
 
@@ -175,11 +175,11 @@ You keep coding. Twenty minutes later, Copilot interrupts: "Run 48291: deploymen
 
 **Monitor a command with self-tuning filters**
 
-Use `/monitor` to run a shell command continuously while a companion agent periodically reads the output and updates the filter expressions to separate noise from signal automatically.
+Use `/tap-monitor` to run a shell command continuously while a companion agent periodically reads the output and updates the filter expressions to separate noise from signal automatically.
 
 ```
-/monitor tail -f /var/log/app.log
-/monitor 10m docker logs -f mycontainer
+/tap-monitor tail -f /var/log/app.log
+/tap-monitor 10m docker logs -f mycontainer
 ```
 
 The command stream starts with a sensible initial `notifyPattern`. Every few minutes (configurable) the companion reviews recent log lines and calls `tap_set_event_filter` if the patterns need adjustment. The filter tightens itself based on real output — no manual tuning required.
@@ -189,7 +189,7 @@ The command stream starts with a sensible initial `notifyPattern`. Every few min
 A PromptEmitter re-runs an agent prompt at a fixed interval. Useful for PR comments, CI status, or ticket queues.
 
 ```
-/loop 15m Check for new failing CI runs or PR review comments.
+/tap-loop 15m Check for new failing CI runs or PR review comments.
          Summarize only actionable items.
 ```
 
@@ -197,10 +197,10 @@ Every 15 minutes the agent scans and reports back. No news means no interruption
 
 **Run a prompt when idle**
 
-Use `/loop idle` to re-run a prompt whenever the session has nothing else to do. Set `maxRuns` to cap iterations.
+Use `/tap-loop idle` to re-run a prompt whenever the session has nothing else to do. Set `maxRuns` to cap iterations.
 
 ```
-/loop idle Scan for new issues labeled urgent. Summarize what changed.
+/tap-loop idle Scan for new issues labeled urgent. Summarize what changed.
 ```
 
 The prompt fires immediately, then re-fires after each idle period. It stops after reaching the iteration limit.
@@ -222,8 +222,8 @@ Rules can be added or changed while the emitter is running. You never need to re
 ```text
 .github/
   extensions/tap/extension.mjs  # extension entry point (loads the runtime)
-  skills/loop/                  # /loop skill for scheduled and idle prompts
-  skills/monitor/               # /monitor skill for self-tuning command monitors
+  skills/tap-loop/                  # /tap-loop skill for scheduled and idle prompts
+  skills/tap-monitor/               # /tap-monitor skill for self-tuning command monitors
   copilot-instructions.md       # agent guidance for using this extension
 src/
   emitter/                      # supervisor, lifecycle, spawn, line router
