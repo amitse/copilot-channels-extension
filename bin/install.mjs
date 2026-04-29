@@ -41,6 +41,7 @@ Installs:
   extensions/tap/version.json     Installed version metadata
   skills/loop/SKILL.md            The /loop skill for prompt-based loops
   skills/create-provider/SKILL.md The /create-provider skill for scaffolding providers
+  skills/monitor/SKILL.md         The /monitor skill for self-tuning command monitors
   copilot-instructions.md         Agent instructions for using ※ tap
 `);
 }
@@ -177,6 +178,11 @@ function install(flags) {
       src: path.join(distDir, "skills", "create-provider", "SKILL.md"),
       dest: path.join(targetRoot, "skills", "create-provider", "SKILL.md"),
       label: "skills/create-provider/SKILL.md"
+    },
+    {
+      src: path.join(distDir, "skills", "monitor", "SKILL.md"),
+      dest: path.join(targetRoot, "skills", "monitor", "SKILL.md"),
+      label: "skills/monitor/SKILL.md"
     },
     {
       src: path.join(distDir, "copilot-instructions.md"),
