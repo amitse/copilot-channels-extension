@@ -34,7 +34,7 @@ Source code lives in `src/`. The `.github/` directory is only for GitHub workflo
 - `src/extension.mjs` — Extension entry point (bundled by esbuild into `dist/extension.mjs`)
 - `src/tap-runtime.mjs` — Runtime factory that wires all subsystems together
 - `src/copilot-instructions.md` — User-facing agent instructions (installed to `~/.copilot/`)
-- `src/skills/loop/SKILL.md` — The `/loop` skill definition
+- `src/skills/tap-loop/SKILL.md` — The `/tap-loop` skill definition
 - `bin/install.mjs` — CLI installer (smart: detects fresh install vs update automatically)
 
 ## Key conventions
@@ -58,4 +58,4 @@ Prompt emitters dispatch prompts fire-and-forget via `session.send()`. The model
 - **Fresh install** — copies all artifacts (extension, version.json, skills, copilot-instructions)
 - **Already installed** — updates only core files (extension.mjs + version.json), preserves user-customizable artifacts
 - **Same version** — exits with "already up to date"
-- `--full` forces a complete install even if already installed
+- `--force` forces a complete reinstall even if already installed (`--full` remains a legacy alias)

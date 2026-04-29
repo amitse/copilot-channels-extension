@@ -34,7 +34,7 @@ PromptEmitter events always inject (no filter applied). CommandEmitter events go
 | Continuous CommandEmitter | `command` | Tail a log, run a watch task, or consume a streaming source |
 | Timed CommandEmitter | `command` + `runInterval` | Poll an API, re-run validation, or check a recurring state |
 | OneTime PromptEmitter | `prompt` | Ask the agent to perform one background inspection or maintenance pass |
-| Timed PromptEmitter | `prompt` + `runInterval` | Re-run a prompt in a session-scoped `/loop` style workflow |
+| Timed PromptEmitter | `prompt` + `runInterval` | Re-run a prompt in a session-scoped `/tap-loop` style workflow |
 
 ## The golden workflow
 

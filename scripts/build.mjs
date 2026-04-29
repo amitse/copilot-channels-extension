@@ -32,29 +32,29 @@ if (result.errors.length === 0) {
   console.log("✓ dist/extension.mjs built successfully");
 }
 
-// 2. Copy loop skill
-mkdirSync(path.join(dist, "skills", "loop"), { recursive: true });
+// 2. Copy tap-loop skill
+mkdirSync(path.join(dist, "skills", "tap-loop"), { recursive: true });
 copyFileSync(
-  path.join(root, "src", "skills", "loop", "SKILL.md"),
-  path.join(dist, "skills", "loop", "SKILL.md")
+  path.join(root, "src", "skills", "tap-loop", "SKILL.md"),
+  path.join(dist, "skills", "tap-loop", "SKILL.md")
 );
-console.log("✓ dist/skills/loop/SKILL.md copied");
+console.log("✓ dist/skills/tap-loop/SKILL.md copied");
 
-// 3. Copy create-provider skill
-mkdirSync(path.join(dist, "skills", "create-provider"), { recursive: true });
+// 3. Copy tap-create-provider skill
+mkdirSync(path.join(dist, "skills", "tap-create-provider"), { recursive: true });
 copyFileSync(
-  path.join(root, "src", "skills", "create-provider", "SKILL.md"),
-  path.join(dist, "skills", "create-provider", "SKILL.md")
+  path.join(root, "src", "skills", "tap-create-provider", "SKILL.md"),
+  path.join(dist, "skills", "tap-create-provider", "SKILL.md")
 );
-console.log("✓ dist/skills/create-provider/SKILL.md copied");
+console.log("✓ dist/skills/tap-create-provider/SKILL.md copied");
 
-// 4. Copy monitor skill
-mkdirSync(path.join(dist, "skills", "monitor"), { recursive: true });
+// 4. Copy tap-monitor skill
+mkdirSync(path.join(dist, "skills", "tap-monitor"), { recursive: true });
 copyFileSync(
-  path.join(root, "src", "skills", "monitor", "SKILL.md"),
-  path.join(dist, "skills", "monitor", "SKILL.md")
+  path.join(root, "src", "skills", "tap-monitor", "SKILL.md"),
+  path.join(dist, "skills", "tap-monitor", "SKILL.md")
 );
-console.log("✓ dist/skills/monitor/SKILL.md copied");
+console.log("✓ dist/skills/tap-monitor/SKILL.md copied");
 
 // 5. Copy copilot-instructions.md
 copyFileSync(
@@ -63,7 +63,7 @@ copyFileSync(
 );
 console.log("✓ dist/copilot-instructions.md copied");
 
-// 4. Write version.json
+// 6. Write version.json
 const pkg = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8"));
 writeFileSync(
   path.join(dist, "version.json"),

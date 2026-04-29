@@ -1,5 +1,5 @@
 ---
-name: monitor
+name: tap-monitor
 description: "Start a self-tuning command monitor. Use when the user says 'monitor', 'watch', 'tail', 'track', 'keep an eye on', or wants a shell command to run continuously while Copilot automatically reviews and tunes the output filters over time."
 argument-hint: "<shell-command>"
 user-invocable: true
@@ -14,7 +14,7 @@ The entire invocation is the shell command to run continuously.
 Example:
 
 ```text
-/monitor tail -f /var/log/app.log
+/tap-monitor tail -f /var/log/app.log
 ```
 
 means:

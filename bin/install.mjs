@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { existsSync, mkdirSync, copyFileSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, copyFileSync, readFileSync, unlinkSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
@@ -33,22 +33,22 @@ and preserves customizable artifacts. If fresh, does a full install.
 Options:
   --global, -g     Install to ~/.copilot/  (default)
   --local,  -l     Install to .github/  (project-scoped)
-  --full           Force a full install even if already installed
+  --force, -f      Force a full reinstall even if already installed
   --help,  -h      Show this help message
 
 Installs:
   extensions/tap/extension.mjs    The bundled ※ tap extension
   extensions/tap/version.json     Installed version metadata
-  skills/loop/SKILL.md            The /loop skill for prompt-based loops
-  skills/create-provider/SKILL.md The /create-provider skill for scaffolding providers
-  skills/monitor/SKILL.md         The /monitor skill for self-tuning command monitors
+  skills/tap-loop/SKILL.md            The /tap-loop skill for prompt-based loops
+  skills/tap-create-provider/SKILL.md The /tap-create-provider skill for scaffolding providers
+  skills/tap-monitor/SKILL.md         The /tap-monitor skill for self-tuning command monitors
   copilot-instructions.md         Agent instructions for using ※ tap
 `);
 }
 
 function parseArgs(argv) {
   const args = argv.slice(2);
-  const flags = { scope: "global", full: false, help: false };
+  const flags = { scope: "global", force: false, help: false };
   for (const arg of args) {
     switch (arg) {
       case "--global":
@@ -59,12 +59,12 @@ function parseArgs(argv) {
       case "-l":
         flags.scope = "local";
         break;
-      case "--full":
-        flags.full = true;
-        break;
-      // Keep legacy flags working
       case "--force":
       case "-f":
+      case "--full":
+        flags.force = true;
+        break;
+      // Keep legacy flags working
       case "--update":
       case "-u":
         break;
@@ -128,6 +128,36 @@ function isCopilotCliInstalled() {
   }
 }
 
+function removeDeprecatedSkills(targetRoot) {
+  const deprecated = ["loop", "monitor", "create-provider"];
+  let allOk = true;
+  let removedAny = false;
+
+  for (const name of deprecated) {
+    const oldPath = path.join(targetRoot, "skills", name, "SKILL.md");
+    if (!existsSync(oldPath)) {
+      continue;
+    }
+    try {
+      unlinkSync(oldPath);
+      if (!removedAny) {
+        console.log();
+        removedAny = true;
+      }
+      console.log(`  ✓ Removed deprecated skill: skills/${name}/SKILL.md`);
+    } catch {
+      allOk = false;
+      console.warn(`  ⚠  Could not remove deprecated skill at ${oldPath} — remove it manually`);
+    }
+  }
+
+  if (removedAny) {
+    console.log(`\n  Use the new namespaced commands: /tap-loop  /tap-monitor  /tap-create-provider`);
+  }
+
+  return allOk;
+}
+
 function install(flags) {
   const targetRoot = getTargetRoot(flags.scope);
   const scopeLabel = flags.scope === "global" ? "global (~/.copilot)" : "local (.github)";
@@ -141,16 +171,20 @@ function install(flags) {
   }
 
   const installed = isAlreadyInstalled(targetRoot);
-  const isUpdate = installed && !flags.full;
+  const isUpdate = installed && !flags.force;
+  const isReinstall = installed && flags.force;
+  const installedVersion = installed ? getInstalledVersion(targetRoot) : null;
 
   if (isUpdate) {
-    const installedVersion = getInstalledVersion(targetRoot);
     if (installedVersion && installedVersion === packageVersion) {
       console.log(`\n${BRAND} — already up to date (v${installedVersion})\n`);
       process.exit(0);
     }
     const fromLabel = installedVersion ? `v${installedVersion}` : "unknown";
     console.log(`\n${BRAND} — updating ${fromLabel} → v${packageVersion} (${scopeLabel})\n`);
+  } else if (isReinstall) {
+    const fromLabel = installedVersion ? `v${installedVersion}` : "unknown";
+    console.log(`\n${BRAND} — reinstalling ${fromLabel} → v${packageVersion} (${scopeLabel})\n`);
   } else {
     console.log(`\n${BRAND} — installing v${packageVersion} (${scopeLabel})\n`);
   }
@@ -170,19 +204,19 @@ function install(flags) {
 
   const ancillaryArtifacts = [
     {
-      src: path.join(distDir, "skills", "loop", "SKILL.md"),
-      dest: path.join(targetRoot, "skills", "loop", "SKILL.md"),
-      label: "skills/loop/SKILL.md"
+      src: path.join(distDir, "skills", "tap-loop", "SKILL.md"),
+      dest: path.join(targetRoot, "skills", "tap-loop", "SKILL.md"),
+      label: "skills/tap-loop/SKILL.md"
     },
     {
-      src: path.join(distDir, "skills", "create-provider", "SKILL.md"),
-      dest: path.join(targetRoot, "skills", "create-provider", "SKILL.md"),
-      label: "skills/create-provider/SKILL.md"
+      src: path.join(distDir, "skills", "tap-create-provider", "SKILL.md"),
+      dest: path.join(targetRoot, "skills", "tap-create-provider", "SKILL.md"),
+      label: "skills/tap-create-provider/SKILL.md"
     },
     {
-      src: path.join(distDir, "skills", "monitor", "SKILL.md"),
-      dest: path.join(targetRoot, "skills", "monitor", "SKILL.md"),
-      label: "skills/monitor/SKILL.md"
+      src: path.join(distDir, "skills", "tap-monitor", "SKILL.md"),
+      dest: path.join(targetRoot, "skills", "tap-monitor", "SKILL.md"),
+      label: "skills/tap-monitor/SKILL.md"
     },
     {
       src: path.join(distDir, "copilot-instructions.md"),
@@ -191,7 +225,12 @@ function install(flags) {
     }
   ];
 
-  const artifacts = isUpdate ? coreArtifacts : [...coreArtifacts, ...ancillaryArtifacts];
+  // During updates, also install ancillary artifacts that don't yet exist at the destination
+  // (e.g. new skills added in a newer version). Existing ones are preserved to keep user customizations.
+  const newAncillaryArtifacts = isUpdate
+    ? ancillaryArtifacts.filter(({ dest }) => !existsSync(dest))
+    : ancillaryArtifacts;
+  const artifacts = [...coreArtifacts, ...newAncillaryArtifacts];
 
   let allOk = true;
   for (const { src, dest, label } of artifacts) {
@@ -200,14 +239,20 @@ function install(flags) {
     }
   }
 
+  if (installed && !removeDeprecatedSkills(targetRoot)) {
+    allOk = false;
+  }
+
   console.log();
   if (allOk) {
-    const verb = isUpdate ? "updated" : "installed";
+    const verb = isUpdate ? "updated" : isReinstall ? "reinstalled" : "installed";
     console.log(`✓ ${BRAND} ${verb} to ${targetRoot}`);
-  } else {
-    console.error(`⚠  Some artifacts could not be ${isUpdate ? "updated" : "installed"}.`);
-    process.exit(1);
+    return;
   }
+
+  const verb = isUpdate ? "updated" : isReinstall ? "reinstalled" : "installed";
+  console.error(`⚠  Some artifacts could not be ${verb}.`);
+  process.exit(1);
 }
 
 const flags = parseArgs(process.argv);
