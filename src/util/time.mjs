@@ -4,6 +4,13 @@ export function nowIso() {
   return new Date().toISOString();
 }
 
+export function parseIntervalSchedule(value) {
+  if (!Array.isArray(value) || value.length === 0) {
+    return null;
+  }
+  return value.map((item) => parseLoopInterval(item));
+}
+
 export function parseLoopInterval(value) {
   if (value === undefined || value === null || String(value).trim() === "") {
     return null;

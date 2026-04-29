@@ -157,6 +157,17 @@ export function createLifecycle({ lineRouter, sessionPort }) {
     }, delayMs);
   }
 
+  function nextDelay(emitter) {
+    if (emitter.runSchedule === RUN_SCHEDULE.IDLE) {
+      return IDLE_PROMPT_DELAY_MS;
+    }
+    if (emitter.everyScheduleMs) {
+      const idx = Math.min(emitter.runCount - 1, emitter.everyScheduleMs.length - 1);
+      return emitter.everyScheduleMs[idx];
+    }
+    return emitter.everyMs;
+  }
+
   async function runScheduledIteration(emitter) {
     if (emitter.stopRequested || emitter.inFlight) {
       return;
@@ -204,10 +215,7 @@ export function createLifecycle({ lineRouter, sessionPort }) {
       }
 
       emitter.status = EMITTER_STATUS.WAITING;
-      const delay = emitter.runSchedule === RUN_SCHEDULE.IDLE
-        ? IDLE_PROMPT_DELAY_MS
-        : emitter.everyMs;
-      scheduleIteration(emitter, delay);
+      scheduleIteration(emitter, nextDelay(emitter));
       return;
     }
 
@@ -215,7 +223,7 @@ export function createLifecycle({ lineRouter, sessionPort }) {
       emitter.status = EMITTER_STATUS.WAITING;
       const retryDelay = emitter.runSchedule === RUN_SCHEDULE.IDLE
         ? IDLE_PROMPT_BACKOFF_MS
-        : emitter.everyMs;
+        : nextDelay(emitter);
       if (emitter.runSchedule !== RUN_SCHEDULE.IDLE) {
         lineRouter.appendSystemMessage(
           emitter,
@@ -244,15 +252,14 @@ export function createLifecycle({ lineRouter, sessionPort }) {
     }
 
     emitter.status = EMITTER_STATUS.WAITING;
-    const failRetryDelay = emitter.runSchedule === RUN_SCHEDULE.IDLE
-      ? IDLE_PROMPT_BACKOFF_MS
-      : emitter.everyMs;
-    scheduleIteration(emitter, failRetryDelay);
+    scheduleIteration(emitter, nextDelay(emitter));
   }
 
   function startScheduled(emitter) {
     const scheduleLabel = emitter.runSchedule === RUN_SCHEDULE.TIMED
-      ? `every ${emitter.every}`
+      ? (emitter.everySchedule
+        ? `backoff [${emitter.everySchedule.join(", ")}]`
+        : `every ${emitter.every}`)
       : emitter.runSchedule === RUN_SCHEDULE.IDLE
         ? "when idle"
         : RUN_SCHEDULE.ONE_TIME;
