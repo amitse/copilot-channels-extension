@@ -28,8 +28,11 @@ export function buildEmitterState(spec, baseCwd, defaults = {}) {
     throw new Error(`Emitter '${name}' cannot define both command and prompt. Choose one emitter type.`);
   }
 
-  const interval = parseLoopInterval(spec.every);
   const schedule = parseIntervalSchedule(spec.everySchedule);
+  if (schedule && spec.every != null && String(spec.every).trim() !== "") {
+    throw new Error(`Emitter '${name}': 'every' and 'everySchedule' are mutually exclusive. Use one or the other.`);
+  }
+  const interval = schedule ? null : parseLoopInterval(spec.every);
   const lifespan = normalizeLifespan(spec.scope, defaults.scope ?? LIFESPAN.TEMPORARY);
   const ownership = normalizeOwnership(spec.managedBy, defaults.managedBy ?? OWNERSHIP.MODEL_OWNED);
   const eventFilter = createEventFilter(

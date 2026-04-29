@@ -45,7 +45,7 @@ export function createEmitterTools({ streams, configStore, supervisor, getBaseCw
           channel: { type: "string", description: "EventStream to receive accepted events." },
           cwd: { type: "string", description: "Optional working directory relative to the session cwd." },
           every: { type: "string", description: "Optional repeat interval like 30s, 5m, 2h, or 1d. Use 'idle' for prompts that re-run whenever the session is idle. When omitted, commands run continuously and prompts run once." },
-          everySchedule: { type: "array", items: { type: "string" }, description: "Optional backoff schedule — an ordered list of intervals (e.g. ['10s','20s','30s','1m','2m','5m','10m']). The emitter uses each interval in sequence, then repeats the last one forever. Overrides 'every' when provided." },
+          everySchedule: { type: "array", minItems: 1, items: { type: "string" }, description: "Optional backoff schedule — an ordered non-empty list of interval strings (e.g. ['10s','20s','30s','1m','2m','5m','10m']). The emitter uses each interval in sequence, then repeats the last one forever. Overrides 'every' when provided. Cannot be 'idle' entries." },
           scope: { type: "string", description: "Use 'temporary' for session-only or 'persistent' to write config." },
           managedBy: { type: "string", description: "Ownership label: 'userOwned' or 'modelOwned'." },
           autoStart: { type: "boolean", description: "When persistent, whether the emitter should auto-start next session." },

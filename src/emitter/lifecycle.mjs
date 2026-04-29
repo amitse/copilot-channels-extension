@@ -252,7 +252,10 @@ export function createLifecycle({ lineRouter, sessionPort }) {
     }
 
     emitter.status = EMITTER_STATUS.WAITING;
-    scheduleIteration(emitter, nextDelay(emitter));
+    const failRetryDelay = emitter.runSchedule === RUN_SCHEDULE.IDLE
+      ? IDLE_PROMPT_BACKOFF_MS
+      : nextDelay(emitter);
+    scheduleIteration(emitter, failRetryDelay);
   }
 
   function startScheduled(emitter) {
