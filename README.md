@@ -62,7 +62,7 @@ npx copilot-tap-extension
 npx copilot-tap-extension --local
 ```
 
-This installs the bundled extension, the `/loop` skill, and the agent instructions to the appropriate Copilot directory. Run `npx copilot-tap-extension --help` for all options.
+This installs the bundled extension, the `/loop` skill, the `/monitor` skill, and the agent instructions to the appropriate Copilot directory. Run `npx copilot-tap-extension --help` for all options.
 
 To update to the latest version, re-run the same command with `--force`:
 
@@ -108,6 +108,8 @@ Once inside the session, describe what you want in natural language. You can als
 > _"Watch my build logs and tell me if anything fails"_
 
 > _"/loop 5m check for new PR review comments"_
+
+> _"/monitor tail -f /var/log/app.log"_
 
 > _"Tail the API logs, inject errors, drop health checks"_
 
@@ -171,6 +173,17 @@ Tell Copilot to watch a log, build, or command. It creates a CommandEmitter, fil
 
 You keep coding. Twenty minutes later, Copilot interrupts: "Run 48291: deployment rollback triggered on prod."
 
+**Monitor a command with self-tuning filters**
+
+Use `/monitor` to run a shell command continuously while a companion agent periodically reads the output and updates the filter expressions to separate noise from signal automatically.
+
+```
+/monitor tail -f /var/log/app.log
+/monitor 10m docker logs -f mycontainer
+```
+
+The command stream starts with a sensible initial `notifyPattern`. Every few minutes (configurable) the companion reviews recent log lines and calls `tap_set_event_filter` if the patterns need adjustment. The filter tightens itself based on real output — no manual tuning required.
+
 **Loop a prompt on a schedule**
 
 A PromptEmitter re-runs an agent prompt at a fixed interval. Useful for PR comments, CI status, or ticket queues.
@@ -210,6 +223,7 @@ Rules can be added or changed while the emitter is running. You never need to re
 .github/
   extensions/tap/extension.mjs  # extension entry point (loads the runtime)
   skills/loop/                  # /loop skill for scheduled and idle prompts
+  skills/monitor/               # /monitor skill for self-tuning command monitors
   copilot-instructions.md       # agent guidance for using this extension
 src/
   emitter/                      # supervisor, lifecycle, spawn, line router
