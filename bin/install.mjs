@@ -191,7 +191,12 @@ function install(flags) {
     }
   ];
 
-  const artifacts = isUpdate ? coreArtifacts : [...coreArtifacts, ...ancillaryArtifacts];
+  // During updates, also install ancillary artifacts that don't yet exist at the destination
+  // (e.g. new skills added in a newer version). Existing ones are preserved to keep user customizations.
+  const newAncillaryArtifacts = isUpdate
+    ? ancillaryArtifacts.filter(({ dest }) => !existsSync(dest))
+    : ancillaryArtifacts;
+  const artifacts = [...coreArtifacts, ...newAncillaryArtifacts];
 
   let allOk = true;
   for (const { src, dest, label } of artifacts) {
