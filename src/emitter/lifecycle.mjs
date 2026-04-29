@@ -162,7 +162,7 @@ export function createLifecycle({ lineRouter, sessionPort }) {
       return IDLE_PROMPT_DELAY_MS;
     }
     if (emitter.everyScheduleMs) {
-      const idx = Math.min(emitter.runCount - 1, emitter.everyScheduleMs.length - 1);
+      const idx = Math.min(Math.max(0, emitter.runCount - 1), emitter.everyScheduleMs.length - 1);
       return emitter.everyScheduleMs[idx];
     }
     return emitter.everyMs;

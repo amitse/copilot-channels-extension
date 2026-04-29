@@ -109,4 +109,4 @@ Remind the companion (via the prompt) to be conservative:
 
 ## If the input is incomplete
 
-If only an interval is given with no command, ask for the command.
+If the invocation contains no recognisable shell command, ask the user for it.
