@@ -33,7 +33,7 @@ and preserves customizable artifacts. If fresh, does a full install.
 Options:
   --global, -g     Install to ~/.copilot/  (default)
   --local,  -l     Install to .github/  (project-scoped)
-  --full           Force a full install even if already installed
+  --force, -f      Force a full reinstall even if already installed
   --help,  -h      Show this help message
 
 Installs:
@@ -48,7 +48,7 @@ Installs:
 
 function parseArgs(argv) {
   const args = argv.slice(2);
-  const flags = { scope: "global", full: false, help: false };
+  const flags = { scope: "global", force: false, help: false };
   for (const arg of args) {
     switch (arg) {
       case "--global":
@@ -59,12 +59,12 @@ function parseArgs(argv) {
       case "-l":
         flags.scope = "local";
         break;
-      case "--full":
-        flags.full = true;
-        break;
-      // Keep legacy flags working
       case "--force":
       case "-f":
+      case "--full":
+        flags.force = true;
+        break;
+      // Keep legacy flags working
       case "--update":
       case "-u":
         break;
@@ -128,6 +128,36 @@ function isCopilotCliInstalled() {
   }
 }
 
+function removeDeprecatedSkills(targetRoot) {
+  const deprecated = ["loop", "monitor", "create-provider"];
+  let allOk = true;
+  let removedAny = false;
+
+  for (const name of deprecated) {
+    const oldPath = path.join(targetRoot, "skills", name, "SKILL.md");
+    if (!existsSync(oldPath)) {
+      continue;
+    }
+    try {
+      unlinkSync(oldPath);
+      if (!removedAny) {
+        console.log();
+        removedAny = true;
+      }
+      console.log(`  ✓ Removed deprecated skill: skills/${name}/SKILL.md`);
+    } catch {
+      allOk = false;
+      console.warn(`  ⚠  Could not remove deprecated skill at ${oldPath} — remove it manually`);
+    }
+  }
+
+  if (removedAny) {
+    console.log(`\n  Use the new namespaced commands: /tap-loop  /tap-monitor  /tap-create-provider`);
+  }
+
+  return allOk;
+}
+
 function install(flags) {
   const targetRoot = getTargetRoot(flags.scope);
   const scopeLabel = flags.scope === "global" ? "global (~/.copilot)" : "local (.github)";
@@ -141,16 +171,20 @@ function install(flags) {
   }
 
   const installed = isAlreadyInstalled(targetRoot);
-  const isUpdate = installed && !flags.full;
+  const isUpdate = installed && !flags.force;
+  const isReinstall = installed && flags.force;
+  const installedVersion = installed ? getInstalledVersion(targetRoot) : null;
 
   if (isUpdate) {
-    const installedVersion = getInstalledVersion(targetRoot);
     if (installedVersion && installedVersion === packageVersion) {
       console.log(`\n${BRAND} — already up to date (v${installedVersion})\n`);
       process.exit(0);
     }
     const fromLabel = installedVersion ? `v${installedVersion}` : "unknown";
     console.log(`\n${BRAND} — updating ${fromLabel} → v${packageVersion} (${scopeLabel})\n`);
+  } else if (isReinstall) {
+    const fromLabel = installedVersion ? `v${installedVersion}` : "unknown";
+    console.log(`\n${BRAND} — reinstalling ${fromLabel} → v${packageVersion} (${scopeLabel})\n`);
   } else {
     console.log(`\n${BRAND} — installing v${packageVersion} (${scopeLabel})\n`);
   }
@@ -205,36 +239,20 @@ function install(flags) {
     }
   }
 
-  console.log();
-  if (allOk) {
-    const verb = isUpdate ? "updated" : "installed";
-    console.log(`✓ ${BRAND} ${verb} to ${targetRoot}`);
-  } else {
-    console.error(`⚠  Some artifacts could not be ${isUpdate ? "updated" : "installed"}.`);
-    process.exit(1);
+  if (installed && !removeDeprecatedSkills(targetRoot)) {
+    allOk = false;
   }
 
-  // Remove deprecated pre-1.2.0 skill files so old /loop, /monitor, /create-provider
-  // commands no longer appear alongside the new tap-* namespaced ones.
-  if (isUpdate) {
-    const deprecated = ["loop", "monitor", "create-provider"];
-    let removedAny = false;
-    for (const name of deprecated) {
-      const oldPath = path.join(targetRoot, "skills", name, "SKILL.md");
-      if (existsSync(oldPath)) {
-        try {
-          unlinkSync(oldPath);
-          if (!removedAny) { console.log(); removedAny = true; }
-          console.log(`  ✓ Removed deprecated skill: skills/${name}/SKILL.md`);
-        } catch {
-          console.warn(`  ⚠  Could not remove deprecated skill at ${oldPath} — remove it manually`);
-        }
-      }
-    }
-    if (removedAny) {
-      console.log(`\n  Use the new namespaced commands: /tap-loop  /tap-monitor  /tap-create-provider`);
-    }
+  console.log();
+  if (allOk) {
+    const verb = isUpdate ? "updated" : isReinstall ? "reinstalled" : "installed";
+    console.log(`✓ ${BRAND} ${verb} to ${targetRoot}`);
+    return;
   }
+
+  const verb = isUpdate ? "updated" : isReinstall ? "reinstalled" : "installed";
+  console.error(`⚠  Some artifacts could not be ${verb}.`);
+  process.exit(1);
 }
 
 const flags = parseArgs(process.argv);

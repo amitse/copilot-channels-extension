@@ -58,4 +58,4 @@ Prompt emitters dispatch prompts fire-and-forget via `session.send()`. The model
 - **Fresh install** — copies all artifacts (extension, version.json, skills, copilot-instructions)
 - **Already installed** — updates only core files (extension.mjs + version.json), preserves user-customizable artifacts
 - **Same version** — exits with "already up to date"
-- `--full` forces a complete install even if already installed
+- `--force` forces a complete reinstall even if already installed (`--full` remains a legacy alias)

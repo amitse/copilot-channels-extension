@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.2.0] — 2026-04-29
+## [2.0.0] — 2026-04-29
 
 ### Changed — **BREAKING**
 
@@ -38,6 +38,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   don't yet exist at the target location. Previously, only the core extension
   bundle was updated, causing newly shipped skills to be silently skipped.
 
+- `npx copilot-tap-extension --force` is now the documented full reinstall path.
+  The installer still accepts `--full` as a legacy alias, but `--force` is the
+  single documented forceful behavior.
+
+- Forced reinstalls now remove deprecated pre-2.0.0 skill files before reporting
+  success, so legacy `/loop`, `/monitor`, and `/create-provider` commands do not
+  survive a reinstall.
+
 ## [1.1.4] — 2026-04-28
 
 ### Fixed
@@ -49,7 +57,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Initial public release with `/loop`, `/monitor`, and `/create-provider` skills.
 
-[Unreleased]: https://github.com/amitse/copilot-tap-extension/compare/v1.2.0...HEAD
-[1.2.0]: https://github.com/amitse/copilot-tap-extension/compare/v1.1.4...v1.2.0
+[Unreleased]: https://github.com/amitse/copilot-tap-extension/compare/v2.0.0...HEAD
+[2.0.0]: https://github.com/amitse/copilot-tap-extension/compare/v1.1.4...v2.0.0
 [1.1.4]: https://github.com/amitse/copilot-tap-extension/compare/v1.1.2...v1.1.4
 [1.1.2]: https://github.com/amitse/copilot-tap-extension/releases/tag/v1.1.2
