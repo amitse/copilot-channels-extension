@@ -42,6 +42,7 @@ Installs:
   skills/tap-loop/SKILL.md            The /tap-loop skill for prompt-based loops
   skills/tap-create-provider/SKILL.md The /tap-create-provider skill for scaffolding providers
   skills/tap-monitor/SKILL.md         The /tap-monitor skill for self-tuning command monitors
+  skills/tap-goal/SKILL.md            The /tap-goal skill for autonomous goal loops
   copilot-instructions.md         Agent instructions for using ※ tap
 `);
 }
@@ -217,6 +218,11 @@ function install(flags) {
       src: path.join(distDir, "skills", "tap-monitor", "SKILL.md"),
       dest: path.join(targetRoot, "skills", "tap-monitor", "SKILL.md"),
       label: "skills/tap-monitor/SKILL.md"
+    },
+    {
+      src: path.join(distDir, "skills", "tap-goal", "SKILL.md"),
+      dest: path.join(targetRoot, "skills", "tap-goal", "SKILL.md"),
+      label: "skills/tap-goal/SKILL.md"
     },
     {
       src: path.join(distDir, "copilot-instructions.md"),
