@@ -145,8 +145,15 @@ If the work is mostly reasoning rather than data collection, prefer a PromptEmit
 
 - prompt once for a background check (oneTime)
 - prompt + `runInterval` for a fixed maintenance loop (timed)
+- prompt + `every="idle"` + `maxRuns` for autonomous goal loops (`/tap-goal`)
 
 This is the closest analogue to Claude's session-scoped `/tap-loop` behavior in this extension.
+
+For Codex-style "keep working until done" requests, prefer `/tap-goal`: create an
+idle PromptEmitter with a self-contained goal prompt, an explicit `maxRuns`
+budget, and instructions to stop itself when complete or blocked. Goals must be
+explicit user requests; do not infer them from ordinary one-shot tasks, and do
+not treat budget exhaustion as successful completion.
 
 ## Borrow from the official SDK examples
 

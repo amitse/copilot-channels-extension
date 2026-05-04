@@ -7,9 +7,21 @@ user-invocable: true
 
 Create an idle PromptEmitter with `tap_start_emitter` that keeps advancing one explicit objective until the goal is achieved, blocked, stopped, or the iteration limit is reached.
 
+This skill intentionally follows the Codex CLI `/goal` model:
+
+- Goals are explicit; do not infer one from ordinary user tasks.
+- A bare goal command reports the current goal state.
+- Control commands are user-owned (`pause`, `resume`, `clear`).
+- The model can complete a goal only when the objective is actually achieved.
+- Runtime budgets constrain further autonomous work; they are not proof of completion.
+
 ## Expected input
 
-Interpret the invocation as the goal objective.
+Interpret the invocation as one of:
+
+1. No arguments — show current `goal-*` emitters with `tap_list_emitters`.
+2. A control command — `pause`, `resume`, `clear`, `status`, or `replace`.
+3. Otherwise, the full invocation is the goal objective.
 
 Example:
 
@@ -22,6 +34,8 @@ means:
 - `objective = "migrate the repo to the new API and keep going until tests pass"`
 
 If the objective is missing or too vague, ask the user for a concrete objective instead of guessing.
+
+If another `goal-*` emitter already exists, ask before replacing it unless the user explicitly said `replace`.
 
 ## What to create
 
@@ -56,6 +70,8 @@ On this iteration:
 
 Safety rules:
 - Do not make unrelated changes.
+- Do not mark the goal complete unless the objective is actually achieved and no required work remains.
+- Do not treat reaching the iteration budget as success.
 - Do not continue if the next step requires explicit user approval.
 - Prefer small reversible steps.
 - Stop yourself when done or blocked; do not rely on the user to notice.
@@ -68,16 +84,18 @@ Substitute the real objective and emitter name before passing the prompt to `tap
 When this skill is invoked:
 
 1. Parse the goal objective and any explicit iteration budget.
-2. If the user is asking to stop, pause, cancel, or clear an existing goal, call `tap_stop_emitter` for the named goal emitter and confirm that it will not fire again.
-3. If the user is asking to resume a goal, create a new `/tap-goal` loop with the resumed objective; ask for the objective if it is not clear.
-4. Otherwise, create the idle PromptEmitter using the template above.
-5. Confirm to the user:
+2. For a bare `/tap-goal` or `/tap-goal status`, call `tap_list_emitters`, summarize any `goal-*` emitters, and stop.
+3. If the user is asking to stop, pause, cancel, or clear an existing goal, call `tap_stop_emitter` for the named goal emitter and confirm that it will not fire again. This is the ※ tap approximation of Codex's paused/cleared goal states.
+4. If the user is asking to resume a goal, create a new `/tap-goal` loop with the resumed objective; ask for the objective if it is not clear.
+5. Before creating a new goal, check for existing `goal-*` emitters. If one exists and the user did not explicitly ask to replace it, ask for confirmation before starting another goal loop.
+6. Otherwise, create the idle PromptEmitter using the template above.
+7. Confirm to the user:
    - goal emitter name
    - EventStream name
    - objective
    - max iteration count
    - that it will advance when the session is idle and stop itself when complete or blocked
-6. Stop there. Do not immediately perform the first goal iteration unless the user explicitly asks you to start working now.
+8. Stop there. Do not immediately perform the first goal iteration unless the user explicitly asks you to start working now.
 
 ## Iteration budget
 
