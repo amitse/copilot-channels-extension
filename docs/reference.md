@@ -92,6 +92,15 @@ The repo also ships a **`tap-loop` skill** (`src/skills/tap-loop`) for quick set
 /tap-loop 5m check the deploy
 ```
 
+For Codex-style long-horizon work, the repo also ships a **`tap-goal` skill**
+(`src/skills/tap-goal`). It creates an idle PromptEmitter with a required
+iteration budget so the agent can keep taking small steps until the goal is
+complete, blocked, or out of iterations:
+
+```text
+/tap-goal migrate the repo to the new API and keep going until tests pass
+```
+
 ## Ownership model
 
 Ownership lives on the EventEmitter only. EventStream and SessionInjector are derived.

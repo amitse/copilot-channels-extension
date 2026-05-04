@@ -62,7 +62,7 @@ npx copilot-tap-extension
 npx copilot-tap-extension --local
 ```
 
-This installs the bundled extension, the `/tap-loop` skill, the `/tap-monitor` skill, and the agent instructions to the appropriate Copilot directory. Run `npx copilot-tap-extension --help` for all options.
+This installs the bundled extension, the `/tap-loop` skill, the `/tap-monitor` skill, the `/tap-goal` skill, and the agent instructions to the appropriate Copilot directory. Run `npx copilot-tap-extension --help` for all options.
 
 To update to the latest version, re-run the same command with `--force`:
 
@@ -110,6 +110,8 @@ Once inside the session, describe what you want in natural language. You can als
 > _"/tap-loop 5m check for new PR review comments"_
 
 > _"/tap-monitor tail -f /var/log/app.log"_
+
+> _"/tap-goal migrate the repo to the new API and keep going until tests pass"_
 
 > _"Tail the API logs, inject errors, drop health checks"_
 
@@ -205,6 +207,16 @@ Use `/tap-loop idle` to re-run a prompt whenever the session has nothing else to
 
 The prompt fires immediately, then re-fires after each idle period. It stops after reaching the iteration limit.
 
+**Work toward a goal autonomously**
+
+Use `/tap-goal` to create an idle goal loop that keeps advancing a concrete objective until it finishes, hits a blocker, or reaches its iteration budget.
+
+```
+/tap-goal migrate the repo to the new API and keep going until tests pass
+```
+
+The skill creates a temporary idle PromptEmitter with a self-contained goal prompt. Each iteration assesses progress, takes the next small action, validates when relevant, and stops the emitter when the goal is complete or blocked. Goal loops default to 10 iterations unless you specify another budget.
+
 **Tune the filter live**
 
 The recommended approach is a **keep-all bootstrap**: start with no EventFilter rules so all output flows into the stream. Read the stream history to learn what the output looks like, then add rules progressively:
@@ -224,6 +236,7 @@ Rules can be added or changed while the emitter is running. You never need to re
   extensions/tap/extension.mjs  # extension entry point (loads the runtime)
   skills/tap-loop/                  # /tap-loop skill for scheduled and idle prompts
   skills/tap-monitor/               # /tap-monitor skill for self-tuning command monitors
+  skills/tap-goal/                  # /tap-goal skill for autonomous goal loops
   skills/tap-create-provider/       # /tap-create-provider skill for scaffolding external tool providers
   copilot-instructions.md       # agent guidance for using this extension
 src/
