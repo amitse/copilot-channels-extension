@@ -85,17 +85,18 @@ When this skill is invoked:
 
 1. Parse the goal objective and any explicit iteration budget.
 2. For a bare `/tap-goal` or `/tap-goal status`, call `tap_list_emitters`, summarize any `goal-*` emitters, and stop.
-3. If the user is asking to stop, pause, cancel, or clear an existing goal, call `tap_stop_emitter` for the named goal emitter and confirm that it will not fire again. This is the ※ tap approximation of Codex's paused/cleared goal states.
-4. If the user is asking to resume a goal, create a new `/tap-goal` loop with the resumed objective; ask for the objective if it is not clear.
-5. Before creating a new goal, check for existing `goal-*` emitters. If one exists and the user did not explicitly ask to replace it, ask for confirmation before starting another goal loop.
-6. Otherwise, create the idle PromptEmitter using the template above.
-7. Confirm to the user:
+3. If the user is asking to stop, cancel, or clear an existing goal, call `tap_stop_emitter` for the named goal emitter and confirm that it will not fire again.
+4. If the user is asking to pause an existing goal, call `tap_stop_emitter` for the named goal emitter and confirm that this stops the ※ tap loop rather than preserving hidden runtime state. Include the objective in the confirmation if it is known, and tell the user that resuming requires providing that objective again.
+5. If the user is asking to resume a goal, create a new `/tap-goal` loop with the resumed objective; ask for the objective if it is not clear.
+6. Before creating a new goal, check for existing `goal-*` emitters. If one exists and the user did not explicitly ask to replace it, ask for confirmation before starting another goal loop.
+7. Otherwise, create the idle PromptEmitter using the template above.
+8. Confirm to the user:
    - goal emitter name
    - EventStream name
    - objective
    - max iteration count
    - that it will advance when the session is idle and stop itself when complete or blocked
-8. Stop there. Do not immediately perform the first goal iteration unless the user explicitly asks you to start working now.
+9. Stop there. Do not immediately perform the first goal iteration unless the user explicitly asks you to start working now.
 
 ## Iteration budget
 

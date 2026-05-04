@@ -215,7 +215,7 @@ Use `/tap-goal` to create an idle goal loop that keeps advancing a concrete obje
 /tap-goal migrate the repo to the new API and keep going until tests pass
 ```
 
-The skill creates a temporary idle PromptEmitter with a self-contained goal prompt. Each iteration assesses progress, takes the next small action, validates when relevant, and stops the emitter when the goal is complete or blocked. Goal loops default to 10 iterations unless you specify another budget. Use `/tap-goal status` to list current goal emitters, and `/tap-goal pause`, `/tap-goal resume`, or `/tap-goal clear` to control a goal.
+The skill creates a temporary idle PromptEmitter with a self-contained goal prompt. Each iteration assesses progress, takes the next small action, validates when relevant, and stops the emitter when the goal is complete or blocked. Goal loops default to 10 iterations unless you specify another budget. Use `/tap-goal status` to list current goal emitters, and `/tap-goal pause`, `/tap-goal resume <objective>`, or `/tap-goal clear` to control a goal. Pause stops the ※ tap loop; resume starts a new loop from the supplied objective.
 
 **Tune the filter live**
 
