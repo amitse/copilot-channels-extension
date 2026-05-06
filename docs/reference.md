@@ -92,6 +92,21 @@ The repo also ships a **`tap-loop` skill** (`src/skills/tap-loop`) for quick set
 /tap-loop 5m check the deploy
 ```
 
+For long-horizon work, the repo also ships a **`tap-goal` skill**
+(`src/skills/tap-goal`). A goal is explicit, status/control commands are
+user-owned, and completion should only be reported when the objective is
+actually achieved. In ※ tap it is implemented as an idle PromptEmitter with a
+required iteration budget so the agent can keep taking small steps until the
+goal is complete, blocked, or out of iterations. The prompt also self-steers by
+reading its own emitter state and shifting into wrap-up mode when the remaining
+budget is low. Because it runs on idle, it is best for sessions that have
+natural idle gaps; for always-busy autopilot flows, prefer timed prompts or
+hook/session-injector delivery instead:
+
+```text
+/tap-goal migrate the repo to the new API and keep going until tests pass
+```
+
 ## Ownership model
 
 Ownership lives on the EventEmitter only. EventStream and SessionInjector are derived.

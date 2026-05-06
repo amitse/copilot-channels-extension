@@ -15,6 +15,42 @@ import { describeEmitterWork } from "../format/emitter.mjs";
 import { readLines, spawnEmitterProcess } from "./spawn.mjs";
 
 export function createLifecycle({ lineRouter, sessionPort }) {
+  function isIdleEmitter(emitter) {
+    return emitter?.runSchedule === RUN_SCHEDULE.IDLE;
+  }
+
+  /**
+   * Skip idle scheduling when the emitter is no longer eligible to react to a
+   * session.idle transition.
+   */
+  function shouldSkipIdleScheduling(emitter) {
+    return (
+      emitter.stopRequested ||
+      emitter.inFlight ||
+      !isIdleEmitter(emitter) ||
+      isTerminalEmitterStatus(emitter.status)
+    );
+  }
+
+  /**
+   * Skip activity-driven cancellation when the emitter is not an active idle
+   * loop or it has already reached a terminal state.
+   */
+  function shouldSkipActivityCancellation(emitter) {
+    return !isIdleEmitter(emitter) || isTerminalEmitterStatus(emitter.status);
+  }
+
+  function waitForNextIdle(emitter) {
+    emitter.status = EMITTER_STATUS.WAITING;
+  }
+
+  function prepareIdleEmitter(emitter) {
+    waitForNextIdle(emitter);
+    if (sessionPort.isIdle()) {
+      scheduleIteration(emitter, IDLE_PROMPT_DELAY_MS);
+    }
+  }
+
   function wireStreams(emitter) {
     const child = emitter.process;
     emitter.stdoutReader = readLines(child.stdout, (line) => {
@@ -173,6 +209,11 @@ export function createLifecycle({ lineRouter, sessionPort }) {
       return;
     }
 
+    if (isIdleEmitter(emitter) && !sessionPort.isIdle()) {
+      emitter.status = EMITTER_STATUS.WAITING;
+      return;
+    }
+
     emitter.inFlight = true;
     emitter.status = EMITTER_STATUS.RUNNING;
     emitter.runCount += 1;
@@ -214,6 +255,11 @@ export function createLifecycle({ lineRouter, sessionPort }) {
         return;
       }
 
+      if (isIdleEmitter(emitter)) {
+        waitForNextIdle(emitter);
+        // Idle emitters only schedule their next run from session.idle events.
+        return;
+      }
       emitter.status = EMITTER_STATUS.WAITING;
       scheduleIteration(emitter, nextDelay(emitter));
       return;
@@ -272,6 +318,11 @@ export function createLifecycle({ lineRouter, sessionPort }) {
       emitter,
       `Emitter '${emitter.name}' queued ${emitter.emitterType} work (${scheduleLabel}) with ${describeEmitterWork(emitter)}.${firstRunLabel}`
     );
+    if (isIdleEmitter(emitter)) {
+      prepareIdleEmitter(emitter);
+      return;
+    }
+
     scheduleIteration(emitter, initialDelayMs);
   }
 
@@ -312,5 +363,34 @@ export function createLifecycle({ lineRouter, sessionPort }) {
     }
   }
 
-  return { start, stop };
+  /**
+   * React to a session.idle transition by queueing the next idle emitter run.
+   */
+  function onSessionIdle(emitter) {
+    if (shouldSkipIdleScheduling(emitter)) {
+      return;
+    }
+
+    scheduleIteration(emitter, IDLE_PROMPT_DELAY_MS);
+  }
+
+  /**
+   * React to non-idle session activity by cancelling any pending idle run.
+   */
+  function onSessionActivity(emitter) {
+    if (shouldSkipActivityCancellation(emitter)) {
+      return;
+    }
+
+    if (emitter.timer) {
+      clearTimeout(emitter.timer);
+      emitter.timer = null;
+    }
+
+    if (!emitter.inFlight) {
+      emitter.status = EMITTER_STATUS.WAITING;
+    }
+  }
+
+  return { start, stop, onSessionIdle, onSessionActivity };
 }

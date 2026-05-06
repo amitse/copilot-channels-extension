@@ -10,6 +10,11 @@ import { createProviderGateway } from "./provider/gateway.mjs";
 
 export function createCopilotChannelsRuntime(options = {}) {
   let baseCwd = options.cwd ?? process.cwd();
+  let cleanupSessionListeners = () => {};
+  const resetSessionListeners = () => {
+    cleanupSessionListeners();
+    cleanupSessionListeners = () => {};
+  };
   const getBaseCwd = () => baseCwd;
   const setBaseCwd = (next) => {
     baseCwd = next;
@@ -50,9 +55,46 @@ export function createCopilotChannelsRuntime(options = {}) {
     void sessionPort.reloadExtension();
   });
 
+  const wireSessionListeners = (session) => {
+    resetSessionListeners();
+
+    const unsubscribers = [
+      session.on("session.idle", () => {
+        sessionPort.setIdle(true);
+        supervisor.onSessionIdle();
+      })
+    ];
+
+    for (const eventType of [
+      "session.start",
+      "session.resume",
+      "user.message",
+      "assistant.message",
+      "tool.execution_start",
+      "tool.execution_complete",
+      "session.error"
+    ]) {
+      unsubscribers.push(session.on(eventType, () => {
+        sessionPort.setIdle(false);
+        supervisor.onSessionActivity();
+      }));
+    }
+
+    cleanupSessionListeners = () => {
+      for (const unsubscribe of unsubscribers) {
+        try {
+          unsubscribe?.();
+        } catch {
+          // Listener cleanup must never interrupt session attach.
+        }
+      }
+    };
+  };
+
   return {
     attachSession: (nextSession) => {
       sessionPort.attach(nextSession);
+      wireSessionListeners(nextSession);
       if (!gateway.isRunning()) {
         try {
           gateway.start();
@@ -64,6 +106,7 @@ export function createCopilotChannelsRuntime(options = {}) {
     tools,
     hooks,
     stopAllEmitters: async () => {
+      resetSessionListeners();
       gateway.stop();
       await supervisor.stopAll();
     },

@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.1] — 2026-05-06
+
+### Added
+
+- Added the namespaced `/tap-goal` skill for autonomous goal loops powered by
+  idle PromptEmitters with explicit iteration budgets and budget-aware
+  wrap-up steering.
+
+### Changed
+
+- Default `/tap-goal` iteration budget is 50.
+- Clarified that `/tap-goal` is idle-driven and that always-busy autopilot
+  flows are better served by timed prompts or hook/session-injector delivery.
+
 ## [2.0.0] — 2026-04-29
 
 ### Changed — **BREAKING**
@@ -57,7 +71,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Initial public release with `/loop`, `/monitor`, and `/create-provider` skills.
 
-[Unreleased]: https://github.com/amitse/copilot-tap-extension/compare/v2.0.0...HEAD
+[Unreleased]: https://github.com/amitse/copilot-tap-extension/compare/v2.0.1...HEAD
+[2.0.1]: https://github.com/amitse/copilot-tap-extension/compare/v2.0.0...v2.0.1
 [2.0.0]: https://github.com/amitse/copilot-tap-extension/compare/v1.1.4...v2.0.0
 [1.1.4]: https://github.com/amitse/copilot-tap-extension/compare/v1.1.2...v1.1.4
 [1.1.2]: https://github.com/amitse/copilot-tap-extension/releases/tag/v1.1.2
