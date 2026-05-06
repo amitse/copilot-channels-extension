@@ -67,13 +67,13 @@ Emitter name: <goal-emitter-name>
 Iteration budget: <max-runs>
 
 At the start of each iteration:
-1. Call tap_list_emitters.
+1. Call tap_list_emitters and search the results for emitter '<goal-emitter-name>'.
 2. Find emitter '<goal-emitter-name>'.
 3. Read its current runs and maxRuns values.
 4. Estimate remaining iterations.
 
 Auto-steering rules:
-- If remaining iterations are low (2 or fewer, leaving at most one step to act and one step to hand off), switch into wrap-up mode.
+- If remaining iterations are low (3 or fewer, leaving room for one or two focused steps and a final handoff), switch into wrap-up mode.
 - In wrap-up mode, prefer finishing the smallest high-value task, validating what changed, and leaving a precise handoff.
 - If only 1 iteration remains and the goal is not complete, do not start broad new work. Leave the best concise handoff you can.
 - Do not treat budget exhaustion as success.
