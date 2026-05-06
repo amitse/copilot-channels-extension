@@ -166,6 +166,18 @@ export function createEmitterSupervisor({ streams, configStore, notifications, s
     return [...emitters.values()].sort((left, right) => left.name.localeCompare(right.name));
   }
 
+  function onSessionIdle() {
+    for (const emitter of emitters.values()) {
+      lifecycle.onSessionIdle(emitter);
+    }
+  }
+
+  function onSessionActivity() {
+    for (const emitter of emitters.values()) {
+      lifecycle.onSessionActivity(emitter);
+    }
+  }
+
   function has(name) {
     return emitters.has(normalizeName(name));
   }
@@ -181,6 +193,8 @@ export function createEmitterSupervisor({ streams, configStore, notifications, s
     updateEventFilter,
     list,
     has,
-    get
+    get,
+    onSessionIdle,
+    onSessionActivity
   };
 }

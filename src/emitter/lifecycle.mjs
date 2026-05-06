@@ -15,6 +15,10 @@ import { describeEmitterWork } from "../format/emitter.mjs";
 import { readLines, spawnEmitterProcess } from "./spawn.mjs";
 
 export function createLifecycle({ lineRouter, sessionPort }) {
+  function isIdleEmitter(emitter) {
+    return emitter.runSchedule === RUN_SCHEDULE.IDLE;
+  }
+
   function wireStreams(emitter) {
     const child = emitter.process;
     emitter.stdoutReader = readLines(child.stdout, (line) => {
@@ -173,6 +177,11 @@ export function createLifecycle({ lineRouter, sessionPort }) {
       return;
     }
 
+    if (isIdleEmitter(emitter) && !sessionPort.isIdle()) {
+      emitter.status = EMITTER_STATUS.WAITING;
+      return;
+    }
+
     emitter.inFlight = true;
     emitter.status = EMITTER_STATUS.RUNNING;
     emitter.runCount += 1;
@@ -215,6 +224,9 @@ export function createLifecycle({ lineRouter, sessionPort }) {
       }
 
       emitter.status = EMITTER_STATUS.WAITING;
+      if (isIdleEmitter(emitter)) {
+        return;
+      }
       scheduleIteration(emitter, nextDelay(emitter));
       return;
     }
@@ -272,6 +284,14 @@ export function createLifecycle({ lineRouter, sessionPort }) {
       emitter,
       `Emitter '${emitter.name}' queued ${emitter.emitterType} work (${scheduleLabel}) with ${describeEmitterWork(emitter)}.${firstRunLabel}`
     );
+    if (isIdleEmitter(emitter)) {
+      emitter.status = EMITTER_STATUS.WAITING;
+      if (sessionPort.isIdle()) {
+        scheduleIteration(emitter, IDLE_PROMPT_DELAY_MS);
+      }
+      return;
+    }
+
     scheduleIteration(emitter, initialDelayMs);
   }
 
@@ -312,5 +332,26 @@ export function createLifecycle({ lineRouter, sessionPort }) {
     }
   }
 
-  return { start, stop };
+  function onSessionIdle(emitter) {
+    if (emitter.stopRequested || emitter.inFlight || !isIdleEmitter(emitter) || isTerminalEmitterStatus(emitter.status)) {
+      return;
+    }
+
+    scheduleIteration(emitter, IDLE_PROMPT_DELAY_MS);
+  }
+
+  function onSessionActivity(emitter) {
+    if (!isIdleEmitter(emitter) || isTerminalEmitterStatus(emitter.status) || emitter.inFlight) {
+      return;
+    }
+
+    if (emitter.timer) {
+      clearTimeout(emitter.timer);
+      emitter.timer = null;
+    }
+
+    emitter.status = EMITTER_STATUS.WAITING;
+  }
+
+  return { start, stop, onSessionIdle, onSessionActivity };
 }

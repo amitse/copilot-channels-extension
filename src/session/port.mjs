@@ -2,14 +2,24 @@ import { LOG_PREFIX } from "../consts.mjs";
 
 export function createSessionPort(initialSession = null) {
   let session = initialSession;
+  let idle = true;
 
   function attach(nextSession) {
     session = nextSession ?? null;
+    idle = true;
     return session;
   }
 
   function current() {
     return session;
+  }
+
+  function setIdle(nextIdle) {
+    idle = nextIdle === true;
+  }
+
+  function isIdle() {
+    return Boolean(session) && idle === true;
   }
 
   async function safeLog(message, options) {
@@ -65,6 +75,8 @@ export function createSessionPort(initialSession = null) {
   return {
     attach,
     current,
+    setIdle,
+    isIdle,
     log,
     send,
     sendAndWait,

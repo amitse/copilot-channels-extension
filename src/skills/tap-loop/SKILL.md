@@ -36,7 +36,7 @@ means:
 - `every = "idle"` (re-runs whenever the session is idle)
 - `prompt = "check the deploy"`
 
-Timed emitters fire immediately, then repeat on the interval. Idle emitters fire immediately, then re-fire whenever the session becomes idle again (with a short delay between runs to avoid monopolizing the session).
+Timed emitters fire immediately, then repeat on the interval. Idle emitters wait for the session to become idle, then re-fire on later `session.idle` transitions (with a short delay between runs to avoid monopolizing the session).
 
 ## Max iterations
 
