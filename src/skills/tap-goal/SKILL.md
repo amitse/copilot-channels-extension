@@ -1,11 +1,11 @@
 ---
 name: tap-goal
-description: "Run an autonomous goal loop. Use when the user says 'goal', 'keep working until done', 'work autonomously', 'iterate until complete', or wants long-horizon progress toward an objective. Self-termination requires explicit completion proof."
+description: "Run an autonomous goal loop. Use when the user says 'goal', 'keep working until done', 'work autonomously', 'iterate until complete', or wants long-horizon progress toward an objective."
 argument-hint: "<objective>"
 user-invocable: true
 ---
 
-Create an idle PromptEmitter with `tap_start_emitter` that keeps advancing one explicit objective until the goal is proven complete, the user explicitly stops it, or the iteration limit is reached.
+Create an idle PromptEmitter with `tap_start_emitter` that keeps advancing one explicit objective until the goal is proven complete, the user explicitly stops it, or the iteration limit is reached. Genuine blockers should become a documented handoff state, not an automatic self-stop.
 
 Use these goal-loop rules:
 
@@ -82,7 +82,7 @@ Auto-steering rules:
 
 On this iteration:
 1. Briefly assess current progress toward the goal and the remaining iteration budget.
-2. First try to disprove completion. In your visible response, list the strongest reasons the goal might still be incomplete, premature, misdirected, or unvalidated.
+2. First try to disprove completion. In your visible response, briefly list the strongest reasons the goal might still be incomplete, premature, misdirected, or unvalidated.
 3. Only if you can prove the goal is 100% complete should you call tap_stop_emitter for '<goal-emitter-name>' with scope='temporary'. Your proof must include all of the following concrete evidence:
    - the objective is achieved
    - the relevant validations or observable outcomes succeeded
