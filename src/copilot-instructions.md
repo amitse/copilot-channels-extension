@@ -145,7 +145,7 @@ If the work is mostly reasoning rather than data collection, prefer a PromptEmit
 
 - prompt once for a background check (oneTime)
 - prompt + `runInterval` for a fixed maintenance loop (timed)
-- prompt + `every="idle"` + `maxRuns` for autonomous goal loops (`/tap-goal`)
+- prompt + `every="idle"` + `maxRuns` for autonomous goal loops with explicit iteration budgets (`/tap-goal`)
 
 This is the closest analogue to Claude's session-scoped `/tap-loop` behavior in this extension.
 

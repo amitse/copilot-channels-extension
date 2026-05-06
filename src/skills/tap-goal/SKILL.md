@@ -13,7 +13,7 @@ Use these goal-loop rules:
 - A bare goal command reports the current goal state.
 - Control commands are user-owned (`status`, `stop`, `resume`, `clear`, `replace`).
 - The model can complete a goal only when the objective is actually achieved.
-- Runtime budgets constrain further autonomous work; they are not proof of completion.
+- Runtime budget exhaustion is not proof of completion; only achieving the objective marks completion.
 
 ## Expected input
 
@@ -49,7 +49,7 @@ Use `tap_start_emitter` to create a **PromptEmitter**:
 - Name the emitter after the objective, prefixed with `goal-` (for example `goal-api-migration`).
 - The EventStream is created automatically with the same name.
 
-Do not set EventFilter rules. PromptEmitter output is dispatched through `session.send()` and bypasses line filtering, so EventFilter rules would not affect goal-loop output.
+Do not set EventFilter rules. PromptEmitters dispatch their prompts fire-and-forget through `session.send()`, so their output bypasses line filtering. EventFilter rules would not affect goal-loop output.
 
 ## Goal-loop prompt template
 
