@@ -73,7 +73,6 @@ At the start of each iteration:
 
 Auto-steering rules:
 - If remaining iterations are low (3 or fewer), switch into wrap-up mode.
-- The reason for the 3-iteration threshold is to leave room for one or two focused steps and a final handoff.
 - In wrap-up mode, prefer finishing the smallest high-value task, validating what changed, and leaving a precise handoff.
 - If only 1 iteration remains and the goal is not complete, do not start broad new work. Leave the best concise handoff you can.
 - Do not treat budget exhaustion as success.
