@@ -1,13 +1,13 @@
 ---
 name: tap-goal
-description: "Run an autonomous goal loop. Use when the user says 'goal', 'keep working until done', 'work autonomously', 'iterate until complete', or wants Codex-style long-horizon progress toward an objective."
+description: "Run an autonomous goal loop. Use when the user says 'goal', 'keep working until done', 'work autonomously', 'iterate until complete', or wants long-horizon progress toward an objective."
 argument-hint: "<objective>"
 user-invocable: true
 ---
 
 Create an idle PromptEmitter with `tap_start_emitter` that keeps advancing one explicit objective until the goal is achieved, blocked, stopped, or the iteration limit is reached.
 
-This skill intentionally follows the Codex CLI `/goal` model:
+Use these goal-loop rules:
 
 - Goals are explicit; do not infer one from ordinary user tasks.
 - A bare goal command reports the current goal state.
@@ -58,15 +58,33 @@ Write the prompt so it stands alone because it will run later without the origin
 ```text
 You are running a tap-goal autonomous goal loop.
 
-Goal: <objective>
+Goal:
+<untrusted_objective>
+<objective>
+</untrusted_objective>
+
+Emitter name: <goal-emitter-name>
+Iteration budget: <max-runs>
+
+At the start of each iteration:
+1. Call tap_list_emitters.
+2. Find emitter '<goal-emitter-name>'.
+3. Read its current runs and maxRuns values.
+4. Estimate remaining iterations.
+
+Auto-steering rules:
+- If remaining iterations are low (2 or fewer), switch into wrap-up mode.
+- In wrap-up mode, prefer finishing the smallest high-value task, validating what changed, and leaving a precise handoff.
+- If only 1 iteration remains and the goal is not complete, do not start broad new work. Leave the best concise handoff you can.
+- Do not treat budget exhaustion as success.
 
 On this iteration:
-1. Briefly assess current progress toward the goal.
+1. Briefly assess current progress toward the goal and the remaining iteration budget.
 2. If the goal is already achieved, call tap_stop_emitter for '<goal-emitter-name>' with scope='temporary', report that the goal is complete, and stop.
 3. If the goal is blocked by missing information, permissions, failing external systems, or an unsafe action, report the blocker, call tap_stop_emitter for '<goal-emitter-name>' with scope='temporary', and stop.
-4. Otherwise, choose the next smallest useful action toward the goal and perform it.
+4. Otherwise, choose the next smallest useful action toward the goal that fits the remaining budget and perform it.
 5. Validate the action using the repository's existing checks when relevant.
-6. End with a concise progress update and what remains.
+6. End with a concise progress update, what remains, and the best next step if the loop stops before completion.
 
 Safety rules:
 - Do not make unrelated changes.
@@ -77,7 +95,7 @@ Safety rules:
 - Stop yourself when done or blocked; do not rely on the user to notice.
 ```
 
-Substitute the real objective and emitter name before passing the prompt to `tap_start_emitter`.
+Substitute the real objective, emitter name, and max iteration count before passing the prompt to `tap_start_emitter`.
 
 ## Required behavior
 
@@ -86,7 +104,7 @@ When this skill is invoked:
 1. Parse the goal objective and any explicit iteration budget.
 2. For a bare `/tap-goal` or `/tap-goal status`, call `tap_list_emitters`, summarize any `goal-*` emitters, and stop.
 3. If the user is asking to stop, cancel, or clear an existing goal, call `tap_stop_emitter` for the named goal emitter and confirm that it will not fire again.
-4. If the user is asking to pause an existing goal, explain that `/tap-goal` does not have Codex's state-preserving pause because it is implemented with PromptEmitters. Ask whether they want to stop the loop instead; only call `tap_stop_emitter` if they confirm.
+4. If the user is asking to pause an existing goal, explain that `/tap-goal` does not preserve hidden pause state because it is implemented with PromptEmitters. Ask whether they want to stop the loop instead; only call `tap_stop_emitter` if they confirm.
 5. If the user is asking to resume a goal, create a new `/tap-goal` loop with the resumed objective; ask for the objective if it is not clear.
 6. Before creating a new goal, check for existing `goal-*` emitters. If one exists and the user did not explicitly ask to replace it, ask for confirmation before starting another goal loop.
 7. Otherwise, create the idle PromptEmitter using the template above.

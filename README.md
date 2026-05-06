@@ -209,13 +209,13 @@ The prompt fires immediately, then re-fires after each idle period. It stops aft
 
 **Work toward a goal autonomously**
 
-Use `/tap-goal` to create an idle goal loop that keeps advancing a concrete objective until it finishes, hits a blocker, or reaches its iteration budget. It is modeled after Codex CLI's `/goal`: goals are explicit, control commands are user-owned, and the loop should stop itself only when the objective is actually complete or blocked.
+Use `/tap-goal` to create an idle goal loop that keeps advancing a concrete objective until it finishes, hits a blocker, or reaches its iteration budget. Goals are explicit, control commands are user-owned, and the loop should stop itself only when the objective is actually complete or blocked.
 
 ```
 /tap-goal migrate the repo to the new API and keep going until tests pass
 ```
 
-The skill creates a temporary idle PromptEmitter with a self-contained goal prompt. Each iteration assesses progress, takes the next small action, validates when relevant, and stops the emitter when the goal is complete or blocked. Goal loops default to 10 iterations unless you specify another budget. Use `/tap-goal status` to list current goal emitters, `/tap-goal stop` or `/tap-goal clear` to stop one, and `/tap-goal resume <objective>` to start a new loop from an objective. Unlike Codex's native goal state, `/tap-goal` does not preserve hidden pause/resume state.
+The skill creates a temporary idle PromptEmitter with a self-contained goal prompt. Each iteration inspects its own emitter state, assesses progress, takes the next small action, validates when relevant, and stops the emitter when the goal is complete or blocked. As the remaining iteration budget gets low, the prompt shifts into wrap-up mode so it leaves a useful handoff instead of starting broad new work. Goal loops default to 10 iterations unless you specify another budget. Use `/tap-goal status` to list current goal emitters, `/tap-goal stop` or `/tap-goal clear` to stop one, and `/tap-goal resume <objective>` to start a new loop from an objective. `/tap-goal` does not preserve hidden pause/resume state.
 
 **Tune the filter live**
 

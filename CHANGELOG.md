@@ -9,8 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Added the namespaced `/tap-goal` skill for Codex-style autonomous goal loops
-  powered by idle PromptEmitters with explicit iteration budgets.
+- Added the namespaced `/tap-goal` skill for autonomous goal loops powered by
+  idle PromptEmitters with explicit iteration budgets and budget-aware
+  wrap-up steering.
 
 ## [2.0.0] — 2026-04-29
 

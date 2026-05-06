@@ -92,13 +92,14 @@ The repo also ships a **`tap-loop` skill** (`src/skills/tap-loop`) for quick set
 /tap-loop 5m check the deploy
 ```
 
-For Codex-style long-horizon work, the repo also ships a **`tap-goal` skill**
-(`src/skills/tap-goal`). It is modeled after Codex CLI's explicit `/goal`
-workflow: a goal is user-requested, status/control commands are user-owned, and
-completion should only be reported when the objective is actually achieved. In
-※ tap it is implemented as an idle PromptEmitter with a required iteration
-budget so the agent can keep taking small steps until the goal is complete,
-blocked, or out of iterations:
+For long-horizon work, the repo also ships a **`tap-goal` skill**
+(`src/skills/tap-goal`). A goal is explicit, status/control commands are
+user-owned, and completion should only be reported when the objective is
+actually achieved. In ※ tap it is implemented as an idle PromptEmitter with a
+required iteration budget so the agent can keep taking small steps until the
+goal is complete, blocked, or out of iterations. The prompt also self-steers by
+reading its own emitter state and shifting into wrap-up mode when the remaining
+budget is low:
 
 ```text
 /tap-goal migrate the repo to the new API and keep going until tests pass
