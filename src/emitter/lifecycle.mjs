@@ -19,6 +19,19 @@ export function createLifecycle({ lineRouter, sessionPort }) {
     return emitter.runSchedule === RUN_SCHEDULE.IDLE;
   }
 
+  function shouldSkipIdleScheduling(emitter) {
+    return (
+      emitter.stopRequested ||
+      emitter.inFlight ||
+      !isIdleEmitter(emitter) ||
+      isTerminalEmitterStatus(emitter.status)
+    );
+  }
+
+  function shouldSkipActivityCancellation(emitter) {
+    return !isIdleEmitter(emitter) || isTerminalEmitterStatus(emitter.status) || emitter.inFlight;
+  }
+
   function wireStreams(emitter) {
     const child = emitter.process;
     emitter.stdoutReader = readLines(child.stdout, (line) => {
@@ -333,7 +346,7 @@ export function createLifecycle({ lineRouter, sessionPort }) {
   }
 
   function onSessionIdle(emitter) {
-    if (emitter.stopRequested || emitter.inFlight || !isIdleEmitter(emitter) || isTerminalEmitterStatus(emitter.status)) {
+    if (shouldSkipIdleScheduling(emitter)) {
       return;
     }
 
@@ -341,7 +354,7 @@ export function createLifecycle({ lineRouter, sessionPort }) {
   }
 
   function onSessionActivity(emitter) {
-    if (!isIdleEmitter(emitter) || isTerminalEmitterStatus(emitter.status) || emitter.inFlight) {
+    if (shouldSkipActivityCancellation(emitter)) {
       return;
     }
 

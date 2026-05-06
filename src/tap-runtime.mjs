@@ -91,7 +91,6 @@ export function createCopilotChannelsRuntime(options = {}) {
     attachSession: (nextSession) => {
       sessionPort.attach(nextSession);
       wireSessionListeners(nextSession);
-      supervisor.onSessionIdle();
       if (!gateway.isRunning()) {
         try {
           gateway.start();

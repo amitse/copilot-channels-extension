@@ -2,11 +2,11 @@ import { LOG_PREFIX } from "../consts.mjs";
 
 export function createSessionPort(initialSession = null) {
   let session = initialSession;
-  let idle = true;
+  let idle = false;
 
   function attach(nextSession) {
     session = nextSession ?? null;
-    idle = true;
+    idle = false;
     return session;
   }
 
