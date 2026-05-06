@@ -67,7 +67,7 @@ Emitter name: <goal-emitter-name>
 Iteration budget: <max-runs>
 
 At the start of each iteration:
-1. Call tap_list_emitters and search the results for emitter '<goal-emitter-name>'.
+1. Call tap_list_emitters and locate the emitter entry whose name is exactly '<goal-emitter-name>'.
 2. Read its current runs and maxRuns values.
 3. Estimate remaining iterations.
 
@@ -103,7 +103,7 @@ When this skill is invoked:
 1. Parse the goal objective and any explicit iteration budget.
 2. For a bare `/tap-goal` or `/tap-goal status`, call `tap_list_emitters`, summarize any `goal-*` emitters, and stop.
 3. If the user is asking to stop, cancel, or clear an existing goal, call `tap_stop_emitter` for the named goal emitter and confirm that it will not fire again.
-4. If the user is asking to pause an existing goal, explain that `/tap-goal` cannot remember an in-progress goal internally after the emitter stops because it is implemented with PromptEmitters. Ask whether they want to stop the loop instead; only call `tap_stop_emitter` if they confirm.
+4. If the user is asking to pause an existing goal, explain that pausing is not supported for goal loops. Offer to stop the loop instead, and only call `tap_stop_emitter` if they confirm.
 5. If the user is asking to resume a goal, create a new `/tap-goal` loop with the resumed objective; ask for the objective if it is not clear.
 6. Before creating a new goal, check for existing `goal-*` emitters. If one exists and the user did not explicitly ask to replace it, ask for confirmation before starting another goal loop.
 7. Otherwise, create the idle PromptEmitter using the template above.

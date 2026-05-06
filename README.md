@@ -217,7 +217,7 @@ Use `/tap-goal` to create an idle goal loop that keeps advancing a concrete obje
 
 The skill creates a temporary idle PromptEmitter with a self-contained goal prompt. Each iteration inspects its own emitter state, assesses progress, takes the next small action, validates when relevant, and stops the emitter when the goal is complete or blocked. As the remaining iteration budget gets low, the prompt shifts into wrap-up mode so it leaves a useful handoff instead of starting broad new work.
 
-Goal loops default to 10 iterations unless you specify another budget. Use `/tap-goal status` to list current goal emitters, `/tap-goal stop` or `/tap-goal clear` to stop one, and `/tap-goal resume <objective>` to start a new loop from an objective. `/tap-goal` does not preserve hidden pause/resume state.
+Goal loops default to 10 iterations unless you specify another budget. Use `/tap-goal status` to list current goal emitters, `/tap-goal stop` or `/tap-goal clear` to stop one, and `/tap-goal resume <objective>` to start a new loop from an objective. Stopped goal loops do not preserve resumable internal state; resuming creates a new emitter from the supplied objective.
 
 **Tune the filter live**
 
