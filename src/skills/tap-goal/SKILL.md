@@ -1,11 +1,11 @@
 ---
 name: tap-goal
-description: "Run an autonomous goal loop. Use when the user says 'goal', 'keep working until done', 'work autonomously', 'iterate until complete', or wants long-horizon progress toward an objective."
+description: "Run an autonomous goal loop that strongly resists premature self-stop and only ends itself after proving the goal is fully complete."
 argument-hint: "<objective>"
 user-invocable: true
 ---
 
-Create an idle PromptEmitter with `tap_start_emitter` that keeps advancing one explicit objective until the goal is achieved, blocked, stopped, or the iteration limit is reached.
+Create an idle PromptEmitter with `tap_start_emitter` that keeps advancing one explicit objective until the goal is proven complete, explicitly stopped, or the iteration limit is reached.
 
 Use these goal-loop rules:
 
@@ -13,6 +13,7 @@ Use these goal-loop rules:
 - A bare goal command reports the current goal state.
 - Control commands are user-owned (`status`, `stop`, `resume`, `clear`, `replace`).
 - The model can complete a goal only when the objective is actually achieved.
+- Autonomous self-stop is allowed only after explicit completion proof, not because the model prefers a different workflow.
 - Runtime budget exhaustion is not proof of completion; only achieving the objective marks completion.
 
 ## Expected input
@@ -71,6 +72,7 @@ At the start of each iteration:
 2. Read its current runs and maxRuns values.
 3. If the emitter is missing, report that the goal loop is no longer running and stop.
 4. Estimate remaining iterations.
+5. Assume self-stop is disallowed unless you can later prove the goal is 100% complete with concrete evidence.
 
 Auto-steering rules:
 - If remaining iterations are low (3 or fewer), switch into wrap-up mode.
@@ -80,19 +82,26 @@ Auto-steering rules:
 
 On this iteration:
 1. Briefly assess current progress toward the goal and the remaining iteration budget.
-2. If the goal is already achieved, call tap_stop_emitter for '<goal-emitter-name>' with scope='temporary', report that the goal is complete, and stop.
-3. If the goal is blocked by missing information, permissions, failing external systems, or an unsafe action, report the blocker, call tap_stop_emitter for '<goal-emitter-name>' with scope='temporary', and stop.
-4. Otherwise, choose the next smallest useful action toward the goal that fits the remaining budget and perform it.
-5. Validate the action using the repository's existing checks when relevant.
-6. End with a concise progress update, what remains, and the best next step if the loop stops before completion.
+2. First try to disprove completion. List the strongest reasons the goal might still be incomplete, premature, misdirected, or unvalidated.
+3. Only if you can prove the goal is 100% complete should you call tap_stop_emitter for '<goal-emitter-name>' with scope='temporary'. Your proof must include concrete evidence that:
+   - the objective is satisfied
+   - the relevant validations or observable outcomes succeeded
+   - no required work remains
+   - you can cite the evidence in the response before stopping
+4. If you cannot meet every proof requirement above, do not stop the emitter. This includes cases where you are blocked, uncertain, tempted to hand the work back to the foreground session, or merely believe the next approach should happen "directly" instead of through the loop.
+5. Choose the next smallest useful action toward the goal that fits the remaining budget and perform it.
+6. Validate the action using the repository's existing checks when relevant.
+7. End with a concise progress update, what remains, and the best next step if the loop later stops because the user stops it or the budget runs out.
 
 Safety rules:
 - Do not make unrelated changes.
 - Do not mark the goal complete unless the objective is actually achieved and no required work remains.
+- Never self-stop on partial progress, blockers, uncertainty, frustration, or a desire to switch execution style.
+- Before any self-stop, aggressively argue against stopping and require explicit proof of completion.
 - Do not treat reaching the iteration budget as success.
 - Do not continue if the next step requires explicit user approval.
 - Prefer small reversible steps.
-- Stop yourself when done or blocked; do not rely on the user to notice.
+- Only self-stop when completion is proven; otherwise keep advancing or leave the best handoff for the next iteration.
 ```
 
 Substitute the real objective, emitter name, and max iteration count before passing the prompt to `tap_start_emitter`.
@@ -120,7 +129,7 @@ When this skill is invoked:
    - EventStream name
    - Objective
    - Max iteration count
-   - That it will advance when the session is idle and stop itself when complete or blocked
+   - That it will advance when the session is idle and only self-stop after proving the goal is complete
 10. Stop there. Do not immediately perform the first goal iteration unless the user explicitly asks you to start working now.
 
 ## Iteration budget

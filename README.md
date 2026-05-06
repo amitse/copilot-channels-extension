@@ -209,13 +209,13 @@ The prompt fires immediately, then re-fires after each idle period. It stops aft
 
 **Work toward a goal autonomously**
 
-Use `/tap-goal` to create an idle goal loop that keeps advancing a concrete objective until it finishes, hits a blocker, or reaches its iteration budget. Goals are explicit, control commands are user-owned, and the loop should stop itself only when the objective is actually complete or blocked.
+Use `/tap-goal` to create an idle goal loop that keeps advancing a concrete objective until it proves the work is complete, is explicitly stopped, or reaches its iteration budget. Goals are explicit, control commands are user-owned, and the loop should strongly resist premature self-stop.
 
 ```
 /tap-goal migrate the repo to the new API and keep going until tests pass
 ```
 
-The skill creates a temporary idle PromptEmitter with a self-contained goal prompt. Each iteration inspects its own emitter state, assesses progress, takes the next small action, validates when relevant, and stops the emitter when the goal is complete or blocked. As the remaining iteration budget gets low, the prompt shifts into wrap-up mode so it leaves a useful handoff instead of starting broad new work.
+The skill creates a temporary idle PromptEmitter with a self-contained goal prompt. Each iteration inspects its own emitter state, argues against stopping, takes the next small action, validates when relevant, and only stops the emitter after presenting concrete proof that the goal is fully complete. As the remaining iteration budget gets low, the prompt shifts into wrap-up mode so it leaves a useful handoff instead of starting broad new work.
 
 Goal loops default to 50 iterations unless you specify another budget.
 

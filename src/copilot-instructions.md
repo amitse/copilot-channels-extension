@@ -151,11 +151,13 @@ This is the closest analogue to Claude's session-scoped `/tap-loop` behavior in 
 
 For "keep working until done" requests, prefer `/tap-goal`: create an
 idle PromptEmitter with a self-contained goal prompt, an explicit `maxRuns`
-budget, and instructions to stop itself when complete or blocked. Goals must be
+budget, and instructions to self-stop only after proving the goal is complete.
+Goals must be
 explicit user requests; do not infer them from ordinary one-shot tasks, and do
 not treat budget exhaustion as successful completion. Goal prompts should
-self-steer by reading their own emitter state with `tap_list_emitters` and
-switching into wrap-up mode when the remaining iteration budget is low.
+self-steer by reading their own emitter state with `tap_list_emitters`,
+arguing against premature self-stop, and switching into wrap-up mode when the
+remaining iteration budget is low.
 If the session may stay continuously busy (for example in autopilot-heavy
 flows), prefer a timed PromptEmitter or hook-driven/session-injector delivery
 instead of relying on idle to trigger the next goal step.
