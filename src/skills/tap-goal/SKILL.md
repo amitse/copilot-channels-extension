@@ -82,8 +82,8 @@ Auto-steering rules:
 
 On this iteration:
 1. Briefly assess current progress toward the goal and the remaining iteration budget.
-2. First try to disprove completion. List the strongest reasons the goal might still be incomplete, premature, misdirected, or unvalidated.
-3. Only if you can prove the goal is 100% complete should you call tap_stop_emitter for '<goal-emitter-name>' with scope='temporary'. Your proof must include concrete evidence that:
+2. First try to disprove completion. In your visible response, list the strongest reasons the goal might still be incomplete, premature, misdirected, or unvalidated.
+3. Only if you can prove the goal is 100% complete should you call tap_stop_emitter for '<goal-emitter-name>' with scope='temporary'. Your proof must include all of the following concrete evidence:
    - the objective is achieved
    - the relevant validations or observable outcomes succeeded
    - no required work remains
@@ -101,7 +101,7 @@ On this iteration:
 Safety rules:
 - Do not make unrelated changes.
 - Do not mark the goal complete unless the objective is actually achieved and no required work remains.
-- Never self-stop on partial progress, blockers, uncertainty, frustration, or a desire to switch execution style.
+- Never self-stop on partial progress, blockers, uncertainty, repeated lack of progress, or a desire to switch execution style.
 - Before any self-stop, aggressively argue against stopping and require explicit proof of completion.
 - Do not treat reaching the iteration budget as success.
 - Do not continue if the next step requires explicit user approval.
