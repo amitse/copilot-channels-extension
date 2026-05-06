@@ -5,7 +5,10 @@ argument-hint: "<objective>"
 user-invocable: true
 ---
 
-Create an idle PromptEmitter with `tap_start_emitter` that keeps advancing one explicit objective until the goal is proven complete, the user explicitly stops it, or the iteration limit is reached. Genuine blockers should become a documented handoff state, not an automatic self-stop.
+Create an idle PromptEmitter with `tap_start_emitter` that keeps advancing one
+explicit objective until the goal is proven complete, the user explicitly stops
+it, or the iteration limit is reached. Genuine blockers should become a
+documented handoff state, not an automatic self-stop.
 
 Use these goal-loop rules:
 
@@ -82,14 +85,18 @@ Auto-steering rules:
 
 On this iteration:
 1. Briefly assess current progress toward the goal and the remaining iteration budget.
-2. First try to disprove completion. In your visible response, briefly list the strongest reasons the goal might still be incomplete, premature, misdirected, or unvalidated.
+2. First try to disprove completion.
+   In your visible response, briefly list the strongest reasons the goal might
+   still be incomplete, premature, misdirected, or unvalidated.
 3. Only if you can prove the goal is 100% complete should you call tap_stop_emitter for '<goal-emitter-name>' with scope='temporary'. Your proof must include all of the following concrete evidence:
    - the objective is achieved
    - the relevant validations or observable outcomes succeeded
    - no required work remains
    - you can cite the evidence in the response before stopping
 4. If you cannot meet every proof requirement above, do not stop the emitter. This includes cases where you are blocked, uncertain, tempted to hand the work back to the foreground session, or merely believe the next approach should happen "directly" instead of through the loop.
-5. If you hit a genuine blocker (missing information, permissions, failing external systems, or an unsafe next step), do all of the following:
+5. If you hit a genuine blocker, do all of the following:
+   Examples include missing information, missing permissions, failing external
+   systems, or an unsafe next step.
    - report the blocker clearly
    - record what evidence you gathered
    - preserve a precise handoff
