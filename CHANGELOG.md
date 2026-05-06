@@ -13,6 +13,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   idle PromptEmitters with explicit iteration budgets and budget-aware
   wrap-up steering.
 
+### Changed
+
+- Raised the default `/tap-goal` iteration budget from 10 to 50.
+- Clarified that `/tap-goal` is idle-driven and that always-busy autopilot
+  flows are better served by timed prompts or hook/session-injector delivery.
+
 ## [2.0.0] — 2026-04-29
 
 ### Changed — **BREAKING**

@@ -45,7 +45,7 @@ Use `tap_start_emitter` to create a **PromptEmitter**:
 - `every = "idle"` — the loop advances only when the session is idle.
 - `scope = "temporary"`, `managedBy = "modelOwned"`.
 - `subscribe = false` — PromptEmitter output already reaches the session through `session.send()`.
-- `maxRuns` — use the user's requested budget if provided; otherwise default to `10`.
+- `maxRuns` — use the user's requested budget if provided; otherwise default to `50`.
 - Name the emitter after the objective, prefixed with `goal-` (for example `goal-api-migration`).
 - The EventStream is created automatically with the same name.
 
@@ -107,21 +107,22 @@ When this skill is invoked:
 4. If the user is asking to pause an existing goal, explain that pausing is not supported for goal loops because idle PromptEmitters do not preserve resumable internal state. Offer to stop the loop instead. Only call `tap_stop_emitter` if they confirm; otherwise take no action and leave the goal loop running.
 5. If the user is asking to resume a goal, create a new `/tap-goal` loop with the resumed objective; ask for the objective if it is not clear.
 6. Before creating a new goal, check for existing `goal-*` emitters. If one exists and the user did not explicitly ask to replace it, ask for confirmation before starting another goal loop.
-7. Otherwise, create the idle PromptEmitter using the template above.
-8. Confirm to the user:
+7. If the user wants the loop to keep nudging the session even while Copilot stays busy in autopilot-style work, explain that idle goal loops may not fire until the session becomes idle. Suggest a timed PromptEmitter or hook/session-injector based delivery instead.
+8. Otherwise, create the idle PromptEmitter using the template above.
+9. Confirm to the user:
    - Goal emitter name
    - EventStream name
    - Objective
    - Max iteration count
    - That it will advance when the session is idle and stop itself when complete or blocked
-9. Stop there. Do not immediately perform the first goal iteration unless the user explicitly asks you to start working now.
+10. Stop there. Do not immediately perform the first goal iteration unless the user explicitly asks you to start working now.
 
 ## Iteration budget
 
 Idle goal loops must always have `maxRuns`.
 
 - If the user gives a budget, use it.
-- Otherwise, default to `10`.
+- Otherwise, default to `50`.
 - If the objective is large, tell the user they can invoke `/tap-goal` again with a higher budget.
 
 ## Persistence
