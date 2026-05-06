@@ -221,7 +221,7 @@ Goal loops default to 50 iterations unless you specify another budget.
 
 Use `/tap-goal status` to list current goal emitters.
 
-Use `/tap-goal stop` or `/tap-goal clear` to stop one.
+Use `/tap-goal stop <name>` or `/tap-goal clear <name>` to stop a specific goal emitter. If there is exactly one active `goal-*` emitter, the skill can stop it without a name; otherwise run `/tap-goal status` first and then stop the goal by name.
 
 Use `/tap-goal resume <objective>` to start a new loop from an objective. Stopped goal loops do not preserve resumable internal state; resuming creates a new emitter from the supplied objective.
 

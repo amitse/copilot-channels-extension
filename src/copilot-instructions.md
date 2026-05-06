@@ -38,7 +38,7 @@ Reach for **PromptEmitters** when the user wants the agent itself to periodicall
    - add `{ "match": "<noise>", "outcome": "drop" }` rules first
    - add `{ "match": "<signal>", "outcome": "inject" }` rules for important events
    - use `{ "match": ".*", "outcome": "keep" }` as a catch-all to store everything else
-8. If the work should repeat inside the session, add `runInterval`.
+8. If the work should repeat inside the session, add `every="<interval>"` or `everySchedule=[...]`.
 9. If the emitter proves useful across sessions, persist it and switch ownership to `ownership="userOwned"` unless the user explicitly wants ongoing model control.
 
 ## Recommended tool sequence
@@ -65,7 +65,7 @@ Use these tools in roughly this order:
 ### For prompt-driven maintenance
 
 - use `prompt` instead of `command` (creates a PromptEmitter)
-- add `runInterval` for a fixed session-scoped timed schedule
+- add `every="<interval>"` for a fixed session-scoped timed schedule
 - use oneTime PromptEmitter when the user wants a background check only once
 - keep the first prompt concise and action-oriented
 
@@ -144,7 +144,7 @@ Prefer normalized output over raw dumps. EventFilters work much better when each
 If the work is mostly reasoning rather than data collection, prefer a PromptEmitter:
 
 - prompt once for a background check (oneTime)
-- prompt + `runInterval` for a fixed maintenance loop (timed)
+- prompt + `every="<interval>"` for a fixed maintenance loop (timed)
 - prompt + `every="idle"` + `maxRuns` for autonomous goal loops with explicit iteration budgets (`/tap-goal`)
 
 This is the closest analogue to Claude's session-scoped `/tap-loop` behavior in this extension.
@@ -166,7 +166,7 @@ When working on the extension itself, not just using its emitter tools, prefer t
 
 - use `session.log()` for user-visible diagnostics; never rely on `console.log()`
 - use hooks such as `onUserPromptSubmitted`, `onPreToolUse`, `onPostToolUse`, and `onErrorOccurred` to shape behavior
-- use `session.on(...)` listeners for tool lifecycle, assistant messages, session idle, and errors when you need event-driven behavior
+- use `session.on(...)` listeners for event-driven behavior such as `session.idle`, `assistant.message`, `tool.execution_start`, `tool.execution_complete`, `session.error`, and `session.start`/`session.resume` when resuming persistent goal state
 - use `session.send()` for asynchronous follow-up prompts and `session.sendAndWait()` only when the extension must wait for an answer
 - use `onPermissionRequest` and `onUserInputRequest` for guarded flows instead of custom ad hoc prompting
 - use `fs.watch` or `watchFile` when the extension should react to manual file edits or workspace artifacts such as `plan.md`

@@ -103,7 +103,13 @@ When this skill is invoked:
 
 1. Parse the goal objective and any explicit iteration budget.
 2. For a bare `/tap-goal` or `/tap-goal status`, call `tap_list_emitters`, summarize any `goal-*` emitters, and stop.
-3. If the user is asking to stop, cancel, or clear an existing goal, call `tap_stop_emitter` for the named goal emitter and confirm that it will not fire again.
+3. If the user is asking to stop, cancel, or clear an existing goal:
+   - call `tap_list_emitters` and look for `goal-*` emitters
+   - if the user named a specific goal emitter, stop that one
+   - otherwise, if exactly one `goal-*` emitter exists, stop it
+   - if none exist, report that no goal loop is running
+   - if multiple exist and the user did not name one, ask them to choose one after showing `/tap-goal status`
+   - when you do stop one, call `tap_stop_emitter` with its exact name and confirm that it will not fire again
 4. If the user is asking to pause an existing goal, explain that pausing is not supported for goal loops because idle PromptEmitters do not preserve resumable internal state. Offer to stop the loop instead. Only call `tap_stop_emitter` if they confirm; otherwise take no action and leave the goal loop running.
 5. If the user is asking to resume a goal, create a new `/tap-goal` loop with the resumed objective; ask for the objective if it is not clear.
 6. Before creating a new goal, check for existing `goal-*` emitters. If one exists and the user did not explicitly ask to replace it, ask for confirmation before starting another goal loop.
