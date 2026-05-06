@@ -29,7 +29,7 @@ export function createLifecycle({ lineRouter, sessionPort }) {
   }
 
   function shouldSkipActivityCancellation(emitter) {
-    return !isIdleEmitter(emitter) || isTerminalEmitterStatus(emitter.status) || emitter.inFlight;
+    return !isIdleEmitter(emitter) || isTerminalEmitterStatus(emitter.status);
   }
 
   function wireStreams(emitter) {
@@ -238,6 +238,7 @@ export function createLifecycle({ lineRouter, sessionPort }) {
 
       emitter.status = EMITTER_STATUS.WAITING;
       if (isIdleEmitter(emitter)) {
+        // Idle emitters only schedule their next run from session.idle events.
         return;
       }
       scheduleIteration(emitter, nextDelay(emitter));
@@ -363,7 +364,9 @@ export function createLifecycle({ lineRouter, sessionPort }) {
       emitter.timer = null;
     }
 
-    emitter.status = EMITTER_STATUS.WAITING;
+    if (!emitter.inFlight) {
+      emitter.status = EMITTER_STATUS.WAITING;
+    }
   }
 
   return { start, stop, onSessionIdle, onSessionActivity };
