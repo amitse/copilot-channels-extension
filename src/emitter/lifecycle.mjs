@@ -19,6 +19,10 @@ export function createLifecycle({ lineRouter, sessionPort }) {
     return emitter?.runSchedule === RUN_SCHEDULE.IDLE;
   }
 
+  /**
+   * Skip idle scheduling when the emitter is no longer eligible to react to a
+   * session.idle transition.
+   */
   function shouldSkipIdleScheduling(emitter) {
     return (
       emitter.stopRequested ||
@@ -28,6 +32,10 @@ export function createLifecycle({ lineRouter, sessionPort }) {
     );
   }
 
+  /**
+   * Skip activity-driven cancellation when the emitter is not an active idle
+   * loop or it has already reached a terminal state.
+   */
   function shouldSkipActivityCancellation(emitter) {
     return !isIdleEmitter(emitter) || isTerminalEmitterStatus(emitter.status);
   }
@@ -355,6 +363,9 @@ export function createLifecycle({ lineRouter, sessionPort }) {
     }
   }
 
+  /**
+   * React to a session.idle transition by queueing the next idle emitter run.
+   */
   function onSessionIdle(emitter) {
     if (shouldSkipIdleScheduling(emitter)) {
       return;
@@ -363,6 +374,9 @@ export function createLifecycle({ lineRouter, sessionPort }) {
     scheduleIteration(emitter, IDLE_PROMPT_DELAY_MS);
   }
 
+  /**
+   * React to non-idle session activity by cancelling any pending idle run.
+   */
   function onSessionActivity(emitter) {
     if (shouldSkipActivityCancellation(emitter)) {
       return;
