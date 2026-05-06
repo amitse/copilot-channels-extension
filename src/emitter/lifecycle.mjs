@@ -16,7 +16,7 @@ import { readLines, spawnEmitterProcess } from "./spawn.mjs";
 
 export function createLifecycle({ lineRouter, sessionPort }) {
   function isIdleEmitter(emitter) {
-    return emitter.runSchedule === RUN_SCHEDULE.IDLE;
+    return emitter?.runSchedule === RUN_SCHEDULE.IDLE;
   }
 
   function shouldSkipIdleScheduling(emitter) {
@@ -30,6 +30,10 @@ export function createLifecycle({ lineRouter, sessionPort }) {
 
   function shouldSkipActivityCancellation(emitter) {
     return !isIdleEmitter(emitter) || isTerminalEmitterStatus(emitter.status);
+  }
+
+  function waitForNextIdle(emitter) {
+    emitter.status = EMITTER_STATUS.WAITING;
   }
 
   function wireStreams(emitter) {
@@ -236,7 +240,7 @@ export function createLifecycle({ lineRouter, sessionPort }) {
         return;
       }
 
-      emitter.status = EMITTER_STATUS.WAITING;
+      waitForNextIdle(emitter);
       if (isIdleEmitter(emitter)) {
         // Idle emitters only schedule their next run from session.idle events.
         return;
@@ -299,7 +303,7 @@ export function createLifecycle({ lineRouter, sessionPort }) {
       `Emitter '${emitter.name}' queued ${emitter.emitterType} work (${scheduleLabel}) with ${describeEmitterWork(emitter)}.${firstRunLabel}`
     );
     if (isIdleEmitter(emitter)) {
-      emitter.status = EMITTER_STATUS.WAITING;
+      waitForNextIdle(emitter);
       if (sessionPort.isIdle()) {
         scheduleIteration(emitter, IDLE_PROMPT_DELAY_MS);
       }

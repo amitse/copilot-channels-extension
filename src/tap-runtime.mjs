@@ -10,7 +10,7 @@ import { createProviderGateway } from "./provider/gateway.mjs";
 
 export function createCopilotChannelsRuntime(options = {}) {
   let baseCwd = options.cwd ?? process.cwd();
-  let detachSessionListeners = () => {};
+  let cleanupSessionListeners = () => {};
   const getBaseCwd = () => baseCwd;
   const setBaseCwd = (next) => {
     baseCwd = next;
@@ -52,7 +52,7 @@ export function createCopilotChannelsRuntime(options = {}) {
   });
 
   const wireSessionListeners = (session) => {
-    detachSessionListeners();
+    cleanupSessionListeners();
 
     const unsubscribers = [
       session.on("session.idle", () => {
@@ -76,7 +76,7 @@ export function createCopilotChannelsRuntime(options = {}) {
       }));
     }
 
-    detachSessionListeners = () => {
+    cleanupSessionListeners = () => {
       for (const unsubscribe of unsubscribers) {
         try {
           unsubscribe?.();
@@ -102,8 +102,8 @@ export function createCopilotChannelsRuntime(options = {}) {
     tools,
     hooks,
     stopAllEmitters: async () => {
-      detachSessionListeners();
-      detachSessionListeners = () => {};
+      cleanupSessionListeners();
+      cleanupSessionListeners = () => {};
       gateway.stop();
       await supervisor.stopAll();
     },
