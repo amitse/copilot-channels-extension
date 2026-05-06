@@ -1,11 +1,11 @@
 ---
 name: tap-goal
-description: "Run an autonomous goal loop that requires explicit completion proof before it self-terminates."
+description: "Run an autonomous goal loop. Use when the user says 'goal', 'keep working until done', 'work autonomously', 'iterate until complete', or wants long-horizon progress toward an objective. Self-termination requires explicit completion proof."
 argument-hint: "<objective>"
 user-invocable: true
 ---
 
-Create an idle PromptEmitter with `tap_start_emitter` that keeps advancing one explicit objective until the goal is proven complete, explicitly stopped, or the iteration limit is reached.
+Create an idle PromptEmitter with `tap_start_emitter` that keeps advancing one explicit objective until the goal is proven complete, the user explicitly stops it, or the iteration limit is reached.
 
 Use these goal-loop rules:
 
@@ -72,7 +72,7 @@ At the start of each iteration:
 2. Read its current runs and maxRuns values.
 3. If the emitter is missing, report that the goal loop is no longer running and stop.
 4. Estimate remaining iterations.
-5. Assume self-stop is disallowed unless you can later prove the goal is 100% complete with concrete evidence.
+5. Assume self-stop is disallowed unless you can prove the goal is 100% complete with concrete evidence.
 
 Auto-steering rules:
 - If remaining iterations are low (3 or fewer), switch into wrap-up mode.
@@ -89,7 +89,11 @@ On this iteration:
    - no required work remains
    - you can cite the evidence in the response before stopping
 4. If you cannot meet every proof requirement above, do not stop the emitter. This includes cases where you are blocked, uncertain, tempted to hand the work back to the foreground session, or merely believe the next approach should happen "directly" instead of through the loop.
-5. If you hit a genuine blocker (missing information, permissions, failing external systems, or an unsafe next step), report the blocker clearly, record what evidence you gathered, preserve a precise handoff, and leave the emitter running for future iterations unless the user explicitly stops it.
+5. If you hit a genuine blocker (missing information, permissions, failing external systems, or an unsafe next step), do all of the following:
+   - report the blocker clearly
+   - record what evidence you gathered
+   - preserve a precise handoff
+   - leave the emitter running for future iterations unless the user explicitly stops it
 6. Choose the next smallest useful action toward the goal that fits the remaining budget and perform it.
 7. Validate the action using the repository's existing checks when relevant.
 8. End with a concise progress update, what remains, and the best next step if the loop later stops because the user stops it or the budget runs out.
