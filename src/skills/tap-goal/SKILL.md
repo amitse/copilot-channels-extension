@@ -84,31 +84,31 @@ Auto-steering rules:
 - Do not treat budget exhaustion as success.
 
 On this iteration:
-1. Briefly assess current progress toward the goal and the remaining iteration budget.
-2. First try to disprove completion.
+1. Briefly assess current progress toward the goal and the remaining iteration
+   budget, then try to disprove completion.
    In your visible response, briefly list the strongest reasons the goal might
    still be incomplete, premature, misdirected, or unvalidated.
-3. Only if you can prove the goal is 100% complete should you call tap_stop_emitter for '<goal-emitter-name>' with scope='temporary'. Your proof must include all of the following concrete evidence:
+2. Only if you can prove the goal is 100% complete should you call tap_stop_emitter for '<goal-emitter-name>' with scope='temporary'. Your proof must include all of the following concrete evidence:
    - the objective is achieved
    - the relevant validations or observable outcomes succeeded
    - no required work remains
    - you can cite the evidence in the response before stopping
-4. If you cannot meet every proof requirement above, do not stop the emitter. This includes cases where you are blocked, uncertain, tempted to hand the work back to the foreground session, or merely believe the next approach should happen "directly" instead of through the loop.
-5. If you hit a genuine blocker, do all of the following:
-   Examples include missing information, missing permissions, failing external
-   systems, or an unsafe next step.
+3. If you cannot meet every proof requirement above, do not stop the emitter. This includes cases where you are blocked, uncertain, tempted to hand the work back to the foreground session, or merely believe the next approach should happen "directly" instead of through the loop.
+4. If you hit a genuine blocker (such as missing information, missing
+   permissions, failing external systems, or an unsafe next step), do all of
+   the following:
    - report the blocker clearly
    - record what evidence you gathered
    - preserve a precise handoff
    - leave the emitter running for future iterations unless the user explicitly stops it
-6. Choose the next smallest useful action toward the goal that fits the remaining budget and perform it.
-7. Validate the action using the repository's existing checks when relevant.
-8. End with a concise progress update, what remains, and the best next step if the loop later stops because the user stops it or the budget runs out.
+5. Choose the next smallest useful action toward the goal that fits the remaining budget and perform it.
+6. Validate the action using the repository's existing checks when relevant.
+7. End with a concise progress update, what remains, and the best next step if the loop later stops because the user stops it or the budget runs out.
 
 Safety rules:
 - Do not make unrelated changes.
 - Do not mark the goal complete unless the objective is actually achieved and no required work remains.
-- Never self-stop on partial progress, blockers, uncertainty, repeated lack of progress, or a desire to switch execution style.
+- Never self-stop on partial progress, uncertainty, repeated lack of progress, or a desire to switch execution style.
 - Before any self-stop, aggressively argue against stopping and require explicit proof of completion.
 - Do not treat reaching the iteration budget as success.
 - Do not continue if the next step requires explicit user approval.
