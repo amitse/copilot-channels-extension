@@ -11,6 +11,10 @@ import { createProviderGateway } from "./provider/gateway.mjs";
 export function createCopilotChannelsRuntime(options = {}) {
   let baseCwd = options.cwd ?? process.cwd();
   let cleanupSessionListeners = () => {};
+  const resetSessionListeners = () => {
+    cleanupSessionListeners();
+    cleanupSessionListeners = () => {};
+  };
   const getBaseCwd = () => baseCwd;
   const setBaseCwd = (next) => {
     baseCwd = next;
@@ -52,7 +56,7 @@ export function createCopilotChannelsRuntime(options = {}) {
   });
 
   const wireSessionListeners = (session) => {
-    cleanupSessionListeners();
+    resetSessionListeners();
 
     const unsubscribers = [
       session.on("session.idle", () => {
@@ -102,8 +106,7 @@ export function createCopilotChannelsRuntime(options = {}) {
     tools,
     hooks,
     stopAllEmitters: async () => {
-      cleanupSessionListeners();
-      cleanupSessionListeners = () => {};
+      resetSessionListeners();
       gateway.stop();
       await supervisor.stopAll();
     },

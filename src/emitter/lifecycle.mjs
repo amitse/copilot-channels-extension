@@ -36,6 +36,13 @@ export function createLifecycle({ lineRouter, sessionPort }) {
     emitter.status = EMITTER_STATUS.WAITING;
   }
 
+  function prepareIdleEmitter(emitter) {
+    waitForNextIdle(emitter);
+    if (sessionPort.isIdle()) {
+      scheduleIteration(emitter, IDLE_PROMPT_DELAY_MS);
+    }
+  }
+
   function wireStreams(emitter) {
     const child = emitter.process;
     emitter.stdoutReader = readLines(child.stdout, (line) => {
@@ -240,11 +247,12 @@ export function createLifecycle({ lineRouter, sessionPort }) {
         return;
       }
 
-      waitForNextIdle(emitter);
       if (isIdleEmitter(emitter)) {
+        waitForNextIdle(emitter);
         // Idle emitters only schedule their next run from session.idle events.
         return;
       }
+      emitter.status = EMITTER_STATUS.WAITING;
       scheduleIteration(emitter, nextDelay(emitter));
       return;
     }
@@ -303,10 +311,7 @@ export function createLifecycle({ lineRouter, sessionPort }) {
       `Emitter '${emitter.name}' queued ${emitter.emitterType} work (${scheduleLabel}) with ${describeEmitterWork(emitter)}.${firstRunLabel}`
     );
     if (isIdleEmitter(emitter)) {
-      waitForNextIdle(emitter);
-      if (sessionPort.isIdle()) {
-        scheduleIteration(emitter, IDLE_PROMPT_DELAY_MS);
-      }
+      prepareIdleEmitter(emitter);
       return;
     }
 
