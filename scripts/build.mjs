@@ -16,7 +16,6 @@ const result = await build({
   platform: "node",
   target: "node20",
   outfile: path.join(dist, "extension.mjs"),
-  external: ["@github/copilot-sdk", "@github/copilot-sdk/*"],
   banner: {
     js: [
       "// ※ tap — copilot-tap-extension (bundled)",
