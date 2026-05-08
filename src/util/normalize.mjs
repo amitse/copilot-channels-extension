@@ -2,9 +2,10 @@ import { EVENT_OUTCOME, OWNERSHIP, LIFESPAN } from "../consts.mjs";
 
 export function normalizeName(value, fallback = "") {
   const normalized = String(value ?? "")
+    .normalize("NFKC")
     .trim()
     .toLowerCase()
-    .replace(/[^a-z0-9._-]+/g, "-")
+    .replace(/[^\p{L}\p{N}\p{M}._-]+/gu, "-")
     .replace(/^-+|-+$/g, "");
 
   return normalized || fallback;
