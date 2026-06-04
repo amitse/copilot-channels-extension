@@ -28,4 +28,3 @@ export const EVENT_FILTER_PARAMETER_SCHEMA = Object.freeze({
     }
   }
 });
-
