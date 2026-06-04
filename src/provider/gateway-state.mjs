@@ -40,7 +40,8 @@ export function computeTransition(currentState, event) {
           ...state,
           running: false,
           reloadPending: false,
-          reloadTimerActive: false
+          reloadTimerActive: false,
+          token: null
         },
         actions: [
           { type: GATEWAY_ACTION.CANCEL_TIMER },

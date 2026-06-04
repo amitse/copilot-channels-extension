@@ -48,9 +48,7 @@ export function createProviderGateway(options = {}, adapters = {}) {
   let reloadPending = false;
 
   function generateToken() {
-    token = TOKEN_PREFIX + randomBytes(16).toString("hex");
-    process.env.TAP_PROVIDER_TOKEN = token;
-    return token;
+    return TOKEN_PREFIX + randomBytes(16).toString("hex");
   }
 
   function getActiveSessions() {
@@ -59,28 +57,86 @@ export function createProviderGateway(options = {}, adapters = {}) {
     return info ? [info] : [];
   }
 
-  function scheduleReload() {
-    const transition = computeTransition(
-      { running, reloadPending, reloadTimerActive: Boolean(reloadTimer), token },
-      { type: GATEWAY_EVENT.SCHEDULE_RELOAD, delayMs: RELOAD_DEBOUNCE_MS }
-    );
-    reloadPending = transition.nextState.reloadPending;
-    for (const action of identifyActions(transition)) {
-      if (action.type === GATEWAY_ACTION.SCHEDULE_TIMER) {
-        if (reloadTimer) {
-          timerAdapter.cancel(reloadTimer);
-        }
-        reloadTimer = timerAdapter.schedule(() => {
-          reloadTimer = null;
-          reloadPending = false;
-          if (toolsChangedCallback && running) {
-            const currentTapTools = typeof tapTools === "function" ? tapTools() : [];
-            const merged = registry.buildSessionTools(currentTapTools, dispatchToolCall);
-            toolsChangedCallback(merged);
-          }
-        }, action.delayMs);
-      }
+  function getGatewayState() {
+    return { running, reloadPending, reloadTimerActive: Boolean(reloadTimer), token };
+  }
+
+  function applyGatewayState(nextState) {
+    if (!nextState) return;
+    running = Boolean(nextState.running);
+    reloadPending = Boolean(nextState.reloadPending);
+    token = nextState.token ?? null;
+  }
+
+  function setToken(nextToken) {
+    token = nextToken ?? null;
+    if (token) {
+      process.env.TAP_PROVIDER_TOKEN = token;
+    } else {
+      delete process.env.TAP_PROVIDER_TOKEN;
     }
+  }
+
+  function clearToken() {
+    token = null;
+    delete process.env.TAP_PROVIDER_TOKEN;
+  }
+
+  function cancelReloadTimer() {
+    if (reloadTimer) {
+      timerAdapter.cancel(reloadTimer);
+      reloadTimer = null;
+    }
+  }
+
+  function refreshTools() {
+    reloadTimer = null;
+    if (toolsChangedCallback && running) {
+      const currentTapTools = typeof tapTools === "function" ? tapTools() : [];
+      const merged = registry.buildSessionTools(currentTapTools, dispatchToolCall);
+      toolsChangedCallback(merged);
+    }
+  }
+
+  function executeGatewayAction(action) {
+    switch (action.type) {
+      case GATEWAY_ACTION.SET_TOKEN:
+        setToken(action.token);
+        return;
+      case GATEWAY_ACTION.CLEAR_TOKEN:
+        clearToken();
+        return;
+      case GATEWAY_ACTION.SET_RUNNING:
+        running = Boolean(action.value);
+        return;
+      case GATEWAY_ACTION.CANCEL_TIMER:
+        cancelReloadTimer();
+        return;
+      case GATEWAY_ACTION.SCHEDULE_TIMER:
+        cancelReloadTimer();
+        reloadTimer = timerAdapter.schedule(() => {
+          applyGatewayTransition({ type: GATEWAY_EVENT.RELOAD_FIRED });
+        }, action.delayMs);
+        return;
+      case GATEWAY_ACTION.REFRESH_TOOLS:
+        refreshTools();
+        return;
+      default:
+        return;
+    }
+  }
+
+  function applyGatewayTransition(event) {
+    const transition = computeTransition(getGatewayState(), event);
+    applyGatewayState(transition.nextState);
+    for (const action of identifyActions(transition)) {
+      executeGatewayAction(action);
+    }
+    return transition;
+  }
+
+  function scheduleReload() {
+    applyGatewayTransition({ type: GATEWAY_EVENT.SCHEDULE_RELOAD, delayMs: RELOAD_DEBOUNCE_MS });
   }
 
   function onBound(conn) {
@@ -151,7 +207,7 @@ export function createProviderGateway(options = {}, adapters = {}) {
 
   function start() {
     if (running) return;
-    generateToken();
+    const nextToken = generateToken();
 
     try {
       wss = new WebSocketServer({ port: GATEWAY_PORT, noServer: false });
@@ -165,7 +221,7 @@ export function createProviderGateway(options = {}, adapters = {}) {
         log(`Provider gateway listening on port ${GATEWAY_PORT}`);
       });
 
-      running = true;
+      applyGatewayTransition({ type: GATEWAY_EVENT.START, token: nextToken });
     } catch (err) {
       log(`Failed to start provider gateway on port ${GATEWAY_PORT}: ${err.message}`);
       wss = null;
@@ -173,11 +229,7 @@ export function createProviderGateway(options = {}, adapters = {}) {
   }
 
   function stop() {
-    if (reloadTimer) {
-      timerAdapter.cancel(reloadTimer);
-      reloadTimer = null;
-    }
-    reloadPending = false;
+    applyGatewayTransition({ type: GATEWAY_EVENT.STOP });
 
     toolsChangedCallback = null;
 
@@ -191,9 +243,6 @@ export function createProviderGateway(options = {}, adapters = {}) {
       wss.close();
       wss = null;
     }
-
-    running = false;
-    delete process.env.TAP_PROVIDER_TOKEN;
   }
 
   function getToken() {
