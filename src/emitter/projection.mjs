@@ -52,6 +52,10 @@ function cloneEventFilter(eventFilter) {
     : null;
 }
 
+function cloneOptionalArray(value) {
+  return Array.isArray(value) ? [...value] : null;
+}
+
 function resolveRunSchedule({ emitterType, every, idle, everySchedule, everyScheduleMs }) {
   if (idle) {
     return RUN_SCHEDULE.IDLE;
@@ -133,11 +137,36 @@ export function projectConfiguredEmitter(entry = {}, options = {}) {
  */
 export function projectRunningEmitter(emitter, stream) {
   return {
-    ...emitter,
+    name: emitter.name,
+    description: emitter.description ?? "",
+    status: emitter.status,
     scope: emitter.lifespan,
-    eventFilter: cloneEventFilter(emitter.eventFilter),
-    channel: emitter.stream,
+    lifespan: emitter.lifespan,
     ownership: emitter.ownership,
+    type: emitter.emitterType,
+    emitterType: emitter.emitterType,
+    runSchedule: emitter.runSchedule,
+    stream: emitter.stream,
+    channel: emitter.stream,
+    cwd: emitter.cwd ?? null,
+    command: emitter.command ?? null,
+    prompt: emitter.prompt ?? null,
+    every: emitter.every ?? null,
+    everyMs: emitter.everyMs ?? null,
+    everySchedule: cloneOptionalArray(emitter.everySchedule),
+    everyScheduleMs: cloneOptionalArray(emitter.everyScheduleMs),
+    maxRuns: emitter.maxRuns ?? null,
+    autoStart: emitter.autoStart,
+    includeStderr: emitter.includeStderr,
+    startedAt: emitter.startedAt ?? null,
+    stoppedAt: emitter.stoppedAt ?? null,
+    runCount: emitter.runCount ?? 0,
+    lineCount: emitter.lineCount ?? 0,
+    droppedLineCount: emitter.droppedLineCount ?? 0,
+    lastRunAt: emitter.lastRunAt ?? null,
+    lastRunStatus: emitter.lastRunStatus ?? null,
+    exitCode: emitter.exitCode ?? null,
+    eventFilter: cloneEventFilter(emitter.eventFilter),
     sessionInjector: cloneStreamSessionInjector(stream),
     source: "running"
   };

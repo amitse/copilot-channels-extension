@@ -1,12 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { EVENT_OUTCOME, LIFESPAN, OWNERSHIP, RUN_SCHEDULE, EMITTER_TYPE, EMITTER_STATUS } from "../consts.mjs";
+import { EVENT_OUTCOME, LIFESPAN, OWNERSHIP, RUN_SCHEDULE, EMITTER_TYPE, EMITTER_STATUS, RUN_STATUS } from "../consts.mjs";
 import { EventFilterService } from "../services/event-filter-service.mjs";
 import { formatConfiguredEmitter } from "../format/emitter.mjs";
 import { normalizeEmitterSpec } from "./spec.mjs";
 import { buildEmitterState } from "./state.mjs";
-import { projectConfiguredEmitter } from "./projection.mjs";
+import { projectConfiguredEmitter, projectRunningEmitter } from "./projection.mjs";
 
 test("normalizeEmitterSpec canonicalizes shared emitter fields", () => {
   const raw = {
@@ -88,6 +88,97 @@ test("buildEmitterState consumes canonical emitter specs", () => {
 
   assert.strictEqual(canonicalState.eventFilter, spec.eventFilter);
   assert.strictEqual(canonicalState.runSchedule, spec.runSchedule);
+});
+
+test("projectRunningEmitter exposes public snapshot fields without runtime handles", () => {
+  const emitter = buildEmitterState({
+    name: "Runtime Boundary",
+    command: "node worker.mjs",
+    everySchedule: ["10s", "1m"],
+    scope: LIFESPAN.TEMPORARY,
+    managedBy: OWNERSHIP.MODEL_OWNED,
+    eventFilter: {
+      rules: [{ match: "ready", outcome: EVENT_OUTCOME.INJECT }]
+    },
+    maxRuns: 3
+  }, "/workspace");
+  Object.assign(emitter, {
+    status: EMITTER_STATUS.RUNNING,
+    timer: { cancel() {} },
+    inFlight: true,
+    stopRequested: true,
+    process: { pid: 1234 },
+    stdoutReader: { close() {} },
+    stderrReader: { close() {} },
+    abortController: { abort() {} },
+    controller: { abort() {} },
+    pendingPromise: Promise.resolve(),
+    runCount: 2,
+    lineCount: 5,
+    droppedLineCount: 1,
+    lastRunAt: "2026-06-05T00:00:00.000Z",
+    lastRunStatus: RUN_STATUS.SUCCESS,
+    exitCode: 0
+  });
+  const stream = {
+    sessionInjector: {
+      enabled: true,
+      delivery: "all",
+      ownership: OWNERSHIP.MODEL_OWNED,
+      lifespan: LIFESPAN.TEMPORARY
+    }
+  };
+
+  const projected = projectRunningEmitter(emitter, stream);
+
+  assert.equal(projected.name, "runtime-boundary");
+  assert.equal(projected.status, EMITTER_STATUS.RUNNING);
+  assert.equal(projected.scope, LIFESPAN.TEMPORARY);
+  assert.equal(projected.lifespan, LIFESPAN.TEMPORARY);
+  assert.equal(projected.ownership, OWNERSHIP.MODEL_OWNED);
+  assert.equal(projected.emitterType, EMITTER_TYPE.COMMAND);
+  assert.equal(projected.type, EMITTER_TYPE.COMMAND);
+  assert.equal(projected.runSchedule, RUN_SCHEDULE.TIMED);
+  assert.equal(projected.stream, "runtime-boundary");
+  assert.equal(projected.channel, "runtime-boundary");
+  assert.equal(projected.cwd, "/workspace");
+  assert.equal(projected.command, "node worker.mjs");
+  assert.deepEqual(projected.everySchedule, ["10s", "1m"]);
+  assert.deepEqual(projected.everyScheduleMs, [10_000, 60_000]);
+  assert.equal(projected.maxRuns, 3);
+  assert.equal(projected.runCount, 2);
+  assert.equal(projected.lineCount, 5);
+  assert.equal(projected.droppedLineCount, 1);
+  assert.equal(projected.lastRunAt, "2026-06-05T00:00:00.000Z");
+  assert.equal(projected.lastRunStatus, RUN_STATUS.SUCCESS);
+  assert.equal(projected.exitCode, 0);
+  assert.equal(projected.source, "running");
+  assert.deepEqual(projected.sessionInjector, stream.sessionInjector);
+  assert.notStrictEqual(projected.sessionInjector, stream.sessionInjector);
+  assert.deepEqual(EventFilterService.serialize(projected.eventFilter), {
+    rules: [{ match: "ready", outcome: EVENT_OUTCOME.INJECT }],
+    ownership: OWNERSHIP.MODEL_OWNED,
+    lifespan: LIFESPAN.TEMPORARY
+  });
+  assert.notStrictEqual(projected.eventFilter, emitter.eventFilter);
+  assert.notStrictEqual(projected.eventFilter.rules, emitter.eventFilter.rules);
+  assert.notStrictEqual(projected.eventFilter.rules[0], emitter.eventFilter.rules[0]);
+  assert.notStrictEqual(projected.everySchedule, emitter.everySchedule);
+  assert.notStrictEqual(projected.everyScheduleMs, emitter.everyScheduleMs);
+
+  for (const key of [
+    "process",
+    "timer",
+    "stdoutReader",
+    "stderrReader",
+    "inFlight",
+    "stopRequested",
+    "abortController",
+    "controller",
+    "pendingPromise"
+  ]) {
+    assert.equal(key in projected, false, `projected emitter should not expose ${key}`);
+  }
 });
 
 test("projectConfiguredEmitter preserves configured schedule fields for formatter display", () => {
