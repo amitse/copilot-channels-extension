@@ -1,4 +1,4 @@
-import { EMITTER_STATUS, EMITTER_TYPE, RUN_SCHEDULE, RUN_STATUS, SOURCE, STREAM, IDLE_PROMPT_DELAY_MS } from "../consts.mjs";
+import { EMITTER_STATUS, EMITTER_TYPE, RUN_SCHEDULE, SOURCE, STREAM, IDLE_PROMPT_DELAY_MS } from "../consts.mjs";
 import { nowIso } from "../util/time.mjs";
 import { isTerminalEmitterStatus } from "../util/policy.mjs";
 import { describeEmitterWork } from "../format/emitter.mjs";
@@ -92,6 +92,15 @@ function runAction(emitter, action, context) {
     default:
       return;
   }
+}
+
+function applyLifecycleTransition(emitter, event, context) {
+  const transition = computeTransition(snapshotEmitter(emitter), event);
+  applyState(emitter, transition.nextState);
+  for (const action of identifyActions(transition)) {
+    runAction(emitter, action, context);
+  }
+  return transition;
 }
 
 function scheduleIteration(emitter, context, delayMs = 0) {
@@ -266,51 +275,11 @@ async function runScheduledIteration(emitter, context) {
 
   emitter.inFlight = false;
 
-  const transition = computeTransition(snapshotEmitter(emitter), {
+  applyLifecycleTransition(emitter, {
     type: LIFECYCLE_EVENT.ITERATION_RESULT,
     result,
     timestamp: nowIso()
-  });
-  applyState(emitter, transition.nextState);
-  for (const action of identifyActions(transition)) {
-    runAction(emitter, action, context);
-  }
-
-  if (emitter.stopRequested) {
-    emitter.status = EMITTER_STATUS.STOPPED;
-    emitter.stoppedAt = nowIso();
-    context.lineRouter.appendSystemMessage(emitter, `Emitter '${emitter.name}' stopped.`);
-    return;
-  }
-
-  if (result.ok) {
-    emitter.lastRunStatus = RUN_STATUS.SUCCESS;
-    if (emitter.runSchedule === RUN_SCHEDULE.IDLE) {
-      emitter.status = EMITTER_STATUS.WAITING;
-      return;
-    }
-    return;
-  }
-
-  if (result.deferred) {
-    emitter.status = EMITTER_STATUS.WAITING;
-    if (emitter.runSchedule !== RUN_SCHEDULE.IDLE) {
-      context.lineRouter.appendSystemMessage(
-        emitter,
-        `Emitter '${emitter.name}' deferred this prompt run because the session was still busy. Next attempt in ${emitter.every}.`
-      );
-    }
-    return;
-  }
-
-  emitter.lastRunStatus = RUN_STATUS.FAILURE;
-  if (emitter.runSchedule === RUN_SCHEDULE.ONE_TIME) {
-    emitter.status = EMITTER_STATUS.ERROR;
-    emitter.stoppedAt = nowIso();
-    return;
-  }
-
-  emitter.status = EMITTER_STATUS.WAITING;
+  }, context);
 }
 
 export function createLifecycle({
@@ -340,11 +309,11 @@ export function createLifecycle({
       `Emitter '${emitter.name}' queued ${emitter.emitterType} work (${scheduleLabel}) with ${describeEmitterWork(emitter)}.`
     );
 
-    const transition = computeTransition(snapshotEmitter(emitter), { type: LIFECYCLE_EVENT.START });
-    applyState(emitter, transition.nextState);
-    for (const action of identifyActions(transition)) {
-      runAction(emitter, action, { lineRouter, timerAdapter, processAdapter, loggerAdapter, sessionPort });
-    }
+    applyLifecycleTransition(
+      emitter,
+      { type: LIFECYCLE_EVENT.START },
+      { lineRouter, timerAdapter, processAdapter, loggerAdapter, sessionPort }
+    );
 
     if (emitter.runSchedule === RUN_SCHEDULE.IDLE) {
       if (sessionPort.isIdle()) {
@@ -357,11 +326,11 @@ export function createLifecycle({
   }
 
   async function stop(emitter) {
-    const transition = computeTransition(snapshotEmitter(emitter), { type: LIFECYCLE_EVENT.STOP, timestamp: nowIso() });
-    applyState(emitter, transition.nextState);
-    for (const action of identifyActions(transition)) {
-      runAction(emitter, action, { lineRouter, timerAdapter, processAdapter, loggerAdapter, sessionPort });
-    }
+    applyLifecycleTransition(
+      emitter,
+      { type: LIFECYCLE_EVENT.STOP, timestamp: nowIso() },
+      { lineRouter, timerAdapter, processAdapter, loggerAdapter, sessionPort }
+    );
 
     if (isTerminalEmitterStatus(emitter.status)) {
       return;
@@ -387,19 +356,19 @@ export function createLifecycle({
   }
 
   function onSessionIdle(emitter) {
-    const transition = computeTransition(snapshotEmitter(emitter), { type: LIFECYCLE_EVENT.SESSION_IDLE });
-    applyState(emitter, transition.nextState);
-    for (const action of identifyActions(transition)) {
-      runAction(emitter, action, { lineRouter, timerAdapter, processAdapter, loggerAdapter, sessionPort });
-    }
+    applyLifecycleTransition(
+      emitter,
+      { type: LIFECYCLE_EVENT.SESSION_IDLE },
+      { lineRouter, timerAdapter, processAdapter, loggerAdapter, sessionPort }
+    );
   }
 
   function onSessionActivity(emitter) {
-    const transition = computeTransition(snapshotEmitter(emitter), { type: LIFECYCLE_EVENT.SESSION_ACTIVITY });
-    applyState(emitter, transition.nextState);
-    for (const action of identifyActions(transition)) {
-      runAction(emitter, action, { lineRouter, timerAdapter, processAdapter, loggerAdapter, sessionPort });
-    }
+    applyLifecycleTransition(
+      emitter,
+      { type: LIFECYCLE_EVENT.SESSION_ACTIVITY },
+      { lineRouter, timerAdapter, processAdapter, loggerAdapter, sessionPort }
+    );
   }
 
   return { start, stop, onSessionIdle, onSessionActivity };

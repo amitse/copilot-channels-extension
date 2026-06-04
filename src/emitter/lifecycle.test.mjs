@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { EMITTER_STATUS, EMITTER_TYPE, EVENT_OUTCOME, RUN_SCHEDULE, RUN_STATUS, SOURCE, STREAM } from "../consts.mjs";
+import { EMITTER_STATUS, EMITTER_TYPE, EVENT_OUTCOME, IDLE_PROMPT_BACKOFF_MS, RUN_SCHEDULE, RUN_STATUS, SOURCE, STREAM } from "../consts.mjs";
 import { EventFilterService } from "../services/event-filter-service.mjs";
 import { computeTransition, identifyActions, LIFECYCLE_EVENT, LIFECYCLE_ACTION } from "./lifecycle-state.mjs";
 import { createLifecycle } from "./lifecycle.mjs";
@@ -109,6 +109,83 @@ test("lifecycle transition schedules timed rerun", () => {
   assert.equal(transition.nextState.status, EMITTER_STATUS.WAITING);
   assert.deepEqual(identifyActions(transition), [{ type: LIFECYCLE_ACTION.SCHEDULE_TIMER, delayMs: 100 }]);
   assert.equal(transition.nextState.lastRunStatus, RUN_STATUS.SUCCESS);
+});
+
+test("lifecycle transition defers timed prompt retry with system message", () => {
+  const transition = computeTransition(
+    {
+      name: "demo",
+      emitterType: EMITTER_TYPE.PROMPT,
+      runSchedule: RUN_SCHEDULE.TIMED,
+      every: "5m",
+      everyMs: 300_000,
+      runCount: 1,
+      status: EMITTER_STATUS.RUNNING
+    },
+    {
+      type: LIFECYCLE_EVENT.ITERATION_RESULT,
+      result: { ok: false, deferred: true }
+    }
+  );
+
+  assert.equal(transition.nextState.status, EMITTER_STATUS.WAITING);
+  assert.deepEqual(identifyActions(transition), [
+    { type: LIFECYCLE_ACTION.SCHEDULE_TIMER, delayMs: 300_000 },
+    {
+      type: LIFECYCLE_ACTION.APPEND_SYSTEM_MESSAGE,
+      text: "Emitter 'demo' deferred this prompt run because the session was still busy. Next attempt in 5m."
+    }
+  ]);
+});
+
+test("lifecycle transition defers idle prompt retry without system message", () => {
+  const transition = computeTransition(
+    {
+      name: "demo",
+      emitterType: EMITTER_TYPE.PROMPT,
+      runSchedule: RUN_SCHEDULE.IDLE,
+      every: "idle",
+      runCount: 1,
+      status: EMITTER_STATUS.RUNNING
+    },
+    {
+      type: LIFECYCLE_EVENT.ITERATION_RESULT,
+      result: { ok: false, deferred: true }
+    }
+  );
+
+  assert.equal(transition.nextState.status, EMITTER_STATUS.WAITING);
+  assert.deepEqual(identifyActions(transition), [
+    { type: LIFECYCLE_ACTION.SCHEDULE_TIMER, delayMs: IDLE_PROMPT_BACKOFF_MS }
+  ]);
+});
+
+test("lifecycle transition stops after in-flight scheduled iteration", () => {
+  const stoppedAt = "2026-06-05T00:00:00.000Z";
+  const transition = computeTransition(
+    {
+      name: "demo",
+      emitterType: EMITTER_TYPE.PROMPT,
+      runSchedule: RUN_SCHEDULE.TIMED,
+      every: "5m",
+      everyMs: 300_000,
+      runCount: 1,
+      status: EMITTER_STATUS.STOPPING,
+      stopRequested: true,
+      inFlight: false
+    },
+    {
+      type: LIFECYCLE_EVENT.ITERATION_RESULT,
+      result: { ok: true },
+      timestamp: stoppedAt
+    }
+  );
+
+  assert.equal(transition.nextState.status, EMITTER_STATUS.STOPPED);
+  assert.equal(transition.nextState.stoppedAt, stoppedAt);
+  assert.deepEqual(identifyActions(transition), [
+    { type: LIFECYCLE_ACTION.APPEND_SYSTEM_MESSAGE, text: "Emitter 'demo' stopped." }
+  ]);
 });
 
 test("mock timer advances scheduled prompt emitter", async () => {

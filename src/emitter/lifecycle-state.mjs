@@ -166,10 +166,19 @@ export function computeTransition(currentState, event) {
     }
 
     if (result.deferred) {
+      const actions = [
+        { type: LIFECYCLE_ACTION.SCHEDULE_TIMER, delayMs: state.runSchedule === RUN_SCHEDULE.IDLE ? IDLE_PROMPT_BACKOFF_MS : scheduleDelay(state) }
+      ];
+      if (state.runSchedule !== RUN_SCHEDULE.IDLE) {
+        actions.push({
+          type: LIFECYCLE_ACTION.APPEND_SYSTEM_MESSAGE,
+          text: `Emitter '${state.name}' deferred this prompt run because the session was still busy. Next attempt in ${state.every}.`
+        });
+      }
       return {
         currentState,
         nextState: { ...state, status: EMITTER_STATUS.WAITING },
-        actions: [{ type: LIFECYCLE_ACTION.SCHEDULE_TIMER, delayMs: state.runSchedule === RUN_SCHEDULE.IDLE ? IDLE_PROMPT_BACKOFF_MS : scheduleDelay(state) }]
+        actions
       };
     }
 
