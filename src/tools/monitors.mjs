@@ -25,7 +25,7 @@ function renderEmitterList(service) {
     ...(running.length > 0 ? running.map((emitter) => formatRunningEmitter(emitter, emitter.sessionInjector ? { sessionInjector: emitter.sessionInjector } : null)) : ["- <none>"]),
     "",
     `Persistent emitter definitions (${configured.length}):`,
-    ...(configured.length > 0 ? configured.map((entry) => formatConfiguredEmitter(entry)) : ["- <none>"])
+    ...(configured.length > 0 ? configured.map((emitter) => formatConfiguredEmitter(emitter)) : ["- <none>"])
   ].join("\n");
 }
 

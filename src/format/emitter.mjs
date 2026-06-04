@@ -1,5 +1,4 @@
 import { previewText } from "../util/text.mjs";
-import { projectConfiguredEmitter } from "../emitter/projection.mjs";
 import { formatEventFilter } from "./event-filter.mjs";
 
 export function describeEmitterWork(emitter) {
@@ -40,8 +39,11 @@ export function formatRunningEmitter(emitter, stream) {
     .join("\n");
 }
 
-export function formatConfiguredEmitter(entry) {
-  const emitter = projectConfiguredEmitter(entry);
+/**
+ * Render an already-projected configured emitter snapshot.
+ * Projection belongs to the service/domain layer; formatting stays presentation-only.
+ */
+export function formatConfiguredEmitter(emitter) {
   const prompt = emitter.prompt ? `  prompt=${JSON.stringify(previewText(emitter.prompt, 90))}` : null;
   const command = emitter.command ? `  command=${emitter.command}` : null;
   const everySchedule = emitter.everySchedule

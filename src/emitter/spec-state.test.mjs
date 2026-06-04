@@ -90,7 +90,7 @@ test("buildEmitterState consumes canonical emitter specs", () => {
   assert.strictEqual(canonicalState.runSchedule, spec.runSchedule);
 });
 
-test("projectConfiguredEmitter preserves configured schedule fields for display", () => {
+test("projectConfiguredEmitter preserves configured schedule fields for formatter display", () => {
   const stream = {
     sessionInjector: {
       enabled: true,
@@ -117,9 +117,7 @@ test("projectConfiguredEmitter preserves configured schedule fields for display"
       lifespan: LIFESPAN.PERSISTENT
     }
   };
-
   const projected = projectConfiguredEmitter(entry, { stream });
-  const reprojected = projectConfiguredEmitter(projected);
 
   assert.equal(projected.name, "backoff-monitor");
   assert.equal(projected.stream, "ops-events");
@@ -143,10 +141,6 @@ test("projectConfiguredEmitter preserves configured schedule fields for display"
     ownership: OWNERSHIP.USER_OWNED,
     lifespan: LIFESPAN.PERSISTENT
   });
-  assert.deepEqual(EventFilterService.serialize(reprojected.eventFilter), EventFilterService.serialize(projected.eventFilter));
-  assert.deepEqual(reprojected.everySchedule, projected.everySchedule);
-  assert.deepEqual(reprojected.everyScheduleMs, projected.everyScheduleMs);
-  assert.equal(reprojected.maxRuns, projected.maxRuns);
 
   const formatted = formatConfiguredEmitter(projected);
   assert.match(formatted, /runSchedule=timed/);
