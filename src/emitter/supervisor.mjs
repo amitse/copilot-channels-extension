@@ -7,6 +7,7 @@ import { buildEmitterState } from "./state.mjs";
 import { createLineRouter } from "./line-router.mjs";
 import { createLifecycle } from "./lifecycle.mjs";
 import { applySessionInjectorPolicy } from "./injector-policy.mjs";
+import { ConflictError, LifecycleError, NotFoundError, AppError } from "../errors/index.mjs";
 
 /**
  * @typedef {Object} SupervisorDeps
@@ -42,7 +43,7 @@ export function createEmitterSupervisor({ streams, configStore, notifications, s
     const existing = emitters.get(emitter.name);
 
     if (existing && !isTerminalEmitterStatus(existing.status)) {
-      throw new Error(`Emitter '${emitter.name}' is already active.`);
+      throw new ConflictError(`Emitter '${emitter.name}' is already active.`);
     }
     if (existing) {
       assertMutable(existing.ownership, emitterSpec.force, `Emitter '${emitter.name}'`);
@@ -55,7 +56,14 @@ export function createEmitterSupervisor({ streams, configStore, notifications, s
       lifecycle.start(emitter);
     } catch (error) {
       emitters.delete(emitter.name);
-      throw error;
+      if (error instanceof AppError) {
+        throw error;
+      }
+      throw new LifecycleError(`Failed to start emitter '${emitter.name}': ${error.message}`, {
+        cause: error,
+        context: { emitter: emitter.name },
+        retryable: true
+      });
     }
 
     if (emitterSpec.subscribe === true) {
@@ -106,7 +114,7 @@ export function createEmitterSupervisor({ streams, configStore, notifications, s
       }
 
       if (!emitter && !removed) {
-        throw new Error(`Emitter '${normalized}' was not found in the session or persistent config.`);
+        throw new NotFoundError(`Emitter '${normalized}' was not found in the session or persistent config.`);
       }
 
       return {
@@ -116,7 +124,7 @@ export function createEmitterSupervisor({ streams, configStore, notifications, s
     }
 
     if (!emitter) {
-      throw new Error(`Emitter '${normalized}' is not running in this session.`);
+      throw new NotFoundError(`Emitter '${normalized}' is not running in this session.`);
     }
 
     return emitter;
@@ -155,7 +163,7 @@ export function createEmitterSupervisor({ streams, configStore, notifications, s
     }
 
     if (lifespan !== LIFESPAN.PERSISTENT || !configEntry) {
-      throw new Error(`Emitter '${normalized}' is not running, so only a persistent event filter update is possible when it exists in config.`);
+      throw new NotFoundError(`Emitter '${normalized}' is not running, so only a persistent event filter update is possible when it exists in config.`);
     }
 
     assertMutable(

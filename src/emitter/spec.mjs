@@ -2,6 +2,7 @@ import { EVENT_OUTCOME, LIFESPAN, OWNERSHIP } from "../consts.mjs";
 import { createEventFilter } from "../format/event-filter.mjs";
 import { normalizeName, normalizeLifespan, normalizeOutcome, normalizeOwnership } from "../util/normalize.mjs";
 import { parseIntervalSchedule, parseLoopInterval } from "../util/time.mjs";
+import { ValidationError } from "../errors/index.mjs";
 
 function isPlainObject(value) {
   return Object.prototype.toString.call(value) === "[object Object]";
@@ -19,12 +20,12 @@ function normalizeInteger(value, label) {
 
   const number = Number(value);
   if (!Number.isFinite(number)) {
-    throw new Error(`Invalid emitter spec: ${label} must be a finite number.`);
+    throw new ValidationError(`Invalid emitter spec: ${label} must be a finite number.`);
   }
 
   const integer = Math.floor(number);
   if (integer < 1) {
-    throw new Error(`Invalid emitter spec: ${label} must be 1 or greater.`);
+    throw new ValidationError(`Invalid emitter spec: ${label} must be 1 or greater.`);
   }
 
   return integer;
@@ -56,29 +57,29 @@ function normalizeEventFilter(rawInput, ownership, lifespan) {
 
 function validateEmitterSpecSchema(rawInput) {
   if (!isPlainObject(rawInput)) {
-    throw new Error("Invalid emitter spec: expected a plain object.");
+    throw new ValidationError("Invalid emitter spec: expected a plain object.");
   }
 
   const name = normalizeName(rawInput.name);
   if (!name) {
-    throw new Error("Invalid emitter spec: name is required.");
+    throw new ValidationError("Invalid emitter spec: name is required.");
   }
 
   const command = readText(rawInput.command);
   const prompt = readText(rawInput.prompt);
   if (!command && !prompt) {
-    throw new Error(`Invalid emitter spec '${name}': define either command or prompt.`);
+    throw new ValidationError(`Invalid emitter spec '${name}': define either command or prompt.`);
   }
   if (command && prompt) {
-    throw new Error(`Invalid emitter spec '${name}': command and prompt are mutually exclusive.`);
+    throw new ValidationError(`Invalid emitter spec '${name}': command and prompt are mutually exclusive.`);
   }
 
   const everyScheduleInput = rawInput.everySchedule;
   if (everyScheduleInput !== undefined && everyScheduleInput !== null && !Array.isArray(everyScheduleInput)) {
-    throw new Error(`Invalid emitter spec '${name}': everySchedule must be an array of interval strings.`);
+    throw new ValidationError(`Invalid emitter spec '${name}': everySchedule must be an array of interval strings.`);
   }
   if (Array.isArray(everyScheduleInput) && everyScheduleInput.length === 0) {
-    throw new Error(`Invalid emitter spec '${name}': everySchedule must not be empty.`);
+    throw new ValidationError(`Invalid emitter spec '${name}': everySchedule must not be empty.`);
   }
 
   return { name, command, prompt };
@@ -95,7 +96,7 @@ function canonicalizeSchedule(value, label, name) {
   }
 
   if (parsed.idle === true && label === "everySchedule") {
-    throw new Error(`Invalid emitter spec '${name}': everySchedule entries cannot be 'idle'.`);
+    throw new ValidationError(`Invalid emitter spec '${name}': everySchedule entries cannot be 'idle'.`);
   }
 
   return parsed;
@@ -137,10 +138,10 @@ export function normalizeEmitterSpec(rawInput = {}) {
   const parsedEvery = every ? canonicalizeSchedule(every, "every", name) : null;
 
   if (everySchedule && every) {
-    throw new Error(`Invalid emitter spec '${name}': every and everySchedule are mutually exclusive.`);
+    throw new ValidationError(`Invalid emitter spec '${name}': every and everySchedule are mutually exclusive.`);
   }
   if (parsedEvery?.idle && !prompt) {
-    throw new Error(`Invalid emitter spec '${name}': every='idle' is only valid for prompt emitters.`);
+    throw new ValidationError(`Invalid emitter spec '${name}': every='idle' is only valid for prompt emitters.`);
   }
 
   const canonical = {

@@ -23,6 +23,14 @@ import {
   buildSessionLifecycle,
   buildError,
 } from "./protocol.mjs";
+import {
+  AppError,
+  ConflictError,
+  LifecycleError,
+  NotFoundError,
+  ValidationError
+} from "../errors/index.mjs";
+import { mapErrorToResponse } from "../errors/handler.mjs";
 
 // Provider→Gateway message types we know how to handle
 const PROVIDER_MESSAGE_TYPES = new Set([
@@ -89,12 +97,21 @@ export function createProviderConnection(ws, options) {
     }
   }
 
-  function sendError(code, message, opts) {
-    send(buildError(code, message, opts));
+  function sendError(errorOrCode, message, opts = {}) {
+    if (errorOrCode instanceof AppError || errorOrCode instanceof Error) {
+      const mapped = mapErrorToResponse(errorOrCode);
+      if (mapped.diagnostics.context && Object.keys(mapped.diagnostics.context).length > 0) {
+        log(`[connection] ${mapped.diagnostics.name}: ${mapped.diagnostics.code} ${JSON.stringify(mapped.diagnostics.context)}`);
+      }
+      send(buildError(mapped.error.code, mapped.response.error.message, opts));
+      return;
+    }
+
+    send(buildError(errorOrCode, message, opts));
   }
 
-  function fatalError(code, message, opts) {
-    sendError(code, message, opts);
+  function fatalError(errorOrCode, message, opts = {}) {
+    sendError(errorOrCode, message, opts);
     transition(CONNECTION_STATE.DISCONNECTED);
     try { ws.close(); } catch { /* ignore */ }
   }
@@ -108,11 +125,11 @@ export function createProviderConnection(ws, options) {
   function rejectAllPending(reason) {
     for (const [callId, entry] of pendingCalls) {
       if (entry.timer) clearTimeout(entry.timer);
-      entry.reject({
-        id: callId,
-        error: reason ?? "provider disconnected",
-        errorCode: TOOL_RESULT_ERROR.DISCONNECTED,
-      });
+      entry.reject(new LifecycleError(reason ?? "provider disconnected", {
+        code: TOOL_RESULT_ERROR.DISCONNECTED,
+        context: { callId, providerId },
+        retryable: false
+      }));
     }
     pendingCalls.clear();
   }
@@ -123,18 +140,29 @@ export function createProviderConnection(ws, options) {
 
   function handleAwaitAuth(msg) {
     if (msg.type !== MESSAGE_TYPE.AUTH) {
-      sendError(ERROR_CODE.UNKNOWN_TYPE, `expected auth, got "${msg.type}"`);
+      sendError(new ValidationError(`expected auth, got "${msg.type}"`, {
+        code: ERROR_CODE.UNKNOWN_TYPE,
+        context: { state, receivedType: msg.type }
+      }));
       return;
     }
 
     const v = validateAuth(msg);
     if (!v.ok) {
-      fatalError(ERROR_CODE.AUTH_FAILED, v.error);
+      fatalError(new ValidationError(v.error, {
+        code: ERROR_CODE.AUTH_FAILED,
+        context: { state, receivedType: msg.type },
+        retryable: false
+      }));
       return;
     }
 
     if (v.token !== expectedToken) {
-      fatalError(ERROR_CODE.AUTH_FAILED, "invalid token");
+      fatalError(new ValidationError("invalid token", {
+        code: ERROR_CODE.AUTH_FAILED,
+        context: { state, receivedType: msg.type },
+        retryable: false
+      }));
       return;
     }
 
@@ -145,7 +173,10 @@ export function createProviderConnection(ws, options) {
 
   function handleAwaitHello(msg) {
     if (msg.type !== MESSAGE_TYPE.HELLO) {
-      sendError(ERROR_CODE.UNKNOWN_TYPE, `expected hello, got "${msg.type}"`);
+      sendError(new ValidationError(`expected hello, got "${msg.type}"`, {
+        code: ERROR_CODE.UNKNOWN_TYPE,
+        context: { state, receivedType: msg.type }
+      }));
       return;
     }
 
@@ -153,9 +184,9 @@ export function createProviderConnection(ws, options) {
     if (!v.ok) {
       const code = v.code ?? ERROR_CODE.UNKNOWN_TYPE;
       if (FATAL_ERROR_CODES.includes(code)) {
-        fatalError(code, v.error);
+        fatalError(new ValidationError(v.error, { code, context: { state, receivedType: msg.type } }));
       } else {
-        sendError(code, v.error);
+        sendError(new ValidationError(v.error, { code, context: { state, receivedType: msg.type } }));
       }
       return;
     }
@@ -165,7 +196,10 @@ export function createProviderConnection(ws, options) {
     // Validate session exists in activeSessions
     const sessionMatch = activeSessions.find((s) => s.id === hello.session);
     if (!sessionMatch) {
-      sendError(ERROR_CODE.INVALID_SESSION, `unknown session: ${hello.session}`);
+      sendError(new NotFoundError(`unknown session: ${hello.session}`, {
+        code: ERROR_CODE.INVALID_SESSION,
+        context: { session: hello.session, state }
+      }));
       return;
     }
 
@@ -173,10 +207,10 @@ export function createProviderConnection(ws, options) {
     if (checkToolConflict && hello.tools.length > 0) {
       const conflicts = checkToolConflict(hello.tools);
       if (conflicts && conflicts.length > 0) {
-        sendError(
-          ERROR_CODE.TOOL_CONFLICT,
-          `tool name conflict: ${conflicts.join(", ")}`,
-        );
+        sendError(new ConflictError(`tool name conflict: ${conflicts.join(", ")}`, {
+          code: ERROR_CODE.TOOL_CONFLICT,
+          context: { conflicts, state }
+        }));
         return;
       }
     }
@@ -202,7 +236,10 @@ export function createProviderConnection(ws, options) {
     if (msg.type === MESSAGE_TYPE.TOOL_RESULT) {
       const v = validateToolResult(msg);
       if (!v.ok) {
-        sendError(ERROR_CODE.UNKNOWN_TYPE, v.error, {
+        sendError(new ValidationError(v.error, {
+          code: ERROR_CODE.UNKNOWN_TYPE,
+          context: { providerId, sessionId, replyTo: msg.id }
+        }), undefined, {
           replyTo: msg.id,
           providerId,
           sessionId,
@@ -219,7 +256,34 @@ export function createProviderConnection(ws, options) {
         pendingCalls.delete(result.id);
 
         if (result.error) {
-          pending.reject(result);
+          const errorContext = {
+            providerId,
+            providerName,
+            sessionId,
+            callId: result.id
+          };
+          if (result.errorCode === TOOL_RESULT_ERROR.NOT_FOUND) {
+            pending.reject(new NotFoundError(result.error, {
+              code: result.errorCode,
+              context: errorContext
+            }));
+          } else if (result.errorCode === TOOL_RESULT_ERROR.TIMEOUT) {
+            pending.reject(new AppError(result.error, {
+              code: result.errorCode,
+              context: errorContext,
+              retryable: true
+            }));
+          } else if (result.errorCode === TOOL_RESULT_ERROR.DISCONNECTED || result.errorCode === TOOL_RESULT_ERROR.CANCELLED) {
+            pending.reject(new LifecycleError(result.error, {
+              code: result.errorCode,
+              context: errorContext
+            }));
+          } else {
+            pending.reject(new AppError(result.error, {
+              code: result.errorCode ?? TOOL_RESULT_ERROR.INTERNAL,
+              context: errorContext
+            }));
+          }
         } else {
           pending.resolve(result);
         }
@@ -253,10 +317,16 @@ export function createProviderConnection(ws, options) {
     // Unknown provider→gateway type
     if (PROVIDER_MESSAGE_TYPES.has(msg.type)) {
       // Known type but invalid in Bound state (auth/hello)
-      sendError(ERROR_CODE.UNKNOWN_TYPE, `unexpected "${msg.type}" in Bound state`);
+      sendError(new ValidationError(`unexpected "${msg.type}" in Bound state`, {
+        code: ERROR_CODE.UNKNOWN_TYPE,
+        context: { state, receivedType: msg.type }
+      }));
     } else {
       // Truly unknown type
-      sendError(ERROR_CODE.UNKNOWN_TYPE, `unknown message type: "${msg.type}"`);
+      sendError(new ValidationError(`unknown message type: "${msg.type}"`, {
+        code: ERROR_CODE.UNKNOWN_TYPE,
+        context: { state, receivedType: msg.type }
+      }));
     }
   }
 
@@ -277,7 +347,10 @@ export function createProviderConnection(ws, options) {
       const code = parsed.code === "PAYLOAD_TOO_LARGE"
         ? ERROR_CODE.PAYLOAD_TOO_LARGE
         : ERROR_CODE.INVALID_JSON;
-      sendError(code, parsed.error);
+      sendError(new ValidationError(parsed.error, {
+        code,
+        context: { state }
+      }));
       return;
     }
 
@@ -333,11 +406,11 @@ export function createProviderConnection(ws, options) {
 
   function sendToolCallMsg(callId, targetSessionId, toolName, args) {
     if (state !== CONNECTION_STATE.BOUND) {
-      return Promise.reject({
-        id: callId,
-        error: "connection not in Bound state",
-        errorCode: TOOL_RESULT_ERROR.DISCONNECTED,
-      });
+      return Promise.reject(new LifecycleError("connection not in Bound state", {
+        code: TOOL_RESULT_ERROR.DISCONNECTED,
+        context: { state },
+        retryable: false
+      }));
     }
 
     return new Promise((resolve, reject) => {

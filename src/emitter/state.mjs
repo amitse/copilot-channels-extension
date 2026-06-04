@@ -5,19 +5,20 @@ import {
 } from "../consts.mjs";
 import { nowIso } from "../util/time.mjs";
 import { resolveRequestedCwd } from "../util/path.mjs";
+import { ValidationError } from "../errors/index.mjs";
 
 export function buildEmitterState(spec, baseCwd) {
   const name = spec.name;
   if (!name) {
-   throw new Error("Emitter name is required.");
+   throw new ValidationError("Emitter name is required.");
   }
   const command = spec.command;
   const prompt = spec.prompt;
   if (!command && !prompt) {
-   throw new Error(`Emitter '${name}' must define either a command or a prompt.`);
+   throw new ValidationError(`Emitter '${name}' must define either a command or a prompt.`);
   }
   if (command && prompt) {
-   throw new Error(`Emitter '${name}' cannot define both command and prompt. Choose one emitter type.`);
+   throw new ValidationError(`Emitter '${name}' cannot define both command and prompt. Choose one emitter type.`);
   }
 
   const every = spec.every ?? null;

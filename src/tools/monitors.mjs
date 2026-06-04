@@ -3,6 +3,7 @@ import { normalizeName } from "../util/normalize.mjs";
 import { formatEventFilter } from "../format/event-filter.mjs";
 import { formatConfiguredEmitter, formatRunningEmitter } from "../format/emitter.mjs";
 import { EmitterSpec } from "../emitter/spec.mjs";
+import { normalizeToolError } from "../errors/handler.mjs";
 
 /**
  * Helper: render the full emitter list (requires configStore for configured emitters).
@@ -48,7 +49,15 @@ export function createEmitterTools({ streams, configStore, supervisor, getBaseCw
     {
       name: "tap_list_emitters",
       description: "Lists session event emitters, their run schedules, and persistent definitions.",
-      handler: async () => renderEmitterList(streams, configStore, supervisor)
+      handler: async () => {
+        try {
+          return renderEmitterList(streams, configStore, supervisor);
+        } catch (error) {
+          throw normalizeToolError(error, {
+            context: { tool: "tap_list_emitters" }
+          });
+        }
+      }
     },
     {
       name: "tap_start_emitter",
@@ -79,24 +88,30 @@ export function createEmitterTools({ streams, configStore, supervisor, getBaseCw
         required: ["name"]
       },
       handler: async (args) => {
-        const spec = EmitterSpec.normalize(args);
-        const emitter = await supervisor.start(spec, { baseCwd: getBaseCwd() });
+        try {
+          const spec = EmitterSpec.normalize(args);
+          const emitter = await supervisor.start(spec, { baseCwd: getBaseCwd() });
 
-        return [
-          `Started emitter '${emitter.name}'.`,
-          `lifespan=${emitter.lifespan}`,
-          `ownership=${emitter.ownership}`,
-          `emitterType=${emitter.emitterType}`,
-          `runSchedule=${emitter.runSchedule}`,
-          emitter.everySchedule ? `everySchedule=[${emitter.everySchedule.join(", ")}]` : null,
-          emitter.every && !emitter.everySchedule ? `every=${emitter.every}` : null,
-          emitter.maxRuns ? `maxRuns=${emitter.maxRuns}` : null,
-          `stream=${emitter.stream}`,
-          `sessionInjector=${streams.ensure(emitter.stream).sessionInjector.enabled ? "on" : "off"}`,
-          `eventFilter=${formatEventFilter(emitter.eventFilter)}`
-        ]
-          .filter(Boolean)
-          .join("\n");
+          return [
+            `Started emitter '${emitter.name}'.`,
+            `lifespan=${emitter.lifespan}`,
+            `ownership=${emitter.ownership}`,
+            `emitterType=${emitter.emitterType}`,
+            `runSchedule=${emitter.runSchedule}`,
+            emitter.everySchedule ? `everySchedule=[${emitter.everySchedule.join(", ")}]` : null,
+            emitter.every && !emitter.everySchedule ? `every=${emitter.every}` : null,
+            emitter.maxRuns ? `maxRuns=${emitter.maxRuns}` : null,
+            `stream=${emitter.stream}`,
+            `sessionInjector=${streams.ensure(emitter.stream).sessionInjector.enabled ? "on" : "off"}`,
+            `eventFilter=${formatEventFilter(emitter.eventFilter)}`
+          ]
+            .filter(Boolean)
+            .join("\n");
+        } catch (error) {
+          throw normalizeToolError(error, {
+            context: { tool: "tap_start_emitter", name: args.name }
+          });
+        }
       }
     },
     {
@@ -116,14 +131,20 @@ export function createEmitterTools({ streams, configStore, supervisor, getBaseCw
         required: ["name"]
       },
       handler: async (args) => {
-        const result = supervisor.updateEventFilter(args.name, args, {
-          scope: args.scope ?? LIFESPAN.TEMPORARY,
-          managedBy: args.managedBy ?? OWNERSHIP.MODEL_OWNED,
-          force: args.force === true
-        });
+        try {
+          const result = supervisor.updateEventFilter(args.name, args, {
+            scope: args.scope ?? LIFESPAN.TEMPORARY,
+            managedBy: args.managedBy ?? OWNERSHIP.MODEL_OWNED,
+            force: args.force === true
+          });
 
-        const eventFilter = result.eventFilter ?? supervisor.get(args.name)?.eventFilter;
-        return `Updated event filter for emitter '${normalizeName(args.name)}': ${formatEventFilter(eventFilter)}`;
+          const eventFilter = result.eventFilter ?? supervisor.get(args.name)?.eventFilter;
+          return `Updated event filter for emitter '${normalizeName(args.name)}': ${formatEventFilter(eventFilter)}`;
+        } catch (error) {
+          throw normalizeToolError(error, {
+            context: { tool: "tap_set_event_filter", name: args.name }
+          });
+        }
       }
     },
     {
@@ -139,12 +160,18 @@ export function createEmitterTools({ streams, configStore, supervisor, getBaseCw
         required: ["name"]
       },
       handler: async (args) => {
-        const result = await supervisor.stop(args.name, {
-          scope: args.scope ?? LIFESPAN.TEMPORARY,
-          force: args.force === true
-        });
+        try {
+          const result = await supervisor.stop(args.name, {
+            scope: args.scope ?? LIFESPAN.TEMPORARY,
+            force: args.force === true
+          });
 
-        return `Stop requested for emitter '${normalizeName(args.name)}' (status=${result.status}).`;
+          return `Stop requested for emitter '${normalizeName(args.name)}' (status=${result.status}).`;
+        } catch (error) {
+          throw normalizeToolError(error, {
+            context: { tool: "tap_stop_emitter", name: args.name }
+          });
+        }
       }
     }
   ];

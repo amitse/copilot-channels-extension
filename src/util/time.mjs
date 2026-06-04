@@ -1,4 +1,5 @@
 import { RUN_INTERVAL_PATTERN } from "../consts.mjs";
+import { ValidationError } from "../errors/index.mjs";
 
 export function nowIso() {
   return new Date().toISOString();
@@ -16,7 +17,7 @@ export function parseIntervalSchedule(value) {
       !Number.isFinite(parsed.ms) ||
       parsed.ms <= 0
     ) {
-      throw new Error(
+      throw new ValidationError(
         `Invalid interval schedule entry at index ${index}: '${item}'. Schedule entries must be non-blank intervals greater than 0 and cannot be 'idle'.`
       );
     }
@@ -36,12 +37,12 @@ export function parseLoopInterval(value) {
 
   const match = String(value).trim().match(RUN_INTERVAL_PATTERN);
   if (!match) {
-    throw new Error(`Invalid every interval '${value}'. Use values like 30s, 5m, 2h, or 1d.`);
+    throw new ValidationError(`Invalid every interval '${value}'. Use values like 30s, 5m, 2h, or 1d.`);
   }
 
   const amount = Number.parseInt(match[1], 10);
   if (Number.isNaN(amount) || amount < 1) {
-    throw new Error(`Invalid every interval '${value}'. The number must be 1 or greater.`);
+    throw new ValidationError(`Invalid every interval '${value}'. The number must be 1 or greater.`);
   }
 
   const unitToken = match[2].toLowerCase();

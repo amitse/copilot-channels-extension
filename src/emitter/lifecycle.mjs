@@ -13,6 +13,7 @@ import { nowIso } from "../util/time.mjs";
 import { isTerminalEmitterStatus } from "../util/policy.mjs";
 import { describeEmitterWork } from "../format/emitter.mjs";
 import { readLines, spawnEmitterProcess } from "./spawn.mjs";
+import { LifecycleError } from "../errors/index.mjs";
 
 /**
  * @typedef {Object} LifecycleDeps
@@ -88,7 +89,11 @@ export function createLifecycle({ lineRouter, sessionPort }) {
     try {
       child = spawnEmitterProcess(emitter.command, emitter.cwd);
     } catch (error) {
-      throw new Error(`Failed to start emitter '${emitter.name}': ${error.message}`);
+      throw new LifecycleError(`Failed to start emitter '${emitter.name}': ${error.message}`, {
+        cause: error,
+        context: { emitter: emitter.name, command: emitter.command, cwd: emitter.cwd },
+        retryable: true
+      });
     }
 
     emitter.process = child;

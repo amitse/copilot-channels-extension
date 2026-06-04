@@ -3,6 +3,8 @@ import { normalizeName } from "../util/normalize.mjs";
 import { clampLimit } from "../util/text.mjs";
 import { formatStream, formatStreamHistory } from "../format/stream.mjs";
 import { applySessionInjectorPolicy } from "../emitter/injector-policy.mjs";
+import { NotFoundError } from "../errors/index.mjs";
+import { normalizeToolError } from "../errors/handler.mjs";
 
 export function applySessionInjector({ streams, configStore, sessionPort, persist }, rawName, options) {
   return applySessionInjectorPolicy({ streams, configStore, sessionPort, persist }, rawName, options);
@@ -41,7 +43,15 @@ export function createStreamTools(deps) {
     {
       name: "tap_list_streams",
       description: "Lists event streams, session injector state, and recent metadata.",
-      handler: async () => renderStreamList(streams)
+      handler: async () => {
+        try {
+          return renderStreamList(streams);
+        } catch (error) {
+          throw normalizeToolError(error, {
+            context: { tool: "tap_list_streams" }
+          });
+        }
+      }
     },
     {
       name: "tap_post",
@@ -57,13 +67,19 @@ export function createStreamTools(deps) {
         required: ["channel", "message"]
       },
       handler: async (args) => {
-        const stream = streams.ensure(args.channel, args.description ?? "");
-        streams.append(stream.name, {
-          source: args.source || SOURCE.TOOL,
-          text: args.message
-        });
-        void sessionPort.log(`Posted message to stream '${stream.name}'.`);
-        return `Posted to stream '${stream.name}'.`;
+        try {
+          const stream = streams.ensure(args.channel, args.description ?? "");
+          streams.append(stream.name, {
+            source: args.source || SOURCE.TOOL,
+            text: args.message
+          });
+          void sessionPort.log(`Posted message to stream '${stream.name}'.`);
+          return `Posted to stream '${stream.name}'.`;
+        } catch (error) {
+          throw normalizeToolError(error, {
+            context: { tool: "tap_post", channel: args.channel }
+          });
+        }
       }
     },
     {
@@ -78,12 +94,20 @@ export function createStreamTools(deps) {
         required: ["channel"]
       },
       handler: async (args) => {
-        const streamName = normalizeName(args.channel);
-        const stream = streams.get(streamName);
-        if (!stream) {
-          throw new Error(`Stream '${streamName}' does not exist.`);
+        try {
+          const streamName = normalizeName(args.channel);
+          const stream = streams.get(streamName);
+          if (!stream) {
+            throw new NotFoundError(`Stream '${streamName}' does not exist.`, {
+              context: { channel: streamName }
+            });
+          }
+          return formatStreamHistory(stream, clampLimit(args.limit, 20));
+        } catch (error) {
+          throw normalizeToolError(error, {
+            context: { tool: "tap_stream_history", channel: args.channel }
+          });
         }
-        return formatStreamHistory(stream, clampLimit(args.limit, 20));
       }
     },
     {
@@ -102,16 +126,22 @@ export function createStreamTools(deps) {
         required: ["channel"]
       },
       handler: async (args) => {
-        const stream = applySessionInjector(deps, args.channel, {
-          enabled: true,
-          delivery: args.delivery ?? EVENT_OUTCOME.SURFACE,
-          scope: args.scope ?? LIFESPAN.TEMPORARY,
-          managedBy: args.managedBy ?? OWNERSHIP.MODEL_OWNED,
-          description: args.description ?? "",
-          force: args.force === true
-        });
+        try {
+          const stream = applySessionInjector(deps, args.channel, {
+            enabled: true,
+            delivery: args.delivery ?? EVENT_OUTCOME.SURFACE,
+            scope: args.scope ?? LIFESPAN.TEMPORARY,
+            managedBy: args.managedBy ?? OWNERSHIP.MODEL_OWNED,
+            description: args.description ?? "",
+            force: args.force === true
+          });
 
-        return `Attached session injector to stream '${stream.name}' with delivery=${stream.sessionInjector.delivery} lifespan=${stream.sessionInjector.lifespan} ownership=${stream.sessionInjector.ownership}.`;
+          return `Attached session injector to stream '${stream.name}' with delivery=${stream.sessionInjector.delivery} lifespan=${stream.sessionInjector.lifespan} ownership=${stream.sessionInjector.ownership}.`;
+        } catch (error) {
+          throw normalizeToolError(error, {
+            context: { tool: "tap_enable_injector", channel: args.channel }
+          });
+        }
       }
     },
     {
@@ -128,15 +158,21 @@ export function createStreamTools(deps) {
         required: ["channel"]
       },
       handler: async (args) => {
-        const stream = applySessionInjector(deps, args.channel, {
-          enabled: false,
-          delivery: args.delivery ?? EVENT_OUTCOME.SURFACE,
-          scope: args.scope ?? LIFESPAN.TEMPORARY,
-          managedBy: args.managedBy ?? OWNERSHIP.MODEL_OWNED,
-          force: args.force === true
-        });
+        try {
+          const stream = applySessionInjector(deps, args.channel, {
+            enabled: false,
+            delivery: args.delivery ?? EVENT_OUTCOME.SURFACE,
+            scope: args.scope ?? LIFESPAN.TEMPORARY,
+            managedBy: args.managedBy ?? OWNERSHIP.MODEL_OWNED,
+            force: args.force === true
+          });
 
-        return `Disabled session injector for stream '${stream.name}' with lifespan=${stream.sessionInjector.lifespan} ownership=${stream.sessionInjector.ownership}.`;
+          return `Disabled session injector for stream '${stream.name}' with lifespan=${stream.sessionInjector.lifespan} ownership=${stream.sessionInjector.ownership}.`;
+        } catch (error) {
+          throw normalizeToolError(error, {
+            context: { tool: "tap_disable_injector", channel: args.channel }
+          });
+        }
       }
     }
   ];

@@ -1,3 +1,5 @@
+import { ValidationError } from "../errors/index.mjs";
+
 export function compileRegex(pattern, label) {
   if (pattern === undefined || pattern === null || pattern === "") {
     return null;
@@ -6,6 +8,6 @@ export function compileRegex(pattern, label) {
   try {
     return new RegExp(String(pattern), "i");
   } catch (error) {
-    throw new Error(`Invalid ${label} regex '${pattern}': ${error.message}`);
+    throw new ValidationError(`Invalid ${label} regex '${pattern}': ${error.message}`);
   }
 }

@@ -1,4 +1,6 @@
 import { MAX_TOOLS_PER_PROVIDER } from "./consts.mjs";
+import { AppError, ConflictError } from "../errors/index.mjs";
+import { normalizeToolError } from "../errors/handler.mjs";
 
 export function createProviderRegistry() {
   // Map<providerId, { id, name, tools[], sessionId }>
@@ -7,7 +9,7 @@ export function createProviderRegistry() {
   function register(providerId, providerName, tools, sessionId) {
     const toolList = tools || [];
     if (toolList.length > MAX_TOOLS_PER_PROVIDER) {
-      throw new Error(
+      throw new ConflictError(
         `Provider '${providerName}' registers ${toolList.length} tools, exceeding limit of ${MAX_TOOLS_PER_PROVIDER}.`
       );
     }
@@ -40,11 +42,20 @@ export function createProviderRegistry() {
       parameters: tool.parameters || { type: "object", properties: {} },
       handler: async (args, context) => {
         const callId = context?.callId || `call-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-        const result = await dispatchToolCall(tool.providerId, tool.name, callId, args);
-        if (result.error) {
-          throw new Error(`[${result.errorCode ?? "INTERNAL"}] ${result.error}`);
+        try {
+          const result = await dispatchToolCall(tool.providerId, tool.name, callId, args);
+          if (result.error) {
+            throw new AppError(result.error, {
+              code: result.errorCode ?? "INTERNAL",
+              context: { providerId: tool.providerId, providerName: tool.providerName, toolName: tool.name, callId }
+            });
+          }
+          return result.data;
+        } catch (error) {
+          throw normalizeToolError(error, {
+            context: { providerId: tool.providerId, providerName: tool.providerName, toolName: tool.name, callId }
+          });
         }
-        return result.data;
       }
     }));
 

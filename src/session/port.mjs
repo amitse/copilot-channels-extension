@@ -1,4 +1,5 @@
 import { LOG_PREFIX } from "../consts.mjs";
+import { LifecycleError } from "../errors/index.mjs";
 
 export function createSessionPort(initialSession = null) {
   let session = initialSession;
@@ -42,14 +43,14 @@ export function createSessionPort(initialSession = null) {
 
   async function send(prompt) {
     if (!session) {
-      throw new Error("Session is not attached; cannot send prompt.");
+      throw new LifecycleError("Session is not attached; cannot send prompt.");
     }
     return session.send({ prompt });
   }
 
   async function sendAndWait(prompt) {
     if (!session) {
-      throw new Error("Session is not attached; cannot send prompt.");
+      throw new LifecycleError("Session is not attached; cannot send prompt.");
     }
     return session.sendAndWait({ prompt });
   }
