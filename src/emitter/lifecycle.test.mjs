@@ -53,6 +53,14 @@ function createProcessAdapterWithLineReaders() {
   return { processAdapter, readers };
 }
 
+function createDeferred() {
+  let resolve;
+  const promise = new Promise((settle) => {
+    resolve = settle;
+  });
+  return { promise, resolve };
+}
+
 function createCommandEmitter(overrides = {}) {
   const eventFilter = EventFilterService.normalize({
     rules: [{ match: ".*", outcome: EVENT_OUTCOME.INJECT }]
@@ -183,9 +191,68 @@ test("lifecycle transition stops after in-flight scheduled iteration", () => {
 
   assert.equal(transition.nextState.status, EMITTER_STATUS.STOPPED);
   assert.equal(transition.nextState.stoppedAt, stoppedAt);
+  const stoppedMessage = "Emitter 'demo' stopped.";
   assert.deepEqual(identifyActions(transition), [
-    { type: LIFECYCLE_ACTION.APPEND_SYSTEM_MESSAGE, text: "Emitter 'demo' stopped." }
+    { type: LIFECYCLE_ACTION.APPEND_SYSTEM_MESSAGE, text: stoppedMessage },
+    { type: LIFECYCLE_ACTION.APPEND_SYSTEM_MESSAGE, text: stoppedMessage }
   ]);
+});
+
+test("scheduled lifecycle preserves duplicate stop system messages for in-flight stop", async () => {
+  const timerAdapter = createMockTimerAdapter();
+  const processAdapter = createMockProcessAdapter();
+  const loggerAdapter = createMockLoggerAdapter();
+  const { appended, enqueued, lineRouter } = createLineRouterHarness();
+  const sendDeferred = createDeferred();
+  const sessionPort = {
+    isIdle: () => false,
+    log: async () => {},
+    send: () => sendDeferred.promise
+  };
+  const lifecycle = createLifecycle({ lineRouter, sessionPort, timerAdapter, processAdapter, loggerAdapter });
+  const emitter = {
+    name: "demo",
+    emitterType: EMITTER_TYPE.PROMPT,
+    runSchedule: RUN_SCHEDULE.TIMED,
+    every: "5m",
+    everyMs: 300_000,
+    everyScheduleMs: null,
+    maxRuns: null,
+    status: EMITTER_STATUS.QUEUED,
+    stopRequested: false,
+    inFlight: false,
+    command: null,
+    cwd: process.cwd(),
+    prompt: "hello",
+    stream: "demo-stream",
+    process: null,
+    stdoutReader: null,
+    stderrReader: null,
+    lineCount: 0,
+    runCount: 0
+  };
+
+  lifecycle.start(emitter);
+  timerAdapter.advance(0);
+
+  assert.equal(emitter.inFlight, true);
+  await lifecycle.stop(emitter);
+
+  const stoppedMessage = "Emitter 'demo' stopped.";
+  assert.equal(emitter.status, EMITTER_STATUS.STOPPING);
+  assert.equal(emitter.stopRequested, true);
+  assert.equal(appended.filter((entry) => entry.text === stoppedMessage).length, 0);
+
+  sendDeferred.resolve();
+  await new Promise((resolve) => setImmediate(resolve));
+
+  const stopEntries = appended.filter((entry) => entry.text === stoppedMessage);
+  assert.equal(stopEntries.length, 2);
+  assert.deepEqual(stopEntries.map((entry) => entry.source), [SOURCE.SYSTEM, SOURCE.SYSTEM]);
+  assert.equal(enqueued.filter((entry) => entry.text === stoppedMessage).length, 0);
+  assert.equal(emitter.status, EMITTER_STATUS.STOPPED);
+  assert.equal(emitter.inFlight, false);
+  assert.equal(timerAdapter.pendingCount, 0);
 });
 
 test("mock timer advances scheduled prompt emitter", async () => {

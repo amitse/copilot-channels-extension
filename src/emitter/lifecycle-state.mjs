@@ -45,6 +45,16 @@ function buildCompleteMessage(state) {
   return null;
 }
 
+function buildStopCompletionActions(state) {
+  const text = `Emitter '${state.name}' stopped.`;
+  return [
+    { type: LIFECYCLE_ACTION.APPEND_SYSTEM_MESSAGE, text },
+    // Preserve the pre-centralization stream/session contract: completing an
+    // in-flight scheduled stop produced a second identical stop system message.
+    { type: LIFECYCLE_ACTION.APPEND_SYSTEM_MESSAGE, text }
+  ];
+}
+
 export function computeTransition(currentState, event) {
   const state = { ...currentState };
   const actions = [];
@@ -129,7 +139,7 @@ export function computeTransition(currentState, event) {
       return {
         currentState,
         nextState: { ...state, status: EMITTER_STATUS.STOPPED, stoppedAt: event?.timestamp ?? null },
-        actions: [{ type: LIFECYCLE_ACTION.APPEND_SYSTEM_MESSAGE, text: `Emitter '${state.name}' stopped.` }]
+        actions: buildStopCompletionActions(state)
       };
     }
 
