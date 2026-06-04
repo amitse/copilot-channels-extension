@@ -37,6 +37,21 @@ function cloneSessionInjector(entry, stream) {
   return sessionInjector ? { ...sessionInjector } : null;
 }
 
+function cloneStreamSessionInjector(stream) {
+  return stream?.sessionInjector ? { ...stream.sessionInjector } : null;
+}
+
+function cloneEventFilter(eventFilter) {
+  return eventFilter
+    ? {
+        ...eventFilter,
+        rules: Array.isArray(eventFilter.rules)
+          ? eventFilter.rules.map((rule) => ({ ...rule }))
+          : []
+      }
+    : null;
+}
+
 function resolveRunSchedule({ emitterType, every, idle, everySchedule, everyScheduleMs }) {
   if (idle) {
     return RUN_SCHEDULE.IDLE;
@@ -108,5 +123,37 @@ export function projectConfiguredEmitter(entry = {}, options = {}) {
     eventFilter,
     sessionInjector: cloneSessionInjector(entry, stream),
     source: "configured"
+  };
+}
+
+/**
+ * Project a supervisor-owned running emitter into the runtime snapshot shape
+ * returned by service APIs. Keep this distinct from configured projection so
+ * runtime-only aliases such as scope/channel stay in sync.
+ */
+export function projectRunningEmitter(emitter, stream) {
+  return {
+    ...emitter,
+    scope: emitter.lifespan,
+    eventFilter: cloneEventFilter(emitter.eventFilter),
+    channel: emitter.stream,
+    ownership: emitter.ownership,
+    sessionInjector: cloneStreamSessionInjector(stream),
+    source: "running"
+  };
+}
+
+/**
+ * Project a stream state object into the public snapshot shape.
+ */
+export function projectStream(stream) {
+  if (!stream) {
+    return null;
+  }
+
+  return {
+    ...stream,
+    entries: Array.isArray(stream.entries) ? stream.entries.map((entry) => ({ ...entry })) : [],
+    sessionInjector: cloneStreamSessionInjector(stream)
   };
 }

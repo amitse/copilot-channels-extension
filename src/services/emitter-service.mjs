@@ -3,39 +3,8 @@ import { normalizeName } from "../util/normalize.mjs";
 import { clampLimit } from "../util/text.mjs";
 import { applySessionInjectorPolicy } from "../emitter/injector-policy.mjs";
 import { EmitterSpec } from "../emitter/spec.mjs";
-import { projectConfiguredEmitter } from "../emitter/projection.mjs";
+import { projectConfiguredEmitter, projectRunningEmitter, projectStream } from "../emitter/projection.mjs";
 import { AppError, NotFoundError, toAppError } from "../errors/index.mjs";
-
-function snapshotRunningEmitter(emitter, stream) {
-  return {
-    ...emitter,
-    scope: emitter.lifespan,
-    eventFilter: emitter.eventFilter
-      ? {
-          ...emitter.eventFilter,
-          rules: Array.isArray(emitter.eventFilter.rules)
-            ? emitter.eventFilter.rules.map((rule) => ({ ...rule }))
-            : []
-        }
-      : null,
-    channel: emitter.stream,
-    ownership: emitter.ownership,
-    sessionInjector: stream?.sessionInjector ? { ...stream.sessionInjector } : null,
-    source: "running"
-  };
-}
-
-function snapshotStream(stream) {
-  if (!stream) {
-    return null;
-  }
-
-  return {
-    ...stream,
-    entries: Array.isArray(stream.entries) ? stream.entries.map((entry) => ({ ...entry })) : [],
-    sessionInjector: stream.sessionInjector ? { ...stream.sessionInjector } : null
-  };
-}
 
 function rethrowServiceError(error, message, context) {
   if (error instanceof AppError) {
@@ -83,7 +52,7 @@ export function createEmitterService(deps) {
   function listEmitters() {
     const running = supervisor.list().map((emitter) => {
       const stream = streams.get(emitter.stream) ?? streams.ensure(emitter.stream, emitter.description || "");
-      return snapshotRunningEmitter(emitter, stream);
+      return projectRunningEmitter(emitter, stream);
     });
     const configured = configStore
       .getEmitters()
@@ -99,7 +68,7 @@ export function createEmitterService(deps) {
    */
   function listStreams() {
     streams.ensure(DEFAULT_STREAM, DEFAULT_STREAM_DESCRIPTION);
-    return streams.list().map((stream) => snapshotStream(stream));
+    return streams.list().map((stream) => projectStream(stream));
   }
 
   /**
@@ -115,7 +84,7 @@ export function createEmitterService(deps) {
     }
 
     return {
-      stream: snapshotStream(stream),
+      stream: projectStream(stream),
       limit: clampLimit(limit, 20)
     };
   }
@@ -130,7 +99,7 @@ export function createEmitterService(deps) {
       text: message
     });
     void sessionPort.log(`Posted message to stream '${stream.name}'.`);
-    return { stream: snapshotStream(stream) };
+    return { stream: projectStream(stream) };
   }
 
   /**
@@ -145,7 +114,7 @@ export function createEmitterService(deps) {
       })
       .then((emitter) => ({
         emitter,
-        state: snapshotRunningEmitter(emitter, streams.get(emitter.stream) ?? streams.ensure(emitter.stream, emitter.description || ""))
+        state: projectRunningEmitter(emitter, streams.get(emitter.stream) ?? streams.ensure(emitter.stream, emitter.description || ""))
       }))
       .catch((error) => {
         rethrowServiceError(error, `Failed to start emitter '${canonicalSpec.name}'.`, {
@@ -215,8 +184,8 @@ export function createEmitterService(deps) {
       );
 
       return {
-        stream: snapshotStream(stream),
-        state: snapshotStream(stream)
+        stream: projectStream(stream),
+        state: projectStream(stream)
       };
     } catch (error) {
       rethrowServiceError(error, `Failed to update session injector for stream '${name}'.`, {
@@ -233,7 +202,7 @@ export function createEmitterService(deps) {
     const name = normalizeName(id);
     const running = supervisor.get(name);
     if (running) {
-      return snapshotRunningEmitter(running, streams.get(running.stream) ?? streams.ensure(running.stream, running.description || ""));
+      return projectRunningEmitter(running, streams.get(running.stream) ?? streams.ensure(running.stream, running.description || ""));
     }
 
     const configured = configStore.findEmitter(name);
@@ -257,7 +226,7 @@ export function createEmitterService(deps) {
         context: { channel: name }
       });
     }
-    return snapshotStream(stream);
+    return projectStream(stream);
   }
 
   return {
