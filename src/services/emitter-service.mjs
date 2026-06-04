@@ -91,6 +91,30 @@ function rethrowServiceError(error, message, context) {
   });
 }
 
+/**
+ * Create the application service that mediates tool requests and emitter internals.
+ *
+ * @param {{
+ *   streams: Object,
+ *   configStore: Object,
+ *   supervisor: Object,
+ *   sessionPort: Object,
+ *   getBaseCwd: Function,
+ *   persist: Function
+ * }} deps
+ * @returns {{
+ *   listEmitters: Function,
+ *   listStreams: Function,
+ *   postToStream: Function,
+ *   getStreamHistory: Function,
+ *   startEmitter: Function,
+ *   stopEmitter: Function,
+ *   updateFilter: Function,
+ *   setInjectorPolicy: Function,
+ *   getEmitterState: Function,
+ *   getStreamState: Function
+ * }}
+ */
 export function createEmitterService(deps) {
   const { streams, configStore, supervisor, sessionPort, getBaseCwd, persist } = deps;
 

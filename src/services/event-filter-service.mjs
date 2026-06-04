@@ -42,10 +42,23 @@ function canonicalize(source, fallbackOwnership = OWNERSHIP.MODEL_OWNED, fallbac
   });
 }
 
+/**
+ * Create a canonical event filter from a raw spec.
+ *
+ * @param {Object} spec
+ * @returns {Object}
+ */
 export function create(spec = {}) {
   return canonicalize(spec);
 }
 
+/**
+ * Apply partial changes to an existing filter and return a new canonical filter.
+ *
+ * @param {Object} existing
+ * @param {Object} changes
+ * @returns {Object}
+ */
 export function update(existing, changes = {}) {
   const current = canonicalize(existing);
 
@@ -57,6 +70,13 @@ export function update(existing, changes = {}) {
   });
 }
 
+/**
+ * Evaluate a filter against one event line.
+ *
+ * @param {Object} filter
+ * @param {string} event
+ * @returns {string}
+ */
 export function evaluate(filter, event) {
   const text = String(event ?? "");
   const resolved = filter && Array.isArray(filter.rules) ? filter : canonicalize(filter);
@@ -70,6 +90,12 @@ export function evaluate(filter, event) {
   return EVENT_OUTCOME.KEEP;
 }
 
+/**
+ * Convert a canonical filter to its persisted storage shape.
+ *
+ * @param {Object} filter
+ * @returns {{ rules: Array, ownership: string, lifespan: string }}
+ */
 export function serialize(filter) {
   const resolved = canonicalize(filter);
 
@@ -83,10 +109,22 @@ export function serialize(filter) {
   };
 }
 
+/**
+ * Hydrate a persisted filter into canonical runtime form.
+ *
+ * @param {Object} data
+ * @returns {Object}
+ */
 export function deserialize(data) {
   return canonicalize(data);
 }
 
+/**
+ * Normalize any legacy or partial filter representation.
+ *
+ * @param {Object} legacy
+ * @returns {Object}
+ */
 export function normalize(legacy) {
   return canonicalize(legacy);
 }

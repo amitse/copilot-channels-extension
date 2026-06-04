@@ -19,8 +19,9 @@ function sessionInjectorSummary(streams) {
 }
 
 async function applyPersistentConfig({ baseCwd, streams, configStore, supervisor, sessionPort, setBaseCwd }) {
-  setBaseCwd(baseCwd);
-  const configLoad = configStore.load(baseCwd);
+  const resolvedBaseCwd = typeof baseCwd === "string" && baseCwd.trim() ? baseCwd : process.cwd();
+  setBaseCwd(resolvedBaseCwd);
+  const configLoad = configStore.load(resolvedBaseCwd);
 
   for (const entry of configStore.getStreams()) {
     streams.applyPersistentStream(entry);
@@ -44,7 +45,7 @@ async function applyPersistentConfig({ baseCwd, streams, configStore, supervisor
           managedBy: startPolicy.managedBy
         },
         {
-          baseCwd,
+          baseCwd: resolvedBaseCwd,
           scope: startPolicy.scope,
           managedBy: startPolicy.managedBy,
           subscribe: false,

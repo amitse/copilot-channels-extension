@@ -7,7 +7,7 @@ import {
   SOURCE
 } from "../consts.mjs";
 import {
-  normalizeOutcome,
+  normalizeDelivery,
   normalizeOwnership,
   normalizeName,
   normalizeLifespan
@@ -19,7 +19,7 @@ import { assertMutable } from "../util/policy.mjs";
 export function createSessionInjector(overrides = {}) {
   return {
     enabled: Boolean(overrides.enabled),
-    delivery: normalizeOutcome(overrides.delivery, EVENT_OUTCOME.SURFACE),
+    delivery: normalizeDelivery(overrides.delivery, EVENT_OUTCOME.SURFACE),
     lifespan: normalizeLifespan(overrides.scope ?? overrides.lifespan, LIFESPAN.TEMPORARY),
     ownership: normalizeOwnership(overrides.managedBy ?? overrides.ownership, OWNERSHIP.MODEL_OWNED)
   };

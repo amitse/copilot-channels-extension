@@ -17,7 +17,9 @@ export function createCopilotChannelsRuntime(options = {}) {
   };
   const getBaseCwd = () => baseCwd;
   const setBaseCwd = (next) => {
-    baseCwd = next;
+    if (typeof next === "string" && next.trim()) {
+      baseCwd = next;
+    }
   };
 
   process.stderr.write(`[tap-runtime] init — cwd=${baseCwd}\n`);

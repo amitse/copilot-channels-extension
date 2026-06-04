@@ -1,6 +1,6 @@
 import { EVENT_OUTCOME, LIFESPAN, OWNERSHIP } from "../consts.mjs";
 import { ValidationError } from "../errors/index.mjs";
-import { normalizeLifespan, normalizeName, normalizeOutcome, normalizeOwnership } from "../util/normalize.mjs";
+import { normalizeDelivery, normalizeLifespan, normalizeName, normalizeOwnership } from "../util/normalize.mjs";
 import { EventFilterService } from "../services/event-filter-service.mjs";
 
 export const CONFIG_VERSION = Object.freeze({
@@ -124,7 +124,7 @@ function normalizeSessionInjector(source) {
   return {
     ...preserved,
     enabled: injector.enabled === true,
-    delivery: normalizeOutcome(injector.delivery, EVENT_OUTCOME.SURFACE),
+    delivery: normalizeDelivery(injector.delivery, EVENT_OUTCOME.SURFACE),
     ownership: normalizeOwnership(injector.ownership, OWNERSHIP.MODEL_OWNED),
     lifespan: normalizeLifespan(injector.lifespan, LIFESPAN.TEMPORARY)
   };
@@ -231,7 +231,7 @@ export function normalizePersistedEmitter(entry = {}, options = {}) {
    ?? source.classifier?.managedBy,
    OWNERSHIP.MODEL_OWNED
   );
-  const emitter = pickPreservedFields(source, new Set([...KNOWN_EMITTER_KEYS, ...LEGACY_EMITTER_KEYS]));
+  const emitter = pickPreservedFields(source, LEGACY_EMITTER_KEYS);
   const filterSource = isPlainObject(source.eventFilter)
    ? source.eventFilter
    : isPlainObject(source.classifier)

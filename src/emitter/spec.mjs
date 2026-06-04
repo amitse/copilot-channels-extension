@@ -1,6 +1,6 @@
 import { EVENT_OUTCOME, LIFESPAN, OWNERSHIP } from "../consts.mjs";
 import { createEventFilter } from "../format/event-filter.mjs";
-import { normalizeName, normalizeLifespan, normalizeOutcome, normalizeOwnership } from "../util/normalize.mjs";
+import { normalizeDelivery, normalizeName, normalizeLifespan, normalizeOutcome, normalizeOwnership } from "../util/normalize.mjs";
 import { parseIntervalSchedule, parseLoopInterval } from "../util/time.mjs";
 import { ValidationError } from "../errors/index.mjs";
 
@@ -116,7 +116,7 @@ export function normalizeEmitterSpec(rawInput = {}) {
   const autoStart = rawInput.autoStart !== false;
   const includeStderr = rawInput.includeStderr !== false;
   const subscribe = rawInput.subscribe !== false;
-  const delivery = normalizeOutcome(rawInput.delivery, EVENT_OUTCOME.SURFACE);
+  const delivery = normalizeDelivery(rawInput.delivery, EVENT_OUTCOME.SURFACE);
   const force = rawInput.force === true;
   const maxRuns = normalizeInteger(rawInput.maxRuns, "maxRuns");
   const eventFilter = normalizeEventFilter(rawInput, managedBy, scope);
