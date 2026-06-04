@@ -17,9 +17,11 @@ export function normalizeBaseCwd(value, fallback) {
 }
 
 export function resolveRequestedCwd(baseCwd, requestedCwd) {
+  const resolvedBaseCwd = normalizeBaseCwd(baseCwd);
+
   if (!requestedCwd) {
-    return baseCwd;
+    return resolvedBaseCwd;
   }
 
-  return path.resolve(baseCwd, requestedCwd);
+  return path.resolve(resolvedBaseCwd, requestedCwd);
 }
