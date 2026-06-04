@@ -9,9 +9,7 @@
  */
 
 import { getReactContext, isReactDetected, getNearestComponentName } from "./react-context.js";
-import { DETAIL_LEVELS, DETAIL_LEVEL_VALUES } from "./contracts.js";
-
-const SUPPORTED_DETAIL_LEVELS = DETAIL_LEVEL_VALUES;
+import { DETAIL_LEVELS } from "./contracts.js";
 
 // ── Element identification ──────────────────────────────────────────────
 
@@ -155,7 +153,6 @@ export function getElementDisplayName(el) {
  */
 export function extractElementContext(element, detailLevel = DETAIL_LEVELS.STANDARD) {
   if (!element) return null;
-  if (!SUPPORTED_DETAIL_LEVELS.includes(detailLevel)) detailLevel = DETAIL_LEVELS.STANDARD;
 
   const tag = element.tagName.toLowerCase();
 
