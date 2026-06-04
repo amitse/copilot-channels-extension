@@ -1,6 +1,7 @@
 import { SOURCE } from "../consts.mjs";
 import { normalizeToolError } from "../errors/handler.mjs";
 import { formatStream, formatStreamHistory } from "../format/stream.mjs";
+import { policyOptions, policyParameterProperties } from "./policy-options.mjs";
 
 function renderStreamList(service) {
   const streams = service.listStreams();
@@ -112,9 +113,7 @@ export function createStreamTools(deps) {
           channel: { type: "string", description: "EventStream name." },
           delivery: { type: "string", description: "Event outcome mode: 'important' or 'all'." },
           description: { type: "string", description: "Optional stream description." },
-          scope: { type: "string", description: "Use 'temporary' for session-only or 'persistent' to write config." },
-          managedBy: { type: "string", description: "Ownership label: 'userOwned' or 'modelOwned'." },
-          force: { type: "boolean", description: "Required only when transferring ownership of a protected session injector." }
+          ...policyParameterProperties({ force: "sessionInjector" })
         },
         required: ["channel"]
       },
@@ -124,9 +123,7 @@ export function createStreamTools(deps) {
             enabled: true,
             delivery: args.delivery,
             description: args.description,
-            scope: args.scope,
-            managedBy: args.managedBy,
-            force: args.force === true
+            ...policyOptions(args)
           });
 
           return renderInjectorUpdate("Enabled", state);
@@ -144,9 +141,11 @@ export function createStreamTools(deps) {
         type: "object",
         properties: {
           channel: { type: "string", description: "EventStream name." },
-          scope: { type: "string", description: "Use 'temporary' or 'persistent'." },
-          managedBy: { type: "string", description: "Ownership label after the update: 'userOwned' or 'modelOwned'." },
-          force: { type: "boolean", description: "Required only when transferring ownership of a protected session injector." }
+          ...policyParameterProperties({
+            scope: "simple",
+            managedBy: "afterUpdate",
+            force: "sessionInjector"
+          })
         },
         required: ["channel"]
       },
@@ -154,9 +153,7 @@ export function createStreamTools(deps) {
         try {
           const { state } = runtime.setInjectorPolicy(args.channel, {
             enabled: false,
-            scope: args.scope,
-            managedBy: args.managedBy,
-            force: args.force === true
+            ...policyOptions(args)
           });
 
           return renderInjectorUpdate("Disabled", state);

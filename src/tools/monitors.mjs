@@ -2,6 +2,13 @@ import { formatEventFilter } from "../format/event-filter.mjs";
 import { formatConfiguredEmitter, formatRunningEmitter } from "../format/emitter.mjs";
 import { normalizeToolError } from "../errors/handler.mjs";
 import { EVENT_FILTER_PARAMETER_SCHEMA } from "./event-filter-schema.mjs";
+import {
+  policyForceParameter,
+  policyManagedByParameter,
+  policyOptions,
+  policyParameterProperties,
+  policyScopeParameter
+} from "./policy-options.mjs";
 
 /**
  * Helper: render the full emitter list from canonical service snapshots.
@@ -61,15 +68,15 @@ export function createEmitterTools(deps) {
           cwd: { type: "string", description: "Optional working directory relative to the session cwd." },
           every: { type: "string", description: "Optional repeat interval like 30s, 5m, 2h, or 1d. Use 'idle' for prompts that re-run whenever the session is idle. When omitted, commands run continuously and prompts run once." },
           everySchedule: { type: "array", minItems: 1, items: { type: "string" }, description: "Optional backoff schedule — an ordered non-empty list of interval strings (e.g. ['10s','20s','30s','1m','2m','5m','10m']). The emitter uses each interval in sequence, then repeats the last one forever. Overrides 'every' when provided. Cannot be 'idle' entries." },
-          scope: { type: "string", description: "Use 'temporary' for session-only or 'persistent' to write config." },
-          managedBy: { type: "string", description: "Ownership label: 'userOwned' or 'modelOwned'." },
+          scope: policyScopeParameter(),
+          managedBy: policyManagedByParameter(),
           autoStart: { type: "boolean", description: "When persistent, whether the emitter should auto-start next session." },
           includeStderr: { type: "boolean", description: "Whether stderr lines are eligible for event outcome evaluation." },
           eventFilter: EVENT_FILTER_PARAMETER_SCHEMA,
           subscribe: { type: "boolean", description: "Whether to attach a session injector to the stream as part of emitter creation." },
           delivery: { type: "string", description: "Session injector delivery ceiling: 'important' (only important lines inject) or 'all' (all lines eligible). Delivery opens the door; EventFilter rules decide which lines walk through it." },
           maxRuns: { type: "integer", description: "Maximum number of iterations before the emitter auto-completes. Useful for idle and timed loops." },
-          force: { type: "boolean", description: "Required only when transferring ownership of a protected emitter." }
+          force: policyForceParameter("emitter")
         },
         required: ["name"]
       },
@@ -107,19 +114,13 @@ export function createEmitterTools(deps) {
         properties: {
           name: { type: "string", description: "Emitter name." },
           eventFilter: EVENT_FILTER_PARAMETER_SCHEMA,
-          scope: { type: "string", description: "Use 'temporary' for session-only or 'persistent' to write config." },
-          managedBy: { type: "string", description: "Ownership label: 'userOwned' or 'modelOwned'." },
-          force: { type: "boolean", description: "Required only when transferring ownership of a protected emitter." }
+          ...policyParameterProperties({ force: "emitter" })
         },
         required: ["name"]
       },
       handler: async (args) => {
         try {
-         const { state } = runtime.updateFilter(args.name, args.eventFilter ?? {}, {
-            scope: args.scope,
-            managedBy: args.managedBy,
-            force: args.force === true
-          });
+          const { state } = runtime.updateFilter(args.name, args.eventFilter ?? {}, policyOptions(args));
 
           return `Updated event filter for emitter '${state.name}': ${formatEventFilter(state.eventFilter)}`;
         } catch (error) {
@@ -136,17 +137,14 @@ export function createEmitterTools(deps) {
         type: "object",
         properties: {
           name: { type: "string", description: "Emitter name." },
-          scope: { type: "string", description: "Use 'temporary' or 'persistent'." },
-          force: { type: "boolean", description: "Required only when transferring ownership of a protected emitter." }
+          scope: policyScopeParameter("simple"),
+          force: policyForceParameter("emitter")
         },
         required: ["name"]
       },
       handler: async (args) => {
         try {
-          const { result, state } = await runtime.stopEmitter(args.name, {
-            scope: args.scope,
-            force: args.force === true
-          });
+          const { result, state } = await runtime.stopEmitter(args.name, policyOptions(args, { managedBy: false }));
 
           return `Stop requested for emitter '${state?.name ?? args.name}' (status=${result.status}).`;
         } catch (error) {
