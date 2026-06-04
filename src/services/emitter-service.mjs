@@ -118,6 +118,10 @@ function rethrowServiceError(error, message, context) {
 export function createEmitterService(deps) {
   const { streams, configStore, supervisor, sessionPort, getBaseCwd, persist } = deps;
 
+  /**
+   * Return a combined view of running and configured emitters.
+   * Running emitters are sourced from the supervisor; persistent emitters come from config.
+   */
   function listEmitters() {
     const running = supervisor.list().map((emitter) => {
       const stream = streams.get(emitter.stream) ?? streams.ensure(emitter.stream, emitter.description || "");
@@ -132,11 +136,17 @@ export function createEmitterService(deps) {
     return { running, configured };
   }
 
+  /**
+   * Return the current stream catalog, ensuring the default stream exists.
+   */
   function listStreams() {
     streams.ensure(DEFAULT_STREAM, DEFAULT_STREAM_DESCRIPTION);
     return streams.list().map((stream) => snapshotStream(stream));
   }
 
+  /**
+   * Fetch a stream and clamp the requested history window.
+   */
   function getStreamHistory(channel, limit) {
     const name = normalizeName(channel);
     const stream = streams.get(name);
@@ -152,6 +162,9 @@ export function createEmitterService(deps) {
     };
   }
 
+  /**
+   * Append a message to a stream and return the updated stream snapshot.
+   */
   function postToStream({ channel, message, source, description }) {
     const stream = streams.ensure(channel, description ?? "");
     streams.append(stream.name, {
@@ -162,6 +175,9 @@ export function createEmitterService(deps) {
     return { stream: snapshotStream(stream) };
   }
 
+  /**
+   * Start an emitter from a canonical or raw spec.
+   */
   function startEmitter(spec, options = {}) {
     const canonicalSpec = spec?.__emitterSpec === true ? spec : EmitterSpec.normalize(spec);
 
@@ -181,6 +197,9 @@ export function createEmitterService(deps) {
       });
   }
 
+  /**
+   * Stop a running emitter and return its latest persisted/runtime state.
+   */
   async function stopEmitter(id, options = {}) {
     const name = normalizeName(id);
 
@@ -203,6 +222,9 @@ export function createEmitterService(deps) {
     }
   }
 
+  /**
+   * Update an emitter's event filter through the supervisor.
+   */
   function updateFilter(id, filter, options = {}) {
     const name = normalizeName(id);
 
@@ -220,6 +242,9 @@ export function createEmitterService(deps) {
     }
   }
 
+  /**
+   * Configure the session injector policy for a stream.
+   */
   function setInjectorPolicy(id, policy) {
     const name = normalizeName(id);
 
@@ -243,6 +268,9 @@ export function createEmitterService(deps) {
     }
   }
 
+  /**
+   * Return the current runtime or persisted state for one emitter.
+   */
   function getEmitterState(id) {
     const name = normalizeName(id);
     const running = supervisor.get(name);
@@ -260,6 +288,9 @@ export function createEmitterService(deps) {
     });
   }
 
+  /**
+   * Return a snapshot of the named stream.
+   */
   function getStreamState(id) {
     const name = normalizeName(id, DEFAULT_STREAM);
     const stream = streams.get(name);

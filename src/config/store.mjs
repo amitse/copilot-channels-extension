@@ -1,135 +1,21 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
-import { CONFIG_FILENAME, CONFIG_LOCATIONS, OWNERSHIP } from "../consts.mjs";
+import { CONFIG_LOCATIONS, OWNERSHIP } from "../consts.mjs";
 import { normalizeOwnership, normalizeName } from "../util/normalize.mjs";
 import { assertMutable } from "../util/policy.mjs";
-import { EventFilterService } from "../services/event-filter-service.mjs";
-import { LATEST_CONFIG_VERSION, migrateConfig, normalizePersistedEmitter, normalizePersistedStream } from "./migrations.mjs";
+import { LATEST_CONFIG_VERSION, migrateConfig } from "./migrations.mjs";
+import { normalizePersistedEmitter, normalizePersistedStream } from "./normalization.mjs";
+import { createEmptyConfig, defaultConfigPath, mergeEmitterEntries, mergeStreamEntries, serializeConfig, serializeEmitter, serializeStream } from "./serialization.mjs";
 
-function emptyConfig() {
-  return { configVersion: LATEST_CONFIG_VERSION, streams: [], emitters: [] };
-}
-
-export function serializeStream(stream) {
-  const { createdAt, entries, ...persisted } = stream ?? {};
-  const entry = { ...persisted };
-
-  if (stream?.name !== undefined) {
-    entry.name = stream.name;
-  }
-
-  if (stream?.description !== undefined) {
-    entry.description = stream.description;
-  }
-
-  if (stream?.sessionInjector !== undefined) {
-    entry.sessionInjector = {
-      ...stream.sessionInjector
-    };
-  }
-
-  return entry;
-}
-
-export function serializeEmitter(emitter) {
-  const {
-    emitterType,
-    runSchedule,
-    requestedCwd,
-    startedAt,
-    stoppedAt,
-    lineCount,
-    droppedLineCount,
-    status,
-    stopRequested,
-    timer,
-    inFlight,
-    runCount,
-    lastRunAt,
-    lastRunStatus,
-    process,
-    stdoutReader,
-    stderrReader,
-    exitCode,
-    ...persisted
-  } = emitter ?? {};
-  const entry = {
-    ...persisted,
-    name: emitter?.name,
-    stream: emitter?.stream ?? emitter?.channel,
-    channel: emitter?.channel ?? emitter?.stream,
-    autoStart: emitter?.autoStart,
-    includeStderr: emitter?.includeStderr,
-    ownership: emitter?.ownership
-  };
-
-  if (requestedCwd !== undefined) {
-    entry.cwd = requestedCwd;
-  }
-  if (emitter?.cwd !== undefined && entry.cwd === undefined) {
-    entry.cwd = emitter.cwd;
-  }
-  if (emitter?.command) {
-    entry.command = emitter.command;
-  }
-  if (emitter?.prompt) {
-    entry.prompt = emitter.prompt;
-  }
-  if (emitter?.every) {
-    entry.every = emitter.every;
-  }
-  if (emitter?.description !== undefined) {
-    entry.description = emitter.description;
-  }
-  if (emitter?.eventFilter) {
-    entry.eventFilter = {
-      ...emitter.eventFilter,
-      ...EventFilterService.serialize(emitter.eventFilter)
-    };
-  }
-
-  return entry;
-}
-
-function mergeStreamEntries(existing, next) {
-  const merged = {
-    ...existing,
-    ...next
-  };
-
-  if (existing?.sessionInjector || next?.sessionInjector) {
-    merged.sessionInjector = {
-      ...(existing?.sessionInjector ?? {}),
-      ...(next?.sessionInjector ?? {})
-    };
-  }
-
-  return merged;
-}
-
-function mergeEmitterEntries(existing, next) {
-  const merged = {
-    ...existing,
-    ...next
-  };
-
-  if (existing?.eventFilter || next?.eventFilter) {
-    merged.eventFilter = {
-      ...(existing?.eventFilter ?? {}),
-      ...(next?.eventFilter ?? {})
-    };
-  }
-
-  return merged;
-}
+export { serializeEmitter, serializeStream } from "./serialization.mjs";
 
 export function createConfigStore(options = {}) {
   const fs = options.fs ?? { existsSync, readFileSync, writeFileSync };
   const state = {
     cwd: options.cwd ?? process.cwd(),
     filePath: null,
-    config: emptyConfig()
+    config: createEmptyConfig(LATEST_CONFIG_VERSION)
   };
 
   const warn = typeof options.logWarning === "function"
@@ -140,14 +26,10 @@ export function createConfigStore(options = {}) {
           process.stderr.write(`[tap-config] ${message}\n`);
         };
 
-  function defaultPath(baseCwd) {
-    return path.join(baseCwd, CONFIG_FILENAME);
-  }
-
   function load(baseCwd) {
     state.cwd = baseCwd;
-    state.filePath = defaultPath(baseCwd);
-    state.config = emptyConfig();
+    state.filePath = defaultConfigPath(baseCwd);
+    state.config = createEmptyConfig(LATEST_CONFIG_VERSION);
 
     for (const relativePath of CONFIG_LOCATIONS) {
       const filePath = path.join(baseCwd, relativePath);
@@ -163,25 +45,16 @@ export function createConfigStore(options = {}) {
       return { found: true, filePath };
     }
 
-    state.config = emptyConfig();
+    state.config = createEmptyConfig(LATEST_CONFIG_VERSION);
     return { found: false, filePath: state.filePath };
   }
 
   function save() {
     if (!state.filePath) {
-      state.filePath = defaultPath(state.cwd);
+      state.filePath = defaultConfigPath(state.cwd);
     }
 
-    const payload = {
-      ...state.config,
-      configVersion: LATEST_CONFIG_VERSION,
-      streams: [...state.config.streams].sort((left, right) =>
-        normalizeName(left.name).localeCompare(normalizeName(right.name))
-      ).map((stream) => serializeStream(stream)),
-      emitters: [...state.config.emitters].sort((left, right) =>
-        normalizeName(left.name).localeCompare(normalizeName(right.name))
-      ).map((emitter) => serializeEmitter(emitter))
-    };
+    const payload = serializeConfig(state.config, LATEST_CONFIG_VERSION);
 
     fs.writeFileSync(state.filePath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
   }

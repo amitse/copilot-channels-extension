@@ -1,5 +1,15 @@
 import { EVENT_OUTCOME, OWNERSHIP, LIFESPAN } from "../consts.mjs";
 
+const USER_OWNED = OWNERSHIP.USER_OWNED.toLowerCase();
+const DELIVERY_OUTCOMES = new Set([
+  "important",
+  "all",
+  EVENT_OUTCOME.DROP,
+  EVENT_OUTCOME.KEEP,
+  EVENT_OUTCOME.SURFACE,
+  EVENT_OUTCOME.INJECT
+]);
+
 export function normalizeName(value, fallback = "") {
   const normalized = String(value ?? "")
     .normalize("NFKC")
@@ -18,7 +28,7 @@ export function normalizeLifespan(value, fallback = LIFESPAN.TEMPORARY) {
 }
 
 export function normalizeOwnership(value, fallback = OWNERSHIP.MODEL_OWNED) {
-  return String(value ?? fallback).trim().toLowerCase() === OWNERSHIP.USER_OWNED.toLowerCase()
+  return String(value ?? fallback).trim().toLowerCase() === USER_OWNED
     ? OWNERSHIP.USER_OWNED
     : OWNERSHIP.MODEL_OWNED;
 }
@@ -39,16 +49,7 @@ export function normalizeOutcome(value, fallback = EVENT_OUTCOME.SURFACE) {
 
 export function normalizeDelivery(value, fallback = EVENT_OUTCOME.SURFACE) {
   const normalized = String(value ?? fallback).trim().toLowerCase();
-
-  switch (normalized) {
-    case "important":
-    case "all":
-    case EVENT_OUTCOME.DROP:
-    case EVENT_OUTCOME.KEEP:
-    case EVENT_OUTCOME.SURFACE:
-    case EVENT_OUTCOME.INJECT:
-      return normalized;
-    default:
-      return String(fallback ?? EVENT_OUTCOME.SURFACE).trim().toLowerCase();
-  }
+  return DELIVERY_OUTCOMES.has(normalized)
+    ? normalized
+    : String(fallback ?? EVENT_OUTCOME.SURFACE).trim().toLowerCase();
 }

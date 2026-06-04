@@ -1,6 +1,6 @@
-import { EVENT_OUTCOME, LIFESPAN, OWNERSHIP } from "../consts.mjs";
-import { createEventFilter } from "../format/event-filter.mjs";
-import { normalizeDelivery, normalizeName, normalizeLifespan, normalizeOutcome, normalizeOwnership } from "../util/normalize.mjs";
+import { EVENT_OUTCOME, EMITTER_TYPE, LIFESPAN, OWNERSHIP, RUN_SCHEDULE } from "../consts.mjs";
+import { EventFilterService } from "../services/event-filter-service.mjs";
+import { normalizeDelivery, normalizeName, normalizeLifespan, normalizeOwnership } from "../util/normalize.mjs";
 import { parseIntervalSchedule, parseLoopInterval } from "../util/time.mjs";
 import { ValidationError } from "../errors/index.mjs";
 
@@ -29,21 +29,6 @@ function normalizeInteger(value, label) {
   }
 
   return integer;
-}
-
-function normalizeEventFilter(rawInput, ownership, lifespan) {
-  const source = isPlainObject(rawInput?.eventFilter) ? rawInput.eventFilter : isPlainObject(rawInput) ? rawInput : {};
-  const rules = Array.isArray(source.rules) ? source.rules : Array.isArray(rawInput.rules) ? rawInput.rules : [];
-
-  return createEventFilter(
-    {
-      rules,
-      ownership: normalizeOwnership(source.ownership ?? rawInput.managedBy, ownership),
-      lifespan: normalizeLifespan(source.lifespan ?? rawInput.scope, lifespan)
-    },
-    ownership,
-    lifespan
-  );
 }
 
 function validateEmitterSpecSchema(rawInput) {
@@ -105,6 +90,20 @@ function canonicalizeEverySchedule(rawInput) {
   };
 }
 
+function resolveEmitterType(prompt) {
+  return prompt ? EMITTER_TYPE.PROMPT : EMITTER_TYPE.COMMAND;
+}
+
+function resolveRunSchedule({ prompt, every, everyMs, everyScheduleMs }) {
+  if (every === "idle") {
+    return RUN_SCHEDULE.IDLE;
+  }
+  if (everyMs !== null || everyScheduleMs !== null) {
+    return RUN_SCHEDULE.TIMED;
+  }
+  return prompt ? RUN_SCHEDULE.ONE_TIME : RUN_SCHEDULE.CONTINUOUS;
+}
+
 export function normalizeEmitterSpec(rawInput = {}) {
   const { name, command, prompt } = validateEmitterSpecSchema(rawInput);
 
@@ -119,7 +118,7 @@ export function normalizeEmitterSpec(rawInput = {}) {
   const delivery = normalizeDelivery(rawInput.delivery, EVENT_OUTCOME.SURFACE);
   const force = rawInput.force === true;
   const maxRuns = normalizeInteger(rawInput.maxRuns, "maxRuns");
-  const eventFilter = normalizeEventFilter(rawInput, managedBy, scope);
+  const eventFilter = EventFilterService.normalize(rawInput, managedBy, scope);
 
   const everyScheduleInput = canonicalizeEverySchedule(rawInput.everySchedule);
   const everySchedule = everyScheduleInput?.everySchedule ?? null;
@@ -135,11 +134,21 @@ export function normalizeEmitterSpec(rawInput = {}) {
     throw new ValidationError(`Invalid emitter spec '${name}': every='idle' is only valid for prompt emitters.`);
   }
 
+  const emitterType = resolveEmitterType(prompt);
+  const runSchedule = resolveRunSchedule({
+    prompt,
+    every: parsedEvery?.text ?? null,
+    everyMs: parsedEvery?.ms ?? null,
+    everyScheduleMs
+  });
+
   const canonical = {
     name,
     description,
     command,
     prompt,
+    emitterType,
+    runSchedule,
     channel,
     cwd,
     every: parsedEvery?.text ?? null,

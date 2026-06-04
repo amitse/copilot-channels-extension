@@ -1,6 +1,5 @@
 import { formatEventFilter } from "../format/event-filter.mjs";
 import { formatConfiguredEmitter, formatRunningEmitter } from "../format/emitter.mjs";
-import { createEmitterService } from "../services/emitter-service.mjs";
 import { normalizeToolError } from "../errors/handler.mjs";
 
 /**
@@ -24,10 +23,7 @@ function renderEmitterList(service) {
 
 /**
  * @typedef {Object} EmitterToolsDeps
- * @property {Object} streams - Event stream manager
- * @property {Object} configStore - Persistent config storage (for list only)
- * @property {Object} supervisor - Emitter supervisor with start/stop/updateEventFilter
- * @property {Function} getBaseCwd - Function returning base working directory
+ * @property {Object} emitters - Emitter management capabilities
  */
 
 /**
@@ -35,14 +31,14 @@ function renderEmitterList(service) {
  * @param {EmitterToolsDeps} deps
  */
 export function createEmitterTools(deps) {
-  const service = createEmitterService(deps);
+  const runtime = deps.emitters ?? deps.runtime;
   return [
     {
       name: "tap_list_emitters",
       description: "Lists session event emitters, their run schedules, and persistent definitions.",
       handler: async () => {
         try {
-          return renderEmitterList(service);
+          return renderEmitterList(runtime);
         } catch (error) {
           throw normalizeToolError(error, {
             context: { tool: "tap_list_emitters" }
@@ -95,7 +91,7 @@ export function createEmitterTools(deps) {
       },
       handler: async (args) => {
         try {
-          const { state } = await service.startEmitter(args, { baseCwd: getBaseCwd() });
+          const { state } = await runtime.startEmitter(args);
 
           return [
             `Started emitter '${state.name}'.`,
@@ -152,7 +148,7 @@ export function createEmitterTools(deps) {
       },
       handler: async (args) => {
         try {
-        const { state } = service.updateFilter(args.name, args.eventFilter ?? {}, {
+         const { state } = runtime.updateFilter(args.name, args.eventFilter ?? {}, {
             scope: args.scope,
             managedBy: args.managedBy,
             force: args.force === true
@@ -180,7 +176,7 @@ export function createEmitterTools(deps) {
       },
       handler: async (args) => {
         try {
-          const { result, state } = await service.stopEmitter(args.name, {
+          const { result, state } = await runtime.stopEmitter(args.name, {
             scope: args.scope,
             force: args.force === true
           });

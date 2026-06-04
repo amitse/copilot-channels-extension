@@ -1,5 +1,4 @@
 import { EVENT_OUTCOME, LIFESPAN, OWNERSHIP } from "../consts.mjs";
-import { ValidationError } from "../errors/index.mjs";
 import { normalizeOwnership, normalizeLifespan } from "../util/normalize.mjs";
 import { compileRegex } from "../util/regex.mjs";
 
@@ -21,6 +20,12 @@ function isPlainObject(value) {
   return Object.prototype.toString.call(value) === "[object Object]";
 }
 
+function resolveInput(source) {
+  const normalized = isPlainObject(source) ? source : {};
+
+  return isPlainObject(normalized.eventFilter) ? normalized.eventFilter : normalized;
+}
+
 function compileRules(rules) {
   return rules.map((rule) => ({
     match: String(rule?.match ?? ""),
@@ -30,10 +35,10 @@ function compileRules(rules) {
 }
 
 function canonicalize(source, fallbackOwnership = OWNERSHIP.MODEL_OWNED, fallbackLifespan = LIFESPAN.TEMPORARY) {
-  const normalized = isPlainObject(source) ? source : {};
+  const normalized = resolveInput(source);
   const rawRules = Array.isArray(normalized.rules) ? normalized.rules : [];
-  const ownership = normalizeOwnership(normalized.ownership, fallbackOwnership);
-  const lifespan = normalizeLifespan(normalized.lifespan, fallbackLifespan);
+  const ownership = normalizeOwnership(normalized.ownership ?? normalized.managedBy, fallbackOwnership);
+  const lifespan = normalizeLifespan(normalized.lifespan ?? normalized.scope, fallbackLifespan);
 
   return Object.freeze({
     rules: Object.freeze(compileRules(rawRules).map((rule) => Object.freeze(rule))),
@@ -48,8 +53,18 @@ function canonicalize(source, fallbackOwnership = OWNERSHIP.MODEL_OWNED, fallbac
  * @param {Object} spec
  * @returns {Object}
  */
-export function create(spec = {}) {
-  return canonicalize(spec);
+export function create(spec = {}, fallbackOwnership = OWNERSHIP.MODEL_OWNED, fallbackLifespan = LIFESPAN.TEMPORARY) {
+  return canonicalize(spec, fallbackOwnership, fallbackLifespan);
+}
+
+/**
+ * Extract the canonical filter input from a raw source.
+ *
+ * @param {Object} source
+ * @returns {Object}
+ */
+export function getInput(source = {}) {
+  return resolveInput(source);
 }
 
 /**
@@ -61,13 +76,25 @@ export function create(spec = {}) {
  */
 export function update(existing, changes = {}) {
   const current = canonicalize(existing);
+  const source = isPlainObject(changes) ? changes : {};
+  const changeInput = resolveInput(source);
+  const ownership = changeInput.ownership
+    ?? changeInput.managedBy
+    ?? source.ownership
+    ?? source.managedBy
+    ?? current.ownership;
+  const lifespan = changeInput.lifespan
+    ?? changeInput.scope
+    ?? source.lifespan
+    ?? source.scope
+    ?? current.lifespan;
 
   return canonicalize({
     ...serialize(current),
-    ...changes,
-    ownership: changes.ownership ?? current.ownership,
-    lifespan: changes.lifespan ?? current.lifespan
-  });
+    ...changeInput,
+    ownership,
+    lifespan
+  }, current.ownership, current.lifespan);
 }
 
 /**
@@ -125,15 +152,38 @@ export function deserialize(data) {
  * @param {Object} legacy
  * @returns {Object}
  */
-export function normalize(legacy) {
-  return canonicalize(legacy);
+export function normalize(legacy, fallbackOwnership = OWNERSHIP.MODEL_OWNED, fallbackLifespan = LIFESPAN.TEMPORARY) {
+  return canonicalize(legacy, fallbackOwnership, fallbackLifespan);
+}
+
+/**
+ * Format a filter for user-facing display.
+ *
+ * @param {Object} filter
+ * @returns {string}
+ */
+export function format(filter) {
+  const source = resolveInput(filter);
+
+  if (!Array.isArray(source.rules) || source.rules.length === 0) {
+    return `rules=<none> lifespan=${source?.lifespan ?? "?"} ownership=${source?.ownership ?? "?"}`;
+  }
+
+  const resolved = canonicalize(source);
+  const rulesSummary = resolved.rules
+    .map((rule) => `${rule.outcome}:${JSON.stringify(rule.match)}`)
+    .join(", ");
+
+  return `rules=[${rulesSummary}] lifespan=${resolved.lifespan} ownership=${resolved.ownership}`;
 }
 
 export const EventFilterService = Object.freeze({
+  getInput,
   create,
   update,
   evaluate,
   serialize,
   deserialize,
-  normalize
+  normalize,
+  format
 });

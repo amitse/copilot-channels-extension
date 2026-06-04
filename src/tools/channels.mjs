@@ -1,37 +1,49 @@
-import { EVENT_OUTCOME, OWNERSHIP, LIFESPAN, SOURCE } from "../consts.mjs";
-import { formatStream, formatStreamHistory } from "../format/stream.mjs";
-import { createEmitterService } from "../services/emitter-service.mjs";
+import { SOURCE } from "../consts.mjs";
 import { normalizeToolError } from "../errors/handler.mjs";
+import { formatStream, formatStreamHistory } from "../format/stream.mjs";
 
-function renderStreamList(values) {
+function renderStreamList(service) {
+  const streams = service.listStreams();
+
+  if (streams.length === 0) {
+    return "No event streams have been defined for this session.";
+  }
+
   return [
-    `Streams (${values.length}):`,
-    ...values.map((stream) => formatStream(stream))
+    `Event streams (${streams.length}):`,
+    ...streams.map((stream) => formatStream(stream))
+  ].join("\n");
+}
+
+function renderInjectorUpdate(action, stream) {
+  const injector = stream.sessionInjector;
+  return [
+    `${action} session injector for stream '${stream.name}'.`,
+    `delivery=${injector.delivery}`,
+    `lifespan=${injector.lifespan}`,
+    `ownership=${injector.ownership}`
   ].join("\n");
 }
 
 /**
  * @typedef {Object} StreamToolsDeps
- * @property {Object} streams - Event stream manager
- * @property {Object} configStore - Persistent config storage
- * @property {Object} sessionPort - Session logging interface
- * @property {Function} persist - Function to persist config
+ * @property {Object} streams - Stream and session-injector capabilities
  */
 
 /**
- * Create stream management tools with capability-specific injection.
- * Handlers now go through the emitter service so tool code stays wiring-only.
+ * Create stream management tools with stream-scoped capabilities.
  * @param {StreamToolsDeps} deps
  */
 export function createStreamTools(deps) {
-  const service = createEmitterService(deps);
+  const runtime = deps.streams ?? deps.runtime;
+
   return [
     {
       name: "tap_list_streams",
       description: "Lists event streams, session injector state, and recent metadata.",
       handler: async () => {
         try {
-          return renderStreamList(service.listStreams());
+          return renderStreamList(runtime);
         } catch (error) {
           throw normalizeToolError(error, {
             context: { tool: "tap_list_streams" }
@@ -47,20 +59,21 @@ export function createStreamTools(deps) {
         properties: {
           channel: { type: "string", description: "EventStream name." },
           message: { type: "string", description: "Text to append." },
-          source: { type: "string", description: "Optional source label." },
-          description: { type: "string", description: "Optional stream description when creating it." }
+          description: { type: "string", description: "Optional stream description when creating it." },
+          source: { type: "string", description: "Optional source label." }
         },
         required: ["channel", "message"]
       },
       handler: async (args) => {
         try {
-          const { stream } = service.postToStream({
+          const { stream } = runtime.postToStream({
             channel: args.channel,
             message: args.message,
-            source: args.source || SOURCE.TOOL,
-            description: args.description
+            description: args.description,
+            source: args.source ?? SOURCE.TOOL
           });
-          return `Posted to stream '${stream.name}'.`;
+
+          return `Posted message to stream '${stream.name}'.`;
         } catch (error) {
           throw normalizeToolError(error, {
             context: { tool: "tap_post", channel: args.channel }
@@ -75,13 +88,13 @@ export function createStreamTools(deps) {
         type: "object",
         properties: {
           channel: { type: "string", description: "EventStream name to inspect." },
-          limit: { type: "number", description: "How many recent entries to return." }
+          limit: { type: "integer", description: "How many recent entries to return." }
         },
         required: ["channel"]
       },
       handler: async (args) => {
         try {
-          const { stream, limit } = service.getStreamHistory(args.channel, args.limit);
+          const { stream, limit } = runtime.getStreamHistory(args.channel, args.limit);
           return formatStreamHistory(stream, limit);
         } catch (error) {
           throw normalizeToolError(error, {
@@ -97,8 +110,8 @@ export function createStreamTools(deps) {
         type: "object",
         properties: {
           channel: { type: "string", description: "EventStream name." },
-          description: { type: "string", description: "Optional stream description." },
           delivery: { type: "string", description: "Event outcome mode: 'important' or 'all'." },
+          description: { type: "string", description: "Optional stream description." },
           scope: { type: "string", description: "Use 'temporary' for session-only or 'persistent' to write config." },
           managedBy: { type: "string", description: "Ownership label: 'userOwned' or 'modelOwned'." },
           force: { type: "boolean", description: "Required only when transferring ownership of a protected session injector." }
@@ -107,16 +120,16 @@ export function createStreamTools(deps) {
       },
       handler: async (args) => {
         try {
-          const { stream } = service.setInjectorPolicy(args.channel, {
+          const { state } = runtime.setInjectorPolicy(args.channel, {
             enabled: true,
-            delivery: args.delivery ?? EVENT_OUTCOME.SURFACE,
-            scope: args.scope ?? LIFESPAN.TEMPORARY,
-            managedBy: args.managedBy ?? OWNERSHIP.MODEL_OWNED,
-            description: args.description ?? "",
+            delivery: args.delivery,
+            description: args.description,
+            scope: args.scope,
+            managedBy: args.managedBy,
             force: args.force === true
           });
 
-          return `Attached session injector to stream '${stream.name}' with delivery=${stream.sessionInjector.delivery} lifespan=${stream.sessionInjector.lifespan} ownership=${stream.sessionInjector.ownership}.`;
+          return renderInjectorUpdate("Enabled", state);
         } catch (error) {
           throw normalizeToolError(error, {
             context: { tool: "tap_enable_injector", channel: args.channel }
@@ -139,14 +152,14 @@ export function createStreamTools(deps) {
       },
       handler: async (args) => {
         try {
-          const { stream } = service.setInjectorPolicy(args.channel, {
+          const { state } = runtime.setInjectorPolicy(args.channel, {
             enabled: false,
-            scope: args.scope ?? LIFESPAN.TEMPORARY,
-            managedBy: args.managedBy ?? OWNERSHIP.MODEL_OWNED,
+            scope: args.scope,
+            managedBy: args.managedBy,
             force: args.force === true
           });
 
-          return `Disabled session injector for stream '${stream.name}' with lifespan=${stream.sessionInjector.lifespan} ownership=${stream.sessionInjector.ownership}.`;
+          return renderInjectorUpdate("Disabled", state);
         } catch (error) {
           throw normalizeToolError(error, {
             context: { tool: "tap_disable_injector", channel: args.channel }

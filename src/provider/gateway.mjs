@@ -28,7 +28,6 @@ function createDefaultWebSocketAdapter() {
 
 export function createProviderGateway(options = {}, adapters = {}) {
   const {
-    sessionPort,
     tapTools,
     getSessionInfo,
     log = () => {}
