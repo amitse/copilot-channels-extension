@@ -1,57 +1,31 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
-import { CONFIG_FILENAME, CONFIG_LOCATIONS, OWNERSHIP, LIFESPAN } from "../consts.mjs";
+import { CONFIG_FILENAME, CONFIG_LOCATIONS, OWNERSHIP } from "../consts.mjs";
 import { normalizeOwnership, normalizeName } from "../util/normalize.mjs";
 import { assertMutable } from "../util/policy.mjs";
 import { EventFilterService } from "../services/event-filter-service.mjs";
+import { LATEST_CONFIG_VERSION, migrateConfig, normalizePersistedEmitter, normalizePersistedStream } from "./migrations.mjs";
 
 function emptyConfig() {
-  return { streams: [], emitters: [] };
-}
-
-function ensureShape(config) {
-  if (!config || typeof config !== "object") {
-    return emptyConfig();
-  }
-  if (!Array.isArray(config.streams)) {
-    config.streams = [];
-  }
-  if (!Array.isArray(config.emitters)) {
-    config.emitters = [];
-  }
-  return config;
-}
-
-function normalizeEmitterEntry(entry) {
-  const filterSource = entry.eventFilter ?? entry.classifier ?? entry;
-  const ownership = normalizeOwnership(entry.ownership ?? entry.managedBy ?? filterSource.ownership ?? filterSource.managedBy, OWNERSHIP.MODEL_OWNED);
-  return {
-    ...entry,
-    stream: entry.stream ?? entry.channel ?? entry.name,
-    channel: entry.channel ?? entry.stream ?? entry.name,
-    ownership,
-    managedBy: ownership,
-    eventFilter: EventFilterService.deserialize({
-      ...filterSource,
-      ownership: filterSource.ownership ?? filterSource.managedBy ?? ownership,
-      lifespan: filterSource.lifespan ?? filterSource.scope ?? entry.lifespan ?? entry.scope
-    })
-  };
+  return { configVersion: LATEST_CONFIG_VERSION, streams: [], emitters: [] };
 }
 
 export function serializeStream(stream) {
-  const entry = { name: stream.name };
+  const { createdAt, entries, ...persisted } = stream ?? {};
+  const entry = { ...persisted };
 
-  if (stream.description) {
+  if (stream?.name !== undefined) {
+    entry.name = stream.name;
+  }
+
+  if (stream?.description !== undefined) {
     entry.description = stream.description;
   }
 
-  if (stream.sessionInjector.lifespan === LIFESPAN.PERSISTENT || stream.sessionInjector.enabled) {
+  if (stream?.sessionInjector !== undefined) {
     entry.sessionInjector = {
-      enabled: stream.sessionInjector.enabled,
-      delivery: stream.sessionInjector.delivery,
-      ownership: stream.sessionInjector.ownership
+      ...stream.sessionInjector
     };
   }
 
@@ -59,36 +33,95 @@ export function serializeStream(stream) {
 }
 
 export function serializeEmitter(emitter) {
+  const {
+    emitterType,
+    runSchedule,
+    requestedCwd,
+    startedAt,
+    stoppedAt,
+    lineCount,
+    droppedLineCount,
+    status,
+    stopRequested,
+    timer,
+    inFlight,
+    runCount,
+    lastRunAt,
+    lastRunStatus,
+    process,
+    stdoutReader,
+    stderrReader,
+    exitCode,
+    ...persisted
+  } = emitter ?? {};
   const entry = {
-    name: emitter.name,
-    stream: emitter.stream ?? emitter.channel,
-    channel: emitter.channel ?? emitter.stream,
-    autoStart: emitter.autoStart,
-    includeStderr: emitter.includeStderr,
-    ownership: emitter.ownership ?? emitter.managedBy
+    ...persisted,
+    name: emitter?.name,
+    stream: emitter?.stream ?? emitter?.channel,
+    channel: emitter?.channel ?? emitter?.stream,
+    autoStart: emitter?.autoStart,
+    includeStderr: emitter?.includeStderr,
+    ownership: emitter?.ownership ?? emitter?.managedBy
   };
 
-  if (emitter.command) {
+  if (requestedCwd !== undefined) {
+    entry.cwd = requestedCwd;
+  }
+  if (emitter?.cwd !== undefined && entry.cwd === undefined) {
+    entry.cwd = emitter.cwd;
+  }
+  if (emitter?.command) {
     entry.command = emitter.command;
   }
-  if (emitter.prompt) {
+  if (emitter?.prompt) {
     entry.prompt = emitter.prompt;
   }
-  if (emitter.every) {
+  if (emitter?.every) {
     entry.every = emitter.every;
   }
-  if (emitter.description) {
+  if (emitter?.description !== undefined) {
     entry.description = emitter.description;
   }
-  if (emitter.requestedCwd) {
-    entry.cwd = emitter.requestedCwd;
-  }
-
-  if (emitter.eventFilter) {
-    entry.eventFilter = EventFilterService.serialize(emitter.eventFilter);
+  if (emitter?.eventFilter) {
+    entry.eventFilter = {
+      ...emitter.eventFilter,
+      ...EventFilterService.serialize(emitter.eventFilter)
+    };
   }
 
   return entry;
+}
+
+function mergeStreamEntries(existing, next) {
+  const merged = {
+    ...existing,
+    ...next
+  };
+
+  if (existing?.sessionInjector || next?.sessionInjector) {
+    merged.sessionInjector = {
+      ...(existing?.sessionInjector ?? {}),
+      ...(next?.sessionInjector ?? {})
+    };
+  }
+
+  return merged;
+}
+
+function mergeEmitterEntries(existing, next) {
+  const merged = {
+    ...existing,
+    ...next
+  };
+
+  if (existing?.eventFilter || next?.eventFilter) {
+    merged.eventFilter = {
+      ...(existing?.eventFilter ?? {}),
+      ...(next?.eventFilter ?? {})
+    };
+  }
+
+  return merged;
 }
 
 export function createConfigStore(options = {}) {
@@ -98,6 +131,14 @@ export function createConfigStore(options = {}) {
     filePath: null,
     config: emptyConfig()
   };
+
+  const warn = typeof options.logWarning === "function"
+    ? options.logWarning
+    : typeof options.warn === "function"
+      ? options.warn
+      : (message) => {
+          process.stderr.write(`[tap-config] ${message}\n`);
+        };
 
   function defaultPath(baseCwd) {
     return path.join(baseCwd, CONFIG_FILENAME);
@@ -115,25 +156,28 @@ export function createConfigStore(options = {}) {
       }
 
       state.filePath = filePath;
-      state.config = ensureShape(JSON.parse(fs.readFileSync(filePath, "utf8")));
-      state.config.emitters = state.config.emitters.map((entry) => normalizeEmitterEntry(entry));
+      state.config = migrateConfig(JSON.parse(fs.readFileSync(filePath, "utf8")), LATEST_CONFIG_VERSION, {
+        warn
+      });
+      save();
       return { found: true, filePath };
     }
 
-    ensureShape(state.config);
+    state.config = emptyConfig();
     return { found: false, filePath: state.filePath };
   }
 
   function save() {
-    ensureShape(state.config);
     if (!state.filePath) {
       state.filePath = defaultPath(state.cwd);
     }
 
     const payload = {
+      ...state.config,
+      configVersion: LATEST_CONFIG_VERSION,
       streams: [...state.config.streams].sort((left, right) =>
         normalizeName(left.name).localeCompare(normalizeName(right.name))
-      ),
+      ).map((stream) => serializeStream(stream)),
       emitters: [...state.config.emitters].sort((left, right) =>
         normalizeName(left.name).localeCompare(normalizeName(right.name))
       ).map((emitter) => serializeEmitter(emitter))
@@ -151,26 +195,24 @@ export function createConfigStore(options = {}) {
   }
 
   function upsertStream(stream) {
-    ensureShape(state.config);
-    const entry = serializeStream(stream);
+    const entry = normalizePersistedStream(serializeStream(stream));
     const index = findStreamIndex(stream.name);
 
     if (index === -1) {
       state.config.streams.push(entry);
     } else {
-      state.config.streams[index] = entry;
+      state.config.streams[index] = mergeStreamEntries(state.config.streams[index], entry);
     }
   }
 
   function upsertEmitter(emitter) {
-    ensureShape(state.config);
-    const entry = normalizeEmitterEntry(emitter);
+    const entry = normalizePersistedEmitter(serializeEmitter(emitter), { warn });
     const index = findEmitterIndex(emitter.name);
 
     if (index === -1) {
       state.config.emitters.push(entry);
     } else {
-      state.config.emitters[index] = entry;
+      state.config.emitters[index] = mergeEmitterEntries(state.config.emitters[index], entry);
     }
   }
 
@@ -188,12 +230,10 @@ export function createConfigStore(options = {}) {
   }
 
   function getStreams() {
-    ensureShape(state.config);
     return state.config.streams;
   }
 
   function getEmitters() {
-    ensureShape(state.config);
     return state.config.emitters;
   }
 
