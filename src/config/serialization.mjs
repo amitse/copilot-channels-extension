@@ -5,6 +5,7 @@ import { ValidationError } from "../errors/index.mjs";
 import { normalizeName } from "../util/normalize.mjs";
 import { isValidBaseCwd } from "../util/path.mjs";
 import { EventFilterService } from "../services/event-filter-service.mjs";
+import { stripEmitterRuntimeFields } from "../emitter/state.mjs";
 
 export function createEmptyConfig(configVersion) {
   return { configVersion, streams: [], emitters: [] };
@@ -32,27 +33,8 @@ export function serializeStream(stream) {
 }
 
 export function serializeEmitter(emitter) {
-  const {
-    emitterType,
-    runSchedule,
-    requestedCwd,
-    startedAt,
-    stoppedAt,
-    lineCount,
-    droppedLineCount,
-    status,
-    stopRequested,
-    timer,
-    inFlight,
-    runCount,
-    lastRunAt,
-    lastRunStatus,
-    process,
-    stdoutReader,
-    stderrReader,
-    exitCode,
-    ...persisted
-  } = emitter ?? {};
+  const requestedCwd = emitter?.requestedCwd;
+  const persisted = stripEmitterRuntimeFields(emitter);
   const entry = {
     ...persisted,
     name: emitter?.name,

@@ -2,6 +2,7 @@ import { EVENT_OUTCOME, LIFESPAN, OWNERSHIP } from "../consts.mjs";
 import { ValidationError } from "../errors/index.mjs";
 import { normalizeDelivery, normalizeLifespan, normalizeName, normalizeOwnership } from "../util/normalize.mjs";
 import { EventFilterService } from "../services/event-filter-service.mjs";
+import { stripEmitterRuntimeFields } from "../emitter/state.mjs";
 
 export const CONFIG_VERSION = Object.freeze({
   V1: 1,
@@ -36,26 +37,6 @@ const KNOWN_EMITTER_KEYS = new Set([
 ]);
 const KNOWN_FILTER_KEYS = new Set(["rules", "ownership", "lifespan", "scope"]);
 const KNOWN_SESSION_INJECTOR_KEYS = new Set(["enabled", "delivery", "ownership", "lifespan", "scope"]);
-const EMITTER_RUNTIME_KEYS = new Set([
-  "emitterType",
-  "runSchedule",
-  "requestedCwd",
-  "startedAt",
-  "stoppedAt",
-  "lineCount",
-  "droppedLineCount",
-  "status",
-  "stopRequested",
-  "timer",
-  "inFlight",
-  "runCount",
-  "lastRunAt",
-  "lastRunStatus",
-  "process",
-  "stdoutReader",
-  "stderrReader",
-  "exitCode"
-]);
 const LEGACY_EMITTER_KEYS = new Set([
   "managedBy",
   "classifier",
@@ -231,7 +212,7 @@ export function normalizePersistedEmitter(entry = {}, options = {}) {
       ?? source.classifier?.managedBy,
     OWNERSHIP.MODEL_OWNED
   );
-  const emitter = pickPreservedFields(source, new Set([...EMITTER_RUNTIME_KEYS, ...LEGACY_EMITTER_KEYS]));
+  const emitter = pickPreservedFields(stripEmitterRuntimeFields(source), LEGACY_EMITTER_KEYS);
   const filterSource = isPlainObject(source.eventFilter)
     ? source.eventFilter
     : isPlainObject(source.classifier)
