@@ -3,6 +3,7 @@ import {
   EMITTER_TYPE,
   RUN_SCHEDULE
 } from "../consts.mjs";
+import { normalize as normalizeEventFilter } from "../services/event-filter-service.mjs";
 import { nowIso } from "../util/time.mjs";
 import { resolveRequestedCwd } from "../util/path.mjs";
 import { ValidationError } from "../errors/index.mjs";
@@ -27,7 +28,7 @@ export function buildEmitterState(spec, baseCwd) {
   const everyScheduleMs = spec.everyScheduleMs ?? null;
   const lifespan = spec.scope;
   const ownership = spec.managedBy;
-  const eventFilter = spec.eventFilter;
+  const eventFilter = normalizeEventFilter(spec.eventFilter ?? spec.classifier ?? spec);
   const emitterType = prompt ? EMITTER_TYPE.PROMPT : EMITTER_TYPE.COMMAND;
 
   let runSchedule;

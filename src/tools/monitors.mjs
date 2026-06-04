@@ -1,20 +1,13 @@
-import { OWNERSHIP, LIFESPAN } from "../consts.mjs";
-import { normalizeName } from "../util/normalize.mjs";
 import { formatEventFilter } from "../format/event-filter.mjs";
 import { formatConfiguredEmitter, formatRunningEmitter } from "../format/emitter.mjs";
-import { EmitterSpec } from "../emitter/spec.mjs";
+import { createEmitterService } from "../services/emitter-service.mjs";
 import { normalizeToolError } from "../errors/handler.mjs";
 
 /**
- * Helper: render the full emitter list (requires configStore for configured emitters).
- * This is internal to the tool setup and not called by handlers.
+ * Helper: render the full emitter list from canonical service snapshots.
  */
-function renderEmitterList(streams, configStore, supervisor) {
-  const running = supervisor.list();
-  const configured = configStore
-    .getEmitters()
-    .filter((entry) => !supervisor.has(entry.name))
-    .sort((left, right) => normalizeName(left.name).localeCompare(normalizeName(right.name)));
+function renderEmitterList(service) {
+  const { running, configured } = service.listEmitters();
 
   if (running.length === 0 && configured.length === 0) {
     return "No emitters have been defined for this session.";
@@ -22,9 +15,7 @@ function renderEmitterList(streams, configStore, supervisor) {
 
   return [
     `Session emitters (${running.length}):`,
-    ...(running.length > 0
-      ? running.map((emitter) => formatRunningEmitter(emitter, streams.ensure(emitter.stream)))
-      : ["- <none>"]),
+    ...(running.length > 0 ? running.map((emitter) => formatRunningEmitter(emitter, emitter.sessionInjector ? { sessionInjector: emitter.sessionInjector } : null)) : ["- <none>"]),
     "",
     `Persistent emitter definitions (${configured.length}):`,
     ...(configured.length > 0 ? configured.map((entry) => formatConfiguredEmitter(entry)) : ["- <none>"])
@@ -41,17 +32,17 @@ function renderEmitterList(streams, configStore, supervisor) {
 
 /**
  * Create emitter management tools with capability-specific injection.
- * Note: configStore is only used by renderEmitterList, not by individual handlers.
  * @param {EmitterToolsDeps} deps
  */
-export function createEmitterTools({ streams, configStore, supervisor, getBaseCwd }) {
+export function createEmitterTools(deps) {
+  const service = createEmitterService(deps);
   return [
     {
       name: "tap_list_emitters",
       description: "Lists session event emitters, their run schedules, and persistent definitions.",
       handler: async () => {
         try {
-          return renderEmitterList(streams, configStore, supervisor);
+          return renderEmitterList(service);
         } catch (error) {
           throw normalizeToolError(error, {
             context: { tool: "tap_list_emitters" }
@@ -89,21 +80,20 @@ export function createEmitterTools({ streams, configStore, supervisor, getBaseCw
       },
       handler: async (args) => {
         try {
-          const spec = EmitterSpec.normalize(args);
-          const emitter = await supervisor.start(spec, { baseCwd: getBaseCwd() });
+          const { state } = await service.startEmitter(args, { baseCwd: getBaseCwd() });
 
           return [
-            `Started emitter '${emitter.name}'.`,
-            `lifespan=${emitter.lifespan}`,
-            `ownership=${emitter.ownership}`,
-            `emitterType=${emitter.emitterType}`,
-            `runSchedule=${emitter.runSchedule}`,
-            emitter.everySchedule ? `everySchedule=[${emitter.everySchedule.join(", ")}]` : null,
-            emitter.every && !emitter.everySchedule ? `every=${emitter.every}` : null,
-            emitter.maxRuns ? `maxRuns=${emitter.maxRuns}` : null,
-            `stream=${emitter.stream}`,
-            `sessionInjector=${streams.ensure(emitter.stream).sessionInjector.enabled ? "on" : "off"}`,
-            `eventFilter=${formatEventFilter(emitter.eventFilter)}`
+            `Started emitter '${state.name}'.`,
+            `lifespan=${state.scope}`,
+            `ownership=${state.ownership}`,
+            `emitterType=${state.emitterType}`,
+            `runSchedule=${state.runSchedule}`,
+            state.everySchedule ? `everySchedule=[${state.everySchedule.join(", ")}]` : null,
+            state.every ? `every=${state.every}` : null,
+            state.maxRuns ? `maxRuns=${state.maxRuns}` : null,
+            `stream=${state.stream}`,
+            `sessionInjector=${state.sessionInjector?.enabled ? "on" : "off"}`,
+            `eventFilter=${formatEventFilter(state.eventFilter)}`
           ]
             .filter(Boolean)
             .join("\n");
@@ -132,14 +122,13 @@ export function createEmitterTools({ streams, configStore, supervisor, getBaseCw
       },
       handler: async (args) => {
         try {
-          const result = supervisor.updateEventFilter(args.name, args, {
-            scope: args.scope ?? LIFESPAN.TEMPORARY,
-            managedBy: args.managedBy ?? OWNERSHIP.MODEL_OWNED,
+          const { state } = service.updateFilter(args.name, args, {
+            scope: args.scope,
+            managedBy: args.managedBy,
             force: args.force === true
           });
 
-          const eventFilter = result.eventFilter ?? supervisor.get(args.name)?.eventFilter;
-          return `Updated event filter for emitter '${normalizeName(args.name)}': ${formatEventFilter(eventFilter)}`;
+          return `Updated event filter for emitter '${state.name}': ${formatEventFilter(state.eventFilter)}`;
         } catch (error) {
           throw normalizeToolError(error, {
             context: { tool: "tap_set_event_filter", name: args.name }
@@ -161,12 +150,12 @@ export function createEmitterTools({ streams, configStore, supervisor, getBaseCw
       },
       handler: async (args) => {
         try {
-          const result = await supervisor.stop(args.name, {
-            scope: args.scope ?? LIFESPAN.TEMPORARY,
+          const { result, state } = await service.stopEmitter(args.name, {
+            scope: args.scope,
             force: args.force === true
           });
 
-          return `Stop requested for emitter '${normalizeName(args.name)}' (status=${result.status}).`;
+          return `Stop requested for emitter '${state?.name ?? args.name}' (status=${result.status}).`;
         } catch (error) {
           throw normalizeToolError(error, {
             context: { tool: "tap_stop_emitter", name: args.name }

@@ -1,12 +1,13 @@
 import { EMITTER_OPERATION_STATUS, EMITTER_STATUS, LIFESPAN, OWNERSHIP } from "../consts.mjs";
 import { normalizeName, normalizeLifespan, normalizeOwnership } from "../util/normalize.mjs";
 import { assertMutable, isTerminalEmitterStatus } from "../util/policy.mjs";
-import { createEventFilter, formatEventFilter } from "../format/event-filter.mjs";
+import { formatEventFilter } from "../format/event-filter.mjs";
 import { normalizeEmitterSpec } from "./spec.mjs";
 import { buildEmitterState } from "./state.mjs";
 import { createLineRouter } from "./line-router.mjs";
 import { createLifecycle } from "./lifecycle.mjs";
 import { applySessionInjectorPolicy } from "./injector-policy.mjs";
+import { EventFilterService } from "../services/event-filter-service.mjs";
 import { ConflictError, LifecycleError, NotFoundError, AppError } from "../errors/index.mjs";
 
 /**
@@ -138,18 +139,12 @@ export function createEmitterSupervisor({ streams, configStore, notifications, s
     const configEntry = configStore.findEmitter(normalized);
 
     if (emitter) {
-      assertMutable(emitter.eventFilter.managedBy, options.force, `Event filter for emitter '${normalized}'`);
-      emitter.eventFilter = createEventFilter(
-        {
-          includePattern: input.includePattern ?? emitter.eventFilter.includePattern,
-          excludePattern: input.excludePattern ?? emitter.eventFilter.excludePattern,
-          notifyPattern: input.notifyPattern ?? emitter.eventFilter.notifyPattern,
-          managedBy: options.managedBy ?? emitter.eventFilter.managedBy,
-          scope: lifespan
-        },
+      assertMutable(emitter.eventFilter.ownership, options.force, `Event filter for emitter '${normalized}'`);
+      emitter.eventFilter = EventFilterService.update(emitter.eventFilter, {
+        ...input,
         ownership,
         lifespan
-      );
+      });
 
       if (lifespan === LIFESPAN.PERSISTENT) {
         emitter.lifespan = LIFESPAN.PERSISTENT;
@@ -166,25 +161,22 @@ export function createEmitterSupervisor({ streams, configStore, notifications, s
       throw new NotFoundError(`Emitter '${normalized}' is not running, so only a persistent event filter update is possible when it exists in config.`);
     }
 
-    assertMutable(
-      normalizeOwnership(configEntry.eventFilter?.managedBy ?? configEntry.classifier?.managedBy ?? configEntry.managedBy, OWNERSHIP.USER_OWNED),
-      options.force,
-      `Event filter for emitter '${normalized}'`
-    );
+    const currentFilter = EventFilterService.normalize(configEntry.eventFilter ?? configEntry.classifier ?? configEntry);
+    assertMutable(currentFilter.ownership ?? normalizeOwnership(configEntry.managedBy, OWNERSHIP.USER_OWNED), options.force, `Event filter for emitter '${normalized}'`);
 
-    configEntry.eventFilter = {
-      includePattern: input.includePattern ?? configEntry.eventFilter?.includePattern ?? configEntry.classifier?.includePattern,
-      excludePattern: input.excludePattern ?? configEntry.eventFilter?.excludePattern ?? configEntry.classifier?.excludePattern,
-      notifyPattern: input.notifyPattern ?? configEntry.eventFilter?.notifyPattern ?? configEntry.classifier?.notifyPattern,
-      managedBy: ownership
-    };
+    configEntry.eventFilter = EventFilterService.update(currentFilter, {
+      ...input,
+      ownership,
+      lifespan
+    });
+    delete configEntry.classifier;
 
     persist();
     void sessionPort.log(`Updated persistent event filter for emitter '${normalized}': ${formatEventFilter(configEntry.eventFilter)}`);
     return {
       name: normalized,
       status: EMITTER_OPERATION_STATUS.CONFIGURED,
-      eventFilter: createEventFilter(configEntry.eventFilter, ownership, LIFESPAN.PERSISTENT)
+      eventFilter: configEntry.eventFilter
     };
   }
 

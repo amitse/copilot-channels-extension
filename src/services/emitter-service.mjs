@@ -1,0 +1,264 @@
+import { DEFAULT_STREAM, DEFAULT_STREAM_DESCRIPTION, EMITTER_TYPE, LIFESPAN, OWNERSHIP, RUN_SCHEDULE } from "../consts.mjs";
+import { normalizeName, normalizeOwnership } from "../util/normalize.mjs";
+import { clampLimit } from "../util/text.mjs";
+import { createEventFilter, getEventFilterInput } from "../format/event-filter.mjs";
+import { applySessionInjectorPolicy } from "../emitter/injector-policy.mjs";
+import { EmitterSpec } from "../emitter/spec.mjs";
+import { AppError, NotFoundError, toAppError } from "../errors/index.mjs";
+
+function snapshotRunningEmitter(emitter, stream) {
+  return {
+    ...emitter,
+    eventFilter: emitter.eventFilter
+      ? {
+          ...emitter.eventFilter,
+          rules: Array.isArray(emitter.eventFilter.rules)
+            ? emitter.eventFilter.rules.map((rule) => ({ ...rule }))
+            : []
+        }
+      : null,
+    channel: emitter.stream,
+    managedBy: emitter.ownership,
+    ownership: emitter.ownership,
+    sessionInjector: stream?.sessionInjector ? { ...stream.sessionInjector } : null,
+    source: "running"
+  };
+}
+
+function snapshotConfiguredEmitter(entry, stream) {
+  const name = normalizeName(entry.name);
+  const channel = normalizeName(entry.channel ?? entry.stream ?? name, name);
+  const managedBy = normalizeOwnership(entry.managedBy ?? entry.ownership, OWNERSHIP.USER_OWNED);
+  const eventFilter = createEventFilter(
+    getEventFilterInput(entry),
+    managedBy,
+    LIFESPAN.PERSISTENT
+  );
+  const prompt = entry.prompt ? String(entry.prompt) : null;
+  const command = entry.command ? String(entry.command) : null;
+  const every = entry.every ? String(entry.every) : null;
+  const emitterType = prompt ? EMITTER_TYPE.PROMPT : EMITTER_TYPE.COMMAND;
+  const runSchedule = every
+    ? every === "idle" && prompt
+      ? RUN_SCHEDULE.IDLE
+      : RUN_SCHEDULE.TIMED
+    : prompt
+      ? RUN_SCHEDULE.ONE_TIME
+      : RUN_SCHEDULE.CONTINUOUS;
+
+  return {
+    name,
+    status: "configured",
+    scope: LIFESPAN.PERSISTENT,
+    managedBy,
+    ownership: managedBy,
+    emitterType,
+    runSchedule,
+    stream: channel,
+    channel,
+    autoStart: entry.autoStart !== false,
+    includeStderr: entry.includeStderr !== false,
+    cwd: entry.cwd ?? null,
+    command,
+    prompt,
+    every,
+    description: entry.description ?? "",
+    eventFilter,
+    sessionInjector: stream?.sessionInjector ? { ...stream.sessionInjector } : null,
+    source: "configured"
+  };
+}
+
+function snapshotStream(stream) {
+  if (!stream) {
+    return null;
+  }
+
+  return {
+    ...stream,
+    entries: Array.isArray(stream.entries) ? stream.entries.map((entry) => ({ ...entry })) : [],
+    sessionInjector: stream.sessionInjector ? { ...stream.sessionInjector } : null
+  };
+}
+
+function rethrowServiceError(error, message, context) {
+  if (error instanceof AppError) {
+    throw error;
+  }
+
+  throw toAppError(error, {
+    message,
+    context,
+    retryable: false
+  });
+}
+
+export function createEmitterService(deps) {
+  const { streams, configStore, supervisor, sessionPort, getBaseCwd, persist } = deps;
+
+  function listEmitters() {
+    const running = supervisor.list().map((emitter) => {
+      const stream = streams.get(emitter.stream) ?? streams.ensure(emitter.stream, emitter.description || "");
+      return snapshotRunningEmitter(emitter, stream);
+    });
+    const configured = configStore
+      .getEmitters()
+      .filter((entry) => !supervisor.has(entry.name))
+      .sort((left, right) => normalizeName(left.name).localeCompare(normalizeName(right.name)))
+      .map((entry) => snapshotConfiguredEmitter(entry, streams.get(entry.channel ?? entry.stream ?? entry.name)));
+
+    return { running, configured };
+  }
+
+  function listStreams() {
+    streams.ensure(DEFAULT_STREAM, DEFAULT_STREAM_DESCRIPTION);
+    return streams.list().map((stream) => snapshotStream(stream));
+  }
+
+  function getStreamHistory(channel, limit) {
+    const name = normalizeName(channel);
+    const stream = streams.get(name);
+    if (!stream) {
+      throw new NotFoundError(`Stream '${name}' does not exist.`, {
+        context: { channel: name }
+      });
+    }
+
+    return {
+      stream: snapshotStream(stream),
+      limit: clampLimit(limit, 20)
+    };
+  }
+
+  function postToStream({ channel, message, source, description }) {
+    const stream = streams.ensure(channel, description ?? "");
+    streams.append(stream.name, {
+      source,
+      text: message
+    });
+    void sessionPort.log(`Posted message to stream '${stream.name}'.`);
+    return { stream: snapshotStream(stream) };
+  }
+
+  function startEmitter(spec, options = {}) {
+    const canonicalSpec = spec?.__emitterSpec === true ? spec : EmitterSpec.normalize(spec);
+
+    return supervisor
+      .start(canonicalSpec, {
+        baseCwd: options.baseCwd ?? getBaseCwd()
+      })
+      .then((emitter) => ({
+        emitter,
+        state: snapshotRunningEmitter(emitter, streams.get(emitter.stream) ?? streams.ensure(emitter.stream, emitter.description || ""))
+      }))
+      .catch((error) => {
+        rethrowServiceError(error, `Failed to start emitter '${canonicalSpec.name}'.`, {
+          operation: "startEmitter",
+          name: canonicalSpec.name
+        });
+      });
+  }
+
+  async function stopEmitter(id, options = {}) {
+    const name = normalizeName(id);
+
+    try {
+      const result = await supervisor.stop(name, options);
+      let state = null;
+      try {
+        state = getEmitterState(name);
+      } catch (error) {
+        if (!(error instanceof NotFoundError)) {
+          throw error;
+        }
+      }
+      return { result, state };
+    } catch (error) {
+      rethrowServiceError(error, `Failed to stop emitter '${name}'.`, {
+        operation: "stopEmitter",
+        name
+      });
+    }
+  }
+
+  function updateFilter(id, filter, options = {}) {
+    const name = normalizeName(id);
+
+    try {
+      const result = supervisor.updateEventFilter(name, filter, options);
+      return {
+        result,
+        state: getEmitterState(name)
+      };
+    } catch (error) {
+      rethrowServiceError(error, `Failed to update event filter for emitter '${name}'.`, {
+        operation: "updateFilter",
+        name
+      });
+    }
+  }
+
+  function setInjectorPolicy(id, policy) {
+    const name = normalizeName(id);
+
+    try {
+      const stream = applySessionInjectorPolicy(
+        { streams, configStore, sessionPort, persist },
+        name,
+        policy,
+        { persistConfig: true }
+      );
+
+      return {
+        stream: snapshotStream(stream),
+        state: snapshotStream(stream)
+      };
+    } catch (error) {
+      rethrowServiceError(error, `Failed to update session injector for stream '${name}'.`, {
+        operation: "setInjectorPolicy",
+        name
+      });
+    }
+  }
+
+  function getEmitterState(id) {
+    const name = normalizeName(id);
+    const running = supervisor.get(name);
+    if (running) {
+      return snapshotRunningEmitter(running, streams.get(running.stream) ?? streams.ensure(running.stream, running.description || ""));
+    }
+
+    const configured = configStore.findEmitter(name);
+    if (configured) {
+      return snapshotConfiguredEmitter(configured, streams.get(configured.channel ?? configured.stream ?? configured.name));
+    }
+
+    throw new NotFoundError(`Emitter '${name}' was not found in the session or persistent config.`, {
+      context: { name }
+    });
+  }
+
+  function getStreamState(id) {
+    const name = normalizeName(id, DEFAULT_STREAM);
+    const stream = streams.get(name);
+    if (!stream) {
+      throw new NotFoundError(`Stream '${name}' does not exist.`, {
+        context: { channel: name }
+      });
+    }
+    return snapshotStream(stream);
+  }
+
+  return {
+    listEmitters,
+    listStreams,
+    postToStream,
+    getStreamHistory,
+    startEmitter,
+    stopEmitter,
+    updateFilter,
+    setInjectorPolicy,
+    getEmitterState,
+    getStreamState
+  };
+}

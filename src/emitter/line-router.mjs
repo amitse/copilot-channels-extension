@@ -1,5 +1,5 @@
 import { BRAND, EVENT_OUTCOME, SOURCE, STREAM } from "../consts.mjs";
-import { evaluateEventFilter } from "../format/event-filter.mjs";
+import { EventFilterService } from "../services/event-filter-service.mjs";
 import { splitTextLines } from "../util/text.mjs";
 
 /**
@@ -38,7 +38,7 @@ export function createLineRouter({ streams, notifications }) {
       return;
     }
 
-    const outcome = evaluateEventFilter(emitter.eventFilter, text);
+    const outcome = EventFilterService.evaluate(emitter.eventFilter, text);
 
     if (outcome === EVENT_OUTCOME.DROP) {
       emitter.droppedLineCount += 1;
