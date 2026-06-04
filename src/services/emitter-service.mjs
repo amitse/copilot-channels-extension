@@ -9,6 +9,7 @@ import { AppError, NotFoundError, toAppError } from "../errors/index.mjs";
 function snapshotRunningEmitter(emitter, stream) {
   return {
     ...emitter,
+    scope: emitter.lifespan,
     eventFilter: emitter.eventFilter
       ? {
           ...emitter.eventFilter,
