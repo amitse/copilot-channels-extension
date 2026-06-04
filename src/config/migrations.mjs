@@ -12,14 +12,15 @@ export const CONFIG_VERSION = Object.freeze({
 /**
  * Current on-disk schema version.
  *
- * v1: current shape used by the extension today.
- * v2: reserved for the first breaking config change.
+ * v1: legacy shape where older field aliases may still appear on disk.
+ * v2: canonical shape with legacy aliases stripped during migration.
  * v3: reserved for the next major schema change.
  */
-export const LATEST_CONFIG_VERSION = CONFIG_VERSION.V1;
+export const LATEST_CONFIG_VERSION = CONFIG_VERSION.V2;
 
 const KNOWN_ROOT_KEYS = new Set(["configVersion", "streams", "emitters"]);
 const KNOWN_STREAM_KEYS = new Set(["name", "description", "sessionInjector"]);
+const LEGACY_STREAM_KEYS = new Set(["subscription"]);
 const KNOWN_EMITTER_KEYS = new Set([
   "name",
   "stream",
@@ -27,40 +28,49 @@ const KNOWN_EMITTER_KEYS = new Set([
   "command",
   "prompt",
   "every",
+  "everySchedule",
+  "everyScheduleMs",
   "description",
   "cwd",
   "autoStart",
   "includeStderr",
   "ownership",
-  "managedBy",
   "eventFilter",
-  "classifier",
   "scope",
   "lifespan",
-  "includePattern",
-  "excludePattern",
-  "notifyPattern",
   "delivery",
-  "subscribe"
+  "subscribe",
+  "force",
+  "maxRuns"
 ]);
 const KNOWN_FILTER_KEYS = new Set([
   "rules",
   "ownership",
-  "managedBy",
   "lifespan",
-  "scope",
-  "includePattern",
-  "excludePattern",
-  "notifyPattern"
+  "scope"
 ]);
 const KNOWN_SESSION_INJECTOR_KEYS = new Set([
   "enabled",
   "delivery",
   "ownership",
-  "managedBy",
   "lifespan",
   "scope"
 ]);
+const LEGACY_EMITTER_KEYS = new Set([
+  "managedBy",
+  "classifier",
+  "includePattern",
+  "excludePattern",
+  "notifyPattern"
+]);
+const LEGACY_FILTER_KEYS = new Set([
+  "managedBy",
+  "scope",
+  "includePattern",
+  "excludePattern",
+  "notifyPattern"
+]);
+const LEGACY_SESSION_INJECTOR_KEYS = new Set(["managedBy", "scope"]);
 
 function isPlainObject(value) {
   return Object.prototype.toString.call(value) === "[object Object]";
@@ -68,6 +78,10 @@ function isPlainObject(value) {
 
 function cloneObject(value) {
   return isPlainObject(value) ? { ...value } : {};
+}
+
+function pickPreservedFields(source, ignoredKeys) {
+  return Object.fromEntries(Object.entries(source).filter(([key]) => !ignoredKeys.has(key)));
 }
 
 function resolveWarn(options = {}) {
@@ -105,40 +119,101 @@ function normalizeVersion(value, fallback = CONFIG_VERSION.V1) {
 
 function normalizeSessionInjector(source) {
   const injector = cloneObject(source);
+  const preserved = pickPreservedFields(injector, new Set([...KNOWN_SESSION_INJECTOR_KEYS, ...LEGACY_SESSION_INJECTOR_KEYS]));
 
-  if (injector.enabled !== undefined) {
-    injector.enabled = injector.enabled === true;
+  return {
+    ...preserved,
+    enabled: injector.enabled === true,
+    delivery: normalizeOutcome(injector.delivery, EVENT_OUTCOME.SURFACE),
+    ownership: normalizeOwnership(injector.ownership, OWNERSHIP.MODEL_OWNED),
+    lifespan: normalizeLifespan(injector.lifespan, LIFESPAN.TEMPORARY)
+  };
+}
+
+function normalizeLegacyRules(source) {
+  const rules = Array.isArray(source.rules) ? [...source.rules] : [];
+
+  if (rules.length > 0) {
+   return rules;
   }
-  injector.delivery = normalizeOutcome(injector.delivery, EVENT_OUTCOME.SURFACE);
-  injector.ownership = normalizeOwnership(injector.ownership ?? injector.managedBy, OWNERSHIP.MODEL_OWNED);
-  injector.lifespan = normalizeLifespan(injector.lifespan ?? injector.scope, LIFESPAN.TEMPORARY);
 
-  return injector;
+  if (source.excludePattern) {
+   rules.push({ match: String(source.excludePattern), outcome: EVENT_OUTCOME.DROP });
+  }
+  if (source.notifyPattern) {
+   rules.push({ match: String(source.notifyPattern), outcome: EVENT_OUTCOME.INJECT });
+  }
+  if (source.includePattern) {
+   rules.push({ match: String(source.includePattern), outcome: EVENT_OUTCOME.KEEP });
+   rules.push({ match: ".*", outcome: EVENT_OUTCOME.DROP });
+  }
+
+  return rules;
+}
+
+function normalizePersistedEventFilter(filterSource, ownership, lifespan) {
+  const source = isPlainObject(filterSource) ? filterSource : {};
+  const filterOwnership = normalizeOwnership(
+   source.ownership,
+   ownership
+  );
+  const filterLifespan = normalizeLifespan(
+   source.lifespan,
+   lifespan
+  );
+  const rules = normalizeLegacyRules(source);
+  const preserved = pickPreservedFields(source, new Set([...KNOWN_FILTER_KEYS, ...LEGACY_FILTER_KEYS]));
+
+  return {
+   ...preserved,
+   ...EventFilterService.serialize(
+     EventFilterService.create({
+       rules,
+       ownership: filterOwnership,
+       lifespan: filterLifespan
+     })
+   )
+  };
 }
 
 export function normalizePersistedStream(entry = {}, options = {}) {
   const warn = resolveWarn(options);
   const source = isPlainObject(entry) ? entry : {};
-  const stream = cloneObject(source);
+  const stream = pickPreservedFields(source, new Set([...KNOWN_STREAM_KEYS, ...LEGACY_STREAM_KEYS]));
 
   if (warn) {
-    warnUnknownFields(warn, `Stream '${normalizeName(source.name, "(unnamed)")}'`, getUnknownKeys(source, KNOWN_STREAM_KEYS));
+   warnUnknownFields(
+     warn,
+     `Stream '${normalizeName(source.name, "(unnamed)")}'`,
+     getUnknownKeys(source, new Set([...KNOWN_STREAM_KEYS, ...LEGACY_STREAM_KEYS]))
+   );
   }
 
   stream.name = source.name;
   if (source.description !== undefined) {
-    stream.description = source.description;
+   stream.description = source.description;
   }
-  if (source.sessionInjector !== undefined) {
-    const sessionInjectorSource = isPlainObject(source.sessionInjector) ? source.sessionInjector : {};
-    if (warn) {
-      warnUnknownFields(
-        warn,
-        `Session injector for stream '${normalizeName(source.name, "(unnamed)")}'`,
-        getUnknownKeys(sessionInjectorSource, KNOWN_SESSION_INJECTOR_KEYS)
-      );
-    }
-    stream.sessionInjector = normalizeSessionInjector(sessionInjectorSource);
+  const sessionInjectorSource = isPlainObject(source.sessionInjector)
+   ? source.sessionInjector
+   : isPlainObject(source.subscription)
+     ? source.subscription
+     : null;
+  if (sessionInjectorSource) {
+   const preserved = pickPreservedFields(
+     sessionInjectorSource,
+     new Set([...KNOWN_SESSION_INJECTOR_KEYS, ...LEGACY_SESSION_INJECTOR_KEYS])
+   );
+   if (warn) {
+     warnUnknownFields(
+       warn,
+       `Session injector for stream '${normalizeName(source.name, "(unnamed)")}'`,
+       getUnknownKeys(sessionInjectorSource, new Set([...KNOWN_SESSION_INJECTOR_KEYS, ...LEGACY_SESSION_INJECTOR_KEYS]))
+     );
+   }
+   stream.sessionInjector = {
+     ...preserved,
+     ...normalizeSessionInjector(sessionInjectorSource)
+   };
   }
 
   return stream;
@@ -147,44 +222,39 @@ export function normalizePersistedStream(entry = {}, options = {}) {
 export function normalizePersistedEmitter(entry = {}, options = {}) {
   const warn = resolveWarn(options);
   const source = isPlainObject(entry) ? entry : {};
-  const filterSource = isPlainObject(source.eventFilter)
-    ? source.eventFilter
-    : isPlainObject(source.classifier)
-      ? source.classifier
-      : source;
   const ownership = normalizeOwnership(
-    source.ownership ?? source.managedBy ?? filterSource.ownership ?? filterSource.managedBy,
-    OWNERSHIP.MODEL_OWNED
+   source.ownership
+   ?? source.managedBy
+   ?? source.eventFilter?.ownership
+   ?? source.eventFilter?.managedBy
+   ?? source.classifier?.ownership
+   ?? source.classifier?.managedBy,
+   OWNERSHIP.MODEL_OWNED
   );
-  const emitter = cloneObject(source);
-  const eventFilterExtras = isPlainObject(source.eventFilter)
-    ? Object.fromEntries(Object.entries(source.eventFilter).filter(([key]) => !KNOWN_FILTER_KEYS.has(key)))
-    : {};
+  const emitter = pickPreservedFields(source, new Set([...KNOWN_EMITTER_KEYS, ...LEGACY_EMITTER_KEYS]));
+  const filterSource = isPlainObject(source.eventFilter)
+   ? source.eventFilter
+   : isPlainObject(source.classifier)
+     ? source.classifier
+     : {
+         rules: normalizeLegacyRules(source),
+         ownership: source.ownership ?? source.managedBy,
+         lifespan: source.lifespan ?? source.scope
+       };
+  const eventFilter = normalizePersistedEventFilter(filterSource, ownership, normalizeLifespan(source.lifespan ?? source.scope, LIFESPAN.TEMPORARY));
 
   if (warn) {
-    warnUnknownFields(warn, `Emitter '${normalizeName(source.name, "(unnamed)")}'`, getUnknownKeys(source, KNOWN_EMITTER_KEYS));
+   warnUnknownFields(
+     warn,
+     `Emitter '${normalizeName(source.name, "(unnamed)")}'`,
+     getUnknownKeys(source, new Set([...KNOWN_EMITTER_KEYS, ...LEGACY_EMITTER_KEYS]))
+   );
   }
 
   emitter.stream = source.stream ?? source.channel ?? source.name;
   emitter.channel = source.channel ?? source.stream ?? source.name;
   emitter.ownership = ownership;
-  emitter.managedBy = ownership;
-  emitter.eventFilter = {
-    ...eventFilterExtras,
-    ...EventFilterService.deserialize({
-    ...filterSource,
-    ownership: filterSource.ownership ?? filterSource.managedBy ?? ownership,
-    lifespan: filterSource.lifespan ?? filterSource.scope ?? source.lifespan ?? source.scope
-    })
-  };
-
-  if (warn) {
-    warnUnknownFields(
-      warn,
-      `Event filter for emitter '${normalizeName(source.name, "(unnamed)")}'`,
-      Object.keys(eventFilterExtras)
-    );
-  }
+  emitter.eventFilter = eventFilter;
 
   return emitter;
 }
@@ -206,13 +276,11 @@ function normalizeConfigShape(source, options = {}) {
 }
 
 /**
- * Reserved migration for the first breaking change.
+ * Final v1 → v2 migration.
  *
- * Planned v2 change:
- * - keep the current canonical emitter/stream shape, but bump the persisted
- *   version so future schema changes can be chained deterministically.
- *
- * This function stays pure and deterministic so it can be tested in isolation.
+ * v2 is the canonical on-disk shape: legacy aliases are removed and any old
+ * event-filter/session-injector fields are converted to canonical names before
+ * the config is re-saved.
  */
 export function migrate_v1_to_v2(config, options = {}) {
   return {

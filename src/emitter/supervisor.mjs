@@ -161,15 +161,14 @@ export function createEmitterSupervisor({ streams, configStore, notifications, s
       throw new NotFoundError(`Emitter '${normalized}' is not running, so only a persistent event filter update is possible when it exists in config.`);
     }
 
-    const currentFilter = EventFilterService.normalize(configEntry.eventFilter ?? configEntry.classifier ?? configEntry);
-    assertMutable(currentFilter.ownership ?? normalizeOwnership(configEntry.managedBy, OWNERSHIP.USER_OWNED), options.force, `Event filter for emitter '${normalized}'`);
+    const currentFilter = EventFilterService.normalize(configEntry.eventFilter ?? configEntry);
+    assertMutable(currentFilter.ownership ?? normalizeOwnership(configEntry.ownership, OWNERSHIP.USER_OWNED), options.force, `Event filter for emitter '${normalized}'`);
 
     configEntry.eventFilter = EventFilterService.update(currentFilter, {
       ...input,
       ownership,
       lifespan
     });
-    delete configEntry.classifier;
 
     persist();
     void sessionPort.log(`Updated persistent event filter for emitter '${normalized}': ${formatEventFilter(configEntry.eventFilter)}`);

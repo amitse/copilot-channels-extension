@@ -32,26 +32,17 @@ function normalizeInteger(value, label) {
 }
 
 function normalizeEventFilter(rawInput, ownership, lifespan) {
-  const source = isPlainObject(rawInput?.eventFilter)
-    ? rawInput.eventFilter
-    : isPlainObject(rawInput?.classifier)
-      ? rawInput.classifier
-      : {};
-  const rules = Array.isArray(source.rules)
-    ? source.rules
-    : Array.isArray(rawInput.rules)
-      ? rawInput.rules
-      : null;
+  const source = isPlainObject(rawInput?.eventFilter) ? rawInput.eventFilter : isPlainObject(rawInput) ? rawInput : {};
+  const rules = Array.isArray(source.rules) ? source.rules : Array.isArray(rawInput.rules) ? rawInput.rules : [];
 
   return createEventFilter(
     {
       rules,
-      includePattern: readText(source.includePattern ?? rawInput.includePattern),
-      excludePattern: readText(source.excludePattern ?? rawInput.excludePattern),
-      notifyPattern: readText(source.notifyPattern ?? rawInput.notifyPattern)
+      ownership: normalizeOwnership(source.ownership ?? rawInput.managedBy, ownership),
+      lifespan: normalizeLifespan(source.lifespan ?? rawInput.scope, lifespan)
     },
-    normalizeOwnership(source.managedBy ?? source.ownership ?? rawInput.managedBy, ownership),
-    normalizeLifespan(source.scope ?? rawInput.scope, lifespan)
+    ownership,
+    lifespan
   );
 }
 

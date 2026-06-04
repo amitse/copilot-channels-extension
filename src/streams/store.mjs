@@ -99,7 +99,7 @@ export function createStreamStore() {
 
   function applyPersistentStream(entry) {
     const stream = ensure(entry.name, entry.description ?? "");
-    const configInjector = entry.sessionInjector ?? entry.subscription ?? {};
+    const configInjector = entry.sessionInjector ?? {};
     stream.sessionInjector = createSessionInjector({
       enabled: configInjector.enabled === true,
       delivery: configInjector.delivery ?? EVENT_OUTCOME.SURFACE,

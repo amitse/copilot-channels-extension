@@ -31,7 +31,7 @@ Use `tap_start_emitter` to start the CommandEmitter:
 
 - `command` — the user's shell command.
 - No `every` field — commands default to continuous (always running).
-- Initial `notifyPattern` — derive a sensible starting pattern from the command context (e.g. `error|warn|fail|exception` for log tailing, or omit entirely and let the companion tune it on first review).
+- Initial `eventFilter.rules` — derive a sensible starting rule set from the command context (e.g. keep `error|warn|fail|exception` for log tailing, or omit entirely and let the companion tune it on first review).
 - `subscribe = true`, `delivery = "important"` — injected lines reach the session.
 - `scope = "temporary"`, `managedBy = "modelOwned"` (unless the user asked for persistence).
 - Name the emitter concisely after the command (e.g. `app-logs`, `docker-mycontainer`).
@@ -59,9 +59,9 @@ Steps:
 1. Call tap_stream_history for stream '<stream-name>' (limit 50).
 2. If there are fewer than 5 entries, stop — not enough data to judge patterns yet.
 3. Scan the recent lines for recurring patterns:
-   - Lines that are always noise (timestamps-only, heartbeats, blank pings) → candidates for excludePattern.
-   - Lines that indicate important events (errors, warnings, state changes) → candidates for notifyPattern.
-   - Lines that are never relevant at all → candidates for tighter includePattern.
+   - Lines that are always noise (timestamps-only, heartbeats, blank pings) → candidates for `{ "match": "...", "outcome": "drop" }`.
+   - Lines that indicate important events (errors, warnings, state changes) → candidates for `{ "match": "...", "outcome": "inject" }`.
+   - Lines that are never relevant at all → candidates for tighter keep/drop rules.
 4. Compare what you see against the current filter patterns for emitter '<command-emitter-name>'.
 5. Only update if the evidence clearly justifies a change (signal-to-noise is poor or a pattern is clearly wrong).
 6. If an update is needed, call tap_set_event_filter with the revised patterns for emitter '<command-emitter-name>'.
@@ -103,9 +103,9 @@ If the user explicitly asks to keep the monitor across sessions, set `scope = "p
 Remind the companion (via the prompt) to be conservative:
 
 - Update only when there is clear evidence from at least 5 recent entries (the same minimum checked inside the companion prompt).
-- Prefer broadening `notifyPattern` over narrowing it — missing a real event is worse than an extra notification.
-- Never remove `notifyPattern` entirely unless the stream is provably silent.
-- Do not change `includePattern` or `excludePattern` on every review cycle — only when a pattern is clearly wrong.
+- Prefer broadening injection rules over narrowing them — missing a real event is worse than an extra notification.
+- Never remove the injection rule entirely unless the stream is provably silent.
+- Do not change keep/drop rules on every review cycle — only when a pattern is clearly wrong.
 
 ## If the input is incomplete
 

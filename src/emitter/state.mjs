@@ -28,7 +28,7 @@ export function buildEmitterState(spec, baseCwd) {
   const everyScheduleMs = spec.everyScheduleMs ?? null;
   const lifespan = spec.scope;
   const ownership = spec.managedBy;
-  const eventFilter = normalizeEventFilter(spec.eventFilter ?? spec.classifier ?? spec);
+  const eventFilter = normalizeEventFilter(spec.eventFilter ?? spec);
   const emitterType = prompt ? EMITTER_TYPE.PROMPT : EMITTER_TYPE.COMMAND;
 
   let runSchedule;

@@ -18,7 +18,6 @@ function snapshotRunningEmitter(emitter, stream) {
         }
       : null,
     channel: emitter.stream,
-    managedBy: emitter.ownership,
     ownership: emitter.ownership,
     sessionInjector: stream?.sessionInjector ? { ...stream.sessionInjector } : null,
     source: "running"
@@ -28,10 +27,10 @@ function snapshotRunningEmitter(emitter, stream) {
 function snapshotConfiguredEmitter(entry, stream) {
   const name = normalizeName(entry.name);
   const channel = normalizeName(entry.channel ?? entry.stream ?? name, name);
-  const managedBy = normalizeOwnership(entry.managedBy ?? entry.ownership, OWNERSHIP.USER_OWNED);
+  const ownership = normalizeOwnership(entry.ownership, OWNERSHIP.USER_OWNED);
   const eventFilter = createEventFilter(
     getEventFilterInput(entry),
-    managedBy,
+    ownership,
     LIFESPAN.PERSISTENT
   );
   const prompt = entry.prompt ? String(entry.prompt) : null;
@@ -50,8 +49,7 @@ function snapshotConfiguredEmitter(entry, stream) {
     name,
     status: "configured",
     scope: LIFESPAN.PERSISTENT,
-    managedBy,
-    ownership: managedBy,
+    ownership,
     emitterType,
     runSchedule,
     stream: channel,

@@ -16,7 +16,7 @@ export function formatRunningEmitter(emitter, stream) {
     `- ${emitter.name}:`,
     `  status=${emitter.status}`,
     `  scope=${emitter.lifespan}`,
-    `  managedBy=${emitter.ownership}`,
+    `  ownership=${emitter.ownership}`,
     `  emitterType=${emitter.emitterType}`,
     `  runSchedule=${emitter.runSchedule}`,
     `  stream=${emitter.stream}`,
@@ -44,7 +44,7 @@ export function formatRunningEmitter(emitter, stream) {
 export function formatConfiguredEmitter(entry) {
   const eventFilter = createEventFilter(
     getEventFilterInput(entry),
-    entry.eventFilter?.managedBy ?? entry.classifier?.managedBy ?? entry.managedBy ?? OWNERSHIP.USER_OWNED,
+    entry.eventFilter?.ownership ?? entry.ownership ?? OWNERSHIP.USER_OWNED,
     LIFESPAN.PERSISTENT
   );
   const prompt = entry.prompt ? `  prompt=${JSON.stringify(previewText(entry.prompt, 90))}` : null;
@@ -60,7 +60,7 @@ export function formatConfiguredEmitter(entry) {
     `- ${normalizeName(entry.name)}:`,
     "  status=configured",
     `  scope=${LIFESPAN.PERSISTENT}`,
-    `  managedBy=${normalizeOwnership(entry.managedBy, OWNERSHIP.USER_OWNED)}`,
+    `  ownership=${normalizeOwnership(entry.ownership, OWNERSHIP.USER_OWNED)}`,
     `  emitterType=${emitterType}`,
     `  runSchedule=${runSchedule}`,
     `  stream=${normalizeName(entry.channel, normalizeName(entry.name))}`,

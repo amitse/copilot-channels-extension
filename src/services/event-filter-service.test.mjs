@@ -6,84 +6,44 @@ import { compileRegex } from "../util/regex.mjs";
 import { normalizeOwnership, normalizeLifespan } from "../util/normalize.mjs";
 import { EventFilterService } from "./event-filter-service.mjs";
 
-function legacyCreateEventFilter(source = {}, fallbackOwnership = OWNERSHIP.MODEL_OWNED, fallbackLifespan = LIFESPAN.TEMPORARY) {
-  const filterSource = source.eventFilter && typeof source.eventFilter === "object"
-    ? source.eventFilter
-    : source.classifier && typeof source.classifier === "object"
-      ? source.classifier
-      : source;
-
-  const rawRules = Array.isArray(filterSource.rules)
-    ? filterSource.rules
-    : (() => {
-        const rules = [];
-        if (filterSource.excludePattern) {
-          rules.push({ match: String(filterSource.excludePattern), outcome: EVENT_OUTCOME.DROP });
-        }
-        if (filterSource.notifyPattern) {
-          rules.push({ match: String(filterSource.notifyPattern), outcome: EVENT_OUTCOME.INJECT });
-        }
-        if (filterSource.includePattern) {
-          rules.push({ match: String(filterSource.includePattern), outcome: EVENT_OUTCOME.KEEP });
-          rules.push({ match: ".*", outcome: EVENT_OUTCOME.DROP });
-        }
-        return rules;
-      })();
+function expectedFilter(source = {}, fallbackOwnership = OWNERSHIP.MODEL_OWNED, fallbackLifespan = LIFESPAN.TEMPORARY) {
+  const filterSource = source.eventFilter && typeof source.eventFilter === "object" ? source.eventFilter : source;
+  const rules = Array.isArray(filterSource.rules) ? filterSource.rules : [];
 
   return {
-    rules: rawRules.map((rule) => ({
+    rules: rules.map((rule) => ({
       ...rule,
       regex: compileRegex(rule.match, "rule.match")
     })),
-    ownership: normalizeOwnership(filterSource.ownership ?? filterSource.managedBy ?? source.ownership ?? source.managedBy, fallbackOwnership),
-    lifespan: normalizeLifespan(filterSource.lifespan ?? filterSource.scope ?? source.lifespan ?? source.scope, fallbackLifespan)
+    ownership: normalizeOwnership(filterSource.ownership, fallbackOwnership),
+    lifespan: normalizeLifespan(filterSource.lifespan, fallbackLifespan)
   };
-}
-
-function legacyEvaluate(filter, text) {
-  if (!filter || !filter.rules) {
-    return EVENT_OUTCOME.KEEP;
-  }
-
-  for (const rule of filter.rules) {
-    if (rule.regex && rule.regex.test(text)) {
-      return rule.outcome;
-    }
-  }
-
-  return EVENT_OUTCOME.KEEP;
 }
 
 const cases = [
   {
-    name: "legacy include/exclude/notify ordering",
+    name: "canonical rule list",
     input: {
-      includePattern: "apple",
-      excludePattern: "banana",
-      notifyPattern: "cherry",
+      rules: [
+        { match: "apple", outcome: EVENT_OUTCOME.KEEP },
+        { match: "banana", outcome: EVENT_OUTCOME.DROP },
+        { match: "cherry", outcome: EVENT_OUTCOME.INJECT }
+      ],
       ownership: OWNERSHIP.USER_OWNED,
       lifespan: LIFESPAN.PERSISTENT
     },
     texts: ["apple pie", "banana bread", "cherry tart", "grape"]
   },
   {
-    name: "explicit rule array",
+    name: "eventFilter wrapper",
     input: {
-      rules: [
-        { match: "error", outcome: EVENT_OUTCOME.DROP },
-        { match: "warn", outcome: EVENT_OUTCOME.INJECT }
-      ],
-      ownership: OWNERSHIP.MODEL_OWNED,
-      lifespan: LIFESPAN.TEMPORARY
-    },
-    texts: ["error", "warning", "info"]
-  },
-  {
-    name: "classifier wrapper",
-    input: {
-      classifier: {
-        notifyPattern: "sync",
-        ownership: OWNERSHIP.USER_OWNED
+      eventFilter: {
+        rules: [
+          { match: "sync", outcome: EVENT_OUTCOME.INJECT },
+          { match: ".*", outcome: EVENT_OUTCOME.KEEP }
+        ],
+        ownership: OWNERSHIP.USER_OWNED,
+        lifespan: LIFESPAN.TEMPORARY
       }
     },
     texts: ["sync now", "async later"]
@@ -92,15 +52,16 @@ const cases = [
 
 for (const item of cases) {
   test(item.name, () => {
-    const legacy = legacyCreateEventFilter(item.input);
-    const service = EventFilterService.normalize(item.input);
+    const normalizedInput = item.input.eventFilter ?? item.input;
+    const expected = expectedFilter(normalizedInput);
+    const service = EventFilterService.normalize(normalizedInput);
 
-    assert.deepEqual(EventFilterService.serialize(service), EventFilterService.serialize(legacy));
-    assert.equal(service.ownership, legacy.ownership);
-    assert.equal(service.lifespan, legacy.lifespan);
+    assert.deepEqual(EventFilterService.serialize(service), EventFilterService.serialize(expected));
+    assert.equal(service.ownership, expected.ownership);
+    assert.equal(service.lifespan, expected.lifespan);
 
     for (const text of item.texts) {
-      assert.equal(EventFilterService.evaluate(service, text), legacyEvaluate(legacy, text));
+      assert.equal(EventFilterService.evaluate(service, text), EventFilterService.evaluate(expected, text));
     }
   });
 }

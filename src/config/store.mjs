@@ -61,7 +61,7 @@ export function serializeEmitter(emitter) {
     channel: emitter?.channel ?? emitter?.stream,
     autoStart: emitter?.autoStart,
     includeStderr: emitter?.includeStderr,
-    ownership: emitter?.ownership ?? emitter?.managedBy
+    ownership: emitter?.ownership
   };
 
   if (requestedCwd !== undefined) {
@@ -224,7 +224,7 @@ export function createConfigStore(options = {}) {
     }
 
     const entry = state.config.emitters[index];
-    assertMutable(normalizeOwnership(entry.ownership ?? entry.managedBy, OWNERSHIP.USER_OWNED), force, `Emitter '${normalized}'`);
+    assertMutable(normalizeOwnership(entry.ownership, OWNERSHIP.USER_OWNED), force, `Emitter '${normalized}'`);
     state.config.emitters.splice(index, 1);
     return true;
   }

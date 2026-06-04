@@ -52,13 +52,13 @@ export function createEmitterTools(deps) {
     },
     {
       name: "tap_start_emitter",
-      description: "Starts a command emitter or prompt emitter. Use 'command' for shell commands whose stdout needs filtering (CommandEmitter) — requires notifyPattern for injection. Use 'prompt' for agent-driven tasks (PromptEmitter) — always injects, no filter needed. Prefer prompt for simple repeated messages or agent actions; prefer command for log tailing, process monitoring, or noisy output that needs filtering.",
+      description: "Starts a command emitter or prompt emitter. Use 'command' for shell commands whose stdout needs filtering (CommandEmitter). Use 'prompt' for agent-driven tasks (PromptEmitter) — always injects, no filter needed. Prefer prompt for simple repeated messages or agent actions; prefer command for log tailing, process monitoring, or noisy output that needs filtering.",
       parameters: {
         type: "object",
         properties: {
           name: { type: "string", description: "Unique emitter name." },
-          command: { type: "string", description: "Shell command to run (creates a CommandEmitter). Output goes through EventFilter — requires notifyPattern to inject lines into the session. Use for log tailing, process monitoring, or any external command with stdout." },
-          prompt: { type: "string", description: "Prompt to send to the agent (creates a PromptEmitter). Always injects — bypasses EventFilter entirely, no notifyPattern needed. Use for repeated agent tasks, status checks, or simple messages." },
+          command: { type: "string", description: "Shell command to run (creates a CommandEmitter). Output goes through EventFilter rules to determine whether lines are kept, surfaced, or injected. Use for log tailing, process monitoring, or any external command with stdout." },
+          prompt: { type: "string", description: "Prompt to send to the agent (creates a PromptEmitter). Always injects — bypasses EventFilter entirely. Use for repeated agent tasks, status checks, or simple messages." },
           description: { type: "string", description: "Short summary." },
           channel: { type: "string", description: "EventStream to receive accepted events." },
           cwd: { type: "string", description: "Optional working directory relative to the session cwd." },
@@ -68,11 +68,26 @@ export function createEmitterTools(deps) {
           managedBy: { type: "string", description: "Ownership label: 'userOwned' or 'modelOwned'." },
           autoStart: { type: "boolean", description: "When persistent, whether the emitter should auto-start next session." },
           includeStderr: { type: "boolean", description: "Whether stderr lines are eligible for event outcome evaluation." },
-          includePattern: { type: "string", description: "Only matching lines are admitted into the stream. (Legacy: prefer eventFilter rules.)" },
-          excludePattern: { type: "string", description: "Matching lines are dropped before they reach the stream. (Legacy: prefer eventFilter rules.)" },
-          notifyPattern: { type: "string", description: "Regex pattern — matching lines are injected into the session. Without this, lines are stored/surfaced but never injected. This is the trigger that decides which lines actually interrupt the conversation." },
+          eventFilter: {
+            type: "object",
+            description: "Canonical event filter object. Provide ordered rules as [{ match, outcome }].",
+            properties: {
+              rules: {
+                type: "array",
+                minItems: 1,
+                items: {
+                  type: "object",
+                  properties: {
+                    match: { type: "string" },
+                    outcome: { type: "string" }
+                  },
+                  required: ["match", "outcome"]
+                }
+              }
+            }
+          },
           subscribe: { type: "boolean", description: "Whether to attach a session injector to the stream as part of emitter creation." },
-          delivery: { type: "string", description: "Session injector delivery ceiling: 'important' (only notifyPattern matches inject) or 'all' (all lines eligible). delivery opens the door, notifyPattern decides which lines walk through it. Without notifyPattern, no lines are injected regardless of delivery setting." },
+          delivery: { type: "string", description: "Session injector delivery ceiling: 'important' (only important lines inject) or 'all' (all lines eligible). Delivery opens the door; EventFilter rules decide which lines walk through it." },
           maxRuns: { type: "integer", description: "Maximum number of iterations before the emitter auto-completes. Useful for idle and timed loops." },
           force: { type: "boolean", description: "Required only when transferring ownership of a protected emitter." }
         },
@@ -106,14 +121,29 @@ export function createEmitterTools(deps) {
     },
     {
       name: "tap_set_event_filter",
-      description: "Updates the event filter rules that determine event outcomes (drop, keep, surface, inject) for an emitter.",
+      description: "Updates the canonical event filter rules that determine event outcomes (drop, keep, surface, inject) for an emitter.",
       parameters: {
         type: "object",
         properties: {
           name: { type: "string", description: "Emitter name." },
-          includePattern: { type: "string", description: "Only matching lines are admitted into the stream." },
-          excludePattern: { type: "string", description: "Matching lines are removed from the stream." },
-          notifyPattern: { type: "string", description: "Matching lines trigger session injection when delivery='important'." },
+          eventFilter: {
+            type: "object",
+            description: "Canonical event filter object with ordered rules.",
+            properties: {
+              rules: {
+                type: "array",
+                minItems: 1,
+                items: {
+                  type: "object",
+                  properties: {
+                    match: { type: "string" },
+                    outcome: { type: "string" }
+                  },
+                  required: ["match", "outcome"]
+                }
+              }
+            }
+          },
           scope: { type: "string", description: "Use 'temporary' for session-only or 'persistent' to write config." },
           managedBy: { type: "string", description: "Ownership label: 'userOwned' or 'modelOwned'." },
           force: { type: "boolean", description: "Required only when transferring ownership of a protected emitter." }
@@ -122,7 +152,7 @@ export function createEmitterTools(deps) {
       },
       handler: async (args) => {
         try {
-          const { state } = service.updateFilter(args.name, args, {
+        const { state } = service.updateFilter(args.name, args.eventFilter ?? {}, {
             scope: args.scope,
             managedBy: args.managedBy,
             force: args.force === true
