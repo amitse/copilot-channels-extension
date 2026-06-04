@@ -14,8 +14,6 @@ import {
   validateHello,
   validateToolResult,
   validateGoodbye,
-  buildSessions,
-  buildHelloAck,
   buildToolCall,
   buildToolCancel,
   buildSessionLifecycle,

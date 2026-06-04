@@ -1,5 +1,12 @@
 import { CONNECTION_STATE, ERROR_CODE, MESSAGE_TYPE, TOOL_RESULT_ERROR, FATAL_ERROR_CODES } from "./consts.mjs";
-import { validateAuth, validateHello, validateGoodbye, validateToolResult } from "./protocol.mjs";
+import {
+  buildHelloAck,
+  buildSessions,
+  validateAuth,
+  validateHello,
+  validateGoodbye,
+  validateToolResult
+} from "./protocol.mjs";
 
 export const CONNECTION_EVENT = Object.freeze({
   MESSAGE: "message",
@@ -84,7 +91,7 @@ export function computeTransition(currentState, event) {
         currentState,
         nextState: { ...state, state: CONNECTION_STATE.AWAIT_HELLO },
         actions: [
-          { type: CONNECTION_ACTION.SEND, message: { type: MESSAGE_TYPE.SESSIONS, active: state.activeSessions ?? [] } },
+          { type: CONNECTION_ACTION.SEND, message: buildSessions(state.activeSessions ?? []) },
           { type: CONNECTION_ACTION.TRANSITION, state: CONNECTION_STATE.AWAIT_HELLO }
         ]
       };
@@ -142,7 +149,7 @@ export function computeTransition(currentState, event) {
           wasBound: true
         },
         actions: [
-          { type: CONNECTION_ACTION.SEND, message: { type: MESSAGE_TYPE.HELLO_ACK, protocolVersion: state.protocolVersion, providerId: event?.providerId ?? state.providerId } },
+          { type: CONNECTION_ACTION.SEND, message: buildHelloAck(state.protocolVersion, event?.providerId ?? state.providerId) },
           { type: CONNECTION_ACTION.TRANSITION, state: CONNECTION_STATE.BOUND },
           { type: CONNECTION_ACTION.NOTIFY_BOUND }
         ]
