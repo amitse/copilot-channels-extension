@@ -1,12 +1,12 @@
-import { BRAND, COPILOT_INSTRUCTIONS_PATH, DEFAULT_STREAM, DEFAULT_STREAM_DESCRIPTION, LIFESPAN, OWNERSHIP } from "../consts.mjs";
+import { BRAND, COPILOT_INSTRUCTIONS_PATH } from "../consts.mjs";
 import { createConfigStore } from "../config/store.mjs";
 import { createEmitterSupervisor } from "../emitter/supervisor.mjs";
-import { normalizeStartScopeAndOwnership } from "../emitter/start-options.mjs";
 import { createSessionPort } from "../session/port.mjs";
 import { createNotificationDispatcher } from "../streams/notifications.mjs";
 import { createStreamStore } from "../streams/store.mjs";
 import { checkForUpdate } from "../update/checker.mjs";
 import { normalizeBaseCwd } from "../util/path.mjs";
+import { createConfigBootstrapService } from "./config-bootstrap-service.mjs";
 import { createEmitterService } from "./emitter-service.mjs";
 
 function sessionInjectorSummary(streams) {
@@ -78,6 +78,14 @@ export function createTapRuntimeService(options = {}) {
     getBaseCwd,
     persist
   });
+  const configBootstrapService = createConfigBootstrapService({
+    streams,
+    configStore,
+    supervisor,
+    sessionPort,
+    setBaseCwd
+  });
+  const { loadPersistentConfig } = configBootstrapService;
 
   let cleanupSessionListeners = () => {};
 
@@ -161,54 +169,6 @@ export function createTapRuntimeService(options = {}) {
   function getPromptContext() {
     const summary = sessionInjectorSummary(streams);
     return summary ? { additionalContext: summary } : undefined;
-  }
-
-  async function loadPersistentConfig(inputCwd) {
-    const resolvedBaseCwd = setBaseCwd(inputCwd);
-
-    const configLoad = configStore.load(resolvedBaseCwd);
-    streams.ensure(DEFAULT_STREAM, DEFAULT_STREAM_DESCRIPTION);
-
-    for (const entry of configStore.getStreams()) {
-      streams.applyPersistentStream(entry);
-    }
-
-    let started = 0;
-    for (const entry of configStore.getEmitters()) {
-      if (entry.autoStart === false) {
-        continue;
-      }
-
-      try {
-        const startPolicy = normalizeStartScopeAndOwnership(
-          { scope: LIFESPAN.PERSISTENT, managedBy: entry.ownership },
-          { scope: LIFESPAN.PERSISTENT, managedBy: OWNERSHIP.USER_OWNED }
-        );
-        await supervisor.start(
-          {
-            ...entry,
-            scope: startPolicy.scope,
-            managedBy: startPolicy.managedBy
-          },
-          {
-            baseCwd: resolvedBaseCwd,
-            scope: startPolicy.scope,
-            managedBy: startPolicy.managedBy,
-            subscribe: false,
-            force: true
-          }
-        );
-        started += 1;
-      } catch (error) {
-        await sessionPort.log(`Failed to auto-start emitter '${entry.name}': ${error.message}`, {
-          level: "warning"
-        });
-      }
-    }
-
-    return configLoad.found
-      ? `Loaded ${configStore.getStreams().length} event streams and ${configStore.getEmitters().length} persistent emitter definitions from ${configLoad.filePath}. Auto-started ${started}.`
-      : "No copilot-channels config file found.";
   }
 
   const streamCapabilities = {
