@@ -20,9 +20,11 @@ export function createCopilotChannelsRuntime(options = {}) {
     baseCwd = next;
   };
 
+  process.stderr.write(`[tap-runtime] init — cwd=${baseCwd}\n`);
   const sessionPort = createSessionPort(options.session ?? null);
   const streams = createStreamStore();
   const configStore = createConfigStore({ cwd: baseCwd });
+  process.stderr.write(`[tap-runtime] config loaded — cwd=${baseCwd}\n`);
   const notifications = createNotificationDispatcher({ sessionPort });
   const persist = () => configStore.save();
   const supervisor = createEmitterSupervisor({
@@ -33,6 +35,7 @@ export function createCopilotChannelsRuntime(options = {}) {
     getBaseCwd,
     persist
   });
+  process.stderr.write(`[tap-runtime] supervisor ready\n`);
 
   const tools = createTools({ streams, configStore, supervisor, sessionPort, getBaseCwd, persist });
   const hooks = createHooks({ streams, configStore, supervisor, sessionPort, setBaseCwd });
@@ -46,8 +49,12 @@ export function createCopilotChannelsRuntime(options = {}) {
       if (!session) return null;
       return { id: session.id ?? "default", label: session.label ?? "Copilot CLI", cwd: getBaseCwd() };
     },
-    log: (msg) => void sessionPort.log(msg),
+    log: (msg) => {
+      process.stderr.write(`[tap-gateway] ${msg}\n`);
+      void sessionPort.log(msg);
+    },
   });
+  process.stderr.write(`[tap-runtime] gateway created\n`);
 
   // When provider tools change, re-register all tools and trigger extension reload
   gateway.onToolsChanged((mergedTools) => {
@@ -93,12 +100,16 @@ export function createCopilotChannelsRuntime(options = {}) {
 
   return {
     attachSession: (nextSession) => {
+      process.stderr.write(`[tap-runtime] attachSession — id=${nextSession?.id ?? "(none)"}\n`);
       sessionPort.attach(nextSession);
       wireSessionListeners(nextSession);
       if (!gateway.isRunning()) {
         try {
+          process.stderr.write(`[tap-runtime] starting gateway…\n`);
           gateway.start();
-        } catch {
+          process.stderr.write(`[tap-runtime] gateway started\n`);
+        } catch (err) {
+          process.stderr.write(`[tap-runtime] gateway start failed: ${err?.message ?? err}\n`);
           // Gateway startup must never block session attach
         }
       }

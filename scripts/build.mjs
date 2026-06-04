@@ -24,7 +24,11 @@ const result = await build({
       "const require = __tap_createRequire(import.meta.url);"
     ].join("\n")
   },
-  logLevel: "info"
+  logLevel: "info",
+  // Don't bundle the SDK — the CLI's extension_bootstrap.mjs registers an ESM
+  // resolver hook that redirects these imports to the CLI's own bundled SDK,
+  // which avoids the @github/copilot package resolution error at runtime.
+  external: ["@github/copilot-sdk", "@github/copilot-sdk/extension", "@github/copilot"]
 });
 
 if (result.errors.length === 0) {

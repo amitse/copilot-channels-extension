@@ -1,0 +1,14 @@
+{
+  "name": "tap-provider-sdk",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "SDK for building ※ tap providers — external tool processes that connect to the Copilot session.",
+  "main": "index.mjs",
+  "exports": {
+    ".": "./index.mjs"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}
