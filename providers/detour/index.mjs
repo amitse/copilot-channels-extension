@@ -12,6 +12,7 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { MESSAGE_TYPES } from "./src/contracts.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const BROWSER_PORT = parseInt(process.env.DETOUR_PORT || "9401", 10);
@@ -43,7 +44,7 @@ function evalOnClient(clientId, code, timeoutMs = 15000) {
     const id = randomUUID().slice(0, 12);
     const timer = setTimeout(() => { pendingEvals.delete(id); reject(new Error(`Eval timed out after ${timeoutMs}ms`)); }, timeoutMs);
     pendingEvals.set(id, { resolve, reject, timer });
-    client.ws.send(JSON.stringify({ type: "eval", id, code }));
+    client.ws.send(JSON.stringify({ type: MESSAGE_TYPES.EVAL, id, code }));
   });
 }
 
@@ -111,7 +112,7 @@ const httpServer = http.createServer((req, res) => {
         const { ask_id, reply } = JSON.parse(body);
         const pending = pendingPageAsks.get(ask_id);
         if (!pending) { res.writeHead(404); res.end(JSON.stringify({ error: "No pending ask" })); return; }
-        if (pending.ws.readyState === WebSocket.OPEN) pending.ws.send(JSON.stringify({ type: "ask.reply", id: ask_id, reply }));
+        if (pending.ws.readyState === WebSocket.OPEN) pending.ws.send(JSON.stringify({ type: MESSAGE_TYPES.ASK_REPLY, id: ask_id, reply }));
         pendingPageAsks.delete(ask_id);
         res.writeHead(200); res.end(JSON.stringify({ ok: true }));
       } catch (err) { res.writeHead(500); res.end(JSON.stringify({ error: err.message })); }
@@ -139,24 +140,24 @@ browserServer.on("connection", (ws) => {
     try { msg = JSON.parse(raw); } catch { return; }
 
     switch (msg.type) {
-      case "identify":
+      case MESSAGE_TYPES.IDENTIFY:
         clients.get(clientId).url = msg.url || "unknown";
         clients.get(clientId).title = msg.title || "unknown";
         console.log(`   → ${msg.title} (${msg.url})`);
         break;
 
-      case "console":
+      case MESSAGE_TYPES.CONSOLE:
         consoleLogs.push({ clientId, level: msg.level || "log", args: msg.args || [], timestamp: msg.timestamp || new Date().toISOString() });
         if (consoleLogs.length > MAX_LOG_BUFFER) consoleLogs.shift();
         break;
 
-      case "eval.result": {
+      case MESSAGE_TYPES.EVAL_RESULT: {
         const p = pendingEvals.get(msg.id);
         if (p) { clearTimeout(p.timer); pendingEvals.delete(msg.id); msg.error ? p.reject(new Error(msg.error)) : p.resolve(msg.value); }
         break;
       }
 
-      case "page.message": {
+      case MESSAGE_TYPES.PAGE_MESSAGE: {
         const from = clientLabel(clientId);
         console.log(`📨 [${from}] ${msg.message}`);
         pageMessages.push({ clientId, from, message: msg.message, timestamp: new Date().toISOString() });
@@ -165,7 +166,7 @@ browserServer.on("connection", (ws) => {
         break;
       }
 
-      case "page.ask": {
+      case MESSAGE_TYPES.PAGE_ASK: {
         const from = clientLabel(clientId);
         console.log(`❓ [ASK from ${from}] ${msg.message}`);
         pendingPageAsks.set(msg.id, { clientId, ws, message: msg.message, from, timestamp: new Date().toISOString() });
@@ -175,7 +176,7 @@ browserServer.on("connection", (ws) => {
         break;
       }
 
-      case "page.context": {
+      case MESSAGE_TYPES.PAGE_CONTEXT: {
         const from = clientLabel(clientId);
         const chatMsg = msg.message ? ` — "${msg.message}"` : "";
         console.log(`📋 [CONTEXT from ${from}] ${msg.annotations?.length || 0} annotations${chatMsg}`);
@@ -186,7 +187,7 @@ browserServer.on("connection", (ws) => {
         break;
       }
 
-      case "page.annotate": {
+      case MESSAGE_TYPES.PAGE_ANNOTATE: {
         const from = clientLabel(clientId);
         const ann = msg.annotation || {};
         console.log(`📌 [${from}] ${ann.context?.displayName || "element"}: ${ann.intent} — ${ann.comment || "(no comment)"}`);
@@ -267,7 +268,7 @@ const provider = createProvider("detour", {
       case "reply_to_page": {
         const pending = pendingPageAsks.get(args.ask_id);
         if (!pending) return { error: "No pending ask with that ID" };
-        if (pending.ws.readyState === WebSocket.OPEN) pending.ws.send(JSON.stringify({ type: "ask.reply", id: args.ask_id, reply: args.reply }));
+        if (pending.ws.readyState === WebSocket.OPEN) pending.ws.send(JSON.stringify({ type: MESSAGE_TYPES.ASK_REPLY, id: args.ask_id, reply: args.reply }));
         pendingPageAsks.delete(args.ask_id);
         return { ok: true, repliedTo: pending.from };
       }

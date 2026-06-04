@@ -7,9 +7,10 @@
 
 import { deepElementFromPoint, extractElementContext, getElementDisplayName, buildSelector, generateAnnotationMarkdown } from "./inspector.js";
 import { isReactDetected } from "./react-context.js";
+import { DETAIL_LEVELS, DETAIL_LEVEL_OPTIONS, INTENT_TOKENS, INTENT_OPTIONS, MESSAGE_TYPES } from "./contracts.js";
 
 export function createPanel(bridge) {
-  let detailLevel = "standard";
+  let detailLevel = DETAIL_LEVELS.STANDARD;
   let annotations = [];
   let pickerActive = false;
   let panelOpen = false;
@@ -168,6 +169,9 @@ export function createPanel(bridge) {
 
   const panel = document.createElement("div");
   panel.className = "__dp-panel hidden";
+  const detailLevelOptionsHtml = DETAIL_LEVEL_OPTIONS
+    .map(({ value, label }) => `<option value="${value}"${value === DETAIL_LEVELS.STANDARD ? " selected" : ""}>${label}</option>`)
+    .join("");
   panel.innerHTML = `
     <div class="__dp-header">
       <div><span class="__dp-title">⚡ Detour</span><span class="__dp-react"></span></div>
@@ -176,10 +180,7 @@ export function createPanel(bridge) {
     <div class="__dp-toolbar">
       <button class="__dp-btn" data-action="pick">🎯 Pick</button>
       <select class="__dp-select" data-action="detail">
-        <option value="compact">Compact</option>
-        <option value="standard" selected>Standard</option>
-        <option value="detailed">Detailed</option>
-        <option value="forensic">Forensic</option>
+        ${detailLevelOptionsHtml}
       </select>
       <button class="__dp-btn" data-action="submit">📤 Send All</button>
       <button class="__dp-btn danger" data-action="clear" style="margin-left:auto">Clear</button>
@@ -248,7 +249,7 @@ export function createPanel(bridge) {
     annotations.push(annotation);
     renderAnnotations();
     placeMarker(annotation);
-    bridge.sendMessage("page.annotate", { annotation });
+    bridge.sendMessage(MESSAGE_TYPES.PAGE_ANNOTATE, { annotation });
   }
 
   function removeAnnotation(id) {
@@ -310,14 +311,14 @@ export function createPanel(bridge) {
     popup.className = "__dp-popup";
     popup.style.left = Math.min(rect.right + 8, window.innerWidth - 320) + "px";
     popup.style.top = Math.min(rect.top, window.innerHeight - 240) + "px";
+    const intentButtonsHtml = INTENT_OPTIONS
+      .map(({ value, icon, label }) => `<button class="__dp-intent-btn${value === INTENT_TOKENS.FIX ? " selected" : ""}" data-intent="${value}">${icon} ${label}</button>`)
+      .join("");
     popup.innerHTML = `
       <div class="__dp-popup-name">${esc(displayName)}</div>
       <textarea class="__dp-popup-ta" placeholder="What's the feedback?"></textarea>
       <div class="__dp-popup-intents">
-        <button class="__dp-intent-btn selected" data-intent="fix">🔧 Fix</button>
-        <button class="__dp-intent-btn" data-intent="change">✏️ Change</button>
-        <button class="__dp-intent-btn" data-intent="question">❓ Question</button>
-        <button class="__dp-intent-btn" data-intent="approve">✅ OK</button>
+        ${intentButtonsHtml}
       </div>
       <div class="__dp-popup-actions">
         <button class="__dp-btn" data-popup="cancel">Cancel</button>
@@ -325,7 +326,7 @@ export function createPanel(bridge) {
       </div>
     `;
 
-    let selectedIntent = "fix";
+    let selectedIntent = INTENT_TOKENS.FIX;
 
     popup.addEventListener("click", (e) => {
       e.stopPropagation();
@@ -423,7 +424,7 @@ export function createPanel(bridge) {
   function submitAll() {
     if (annotations.length === 0) return;
     const markdown = generateAnnotationMarkdown(annotations, detailLevel);
-    bridge.sendMessage("page.context", { markdown, annotations, detailLevel });
+    bridge.sendMessage(MESSAGE_TYPES.PAGE_CONTEXT, { markdown, annotations, detailLevel });
   }
 
   function sendChat() {
@@ -431,9 +432,9 @@ export function createPanel(bridge) {
     if (!msg) return;
     if (annotations.length > 0) {
       const markdown = generateAnnotationMarkdown(annotations, detailLevel);
-      bridge.sendMessage("page.context", { message: msg, markdown, annotations, detailLevel });
+      bridge.sendMessage(MESSAGE_TYPES.PAGE_CONTEXT, { message: msg, markdown, annotations, detailLevel });
     } else {
-      bridge.sendMessage("page.message", { message: msg });
+      bridge.sendMessage(MESSAGE_TYPES.PAGE_MESSAGE, { message: msg });
     }
     chatInput.value = "";
   }

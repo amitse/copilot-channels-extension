@@ -1,3 +1,5 @@
+import { MESSAGE_TYPES } from "./contracts.js";
+
 /**
  * Detour ↔ Agent Bridge (v2)
  *
@@ -66,7 +68,7 @@ try {
     });
     try {
       ws.send(JSON.stringify({
-        type: "console",
+        type: MESSAGE_TYPES.CONSOLE,
         level: level,
         args: serialized,
         timestamp: new Date().toISOString(),
@@ -88,7 +90,7 @@ try {
 
   // ── Eval handler ──────────────────────────────────────────────────────
   function handleEval(msg) {
-    var result = { type: "eval.result", id: msg.id };
+    var result = { type: MESSAGE_TYPES.EVAL_RESULT, id: msg.id };
     try {
       var value = (0, eval)(msg.code);
       if (value && typeof value.then === "function") {
@@ -127,7 +129,7 @@ try {
   var askIdCounter = 0;
 
   bridgeAPI.send = function (message) {
-    sendMessage("page.message", { message });
+    sendMessage(MESSAGE_TYPES.PAGE_MESSAGE, { message });
   };
 
   bridgeAPI.ask = function (message, timeoutMs) {
@@ -141,7 +143,7 @@ try {
         reject(new Error("Ask timed out"));
       }, timeoutMs || 30000);
       pendingAsks[id] = { resolve, reject, timer };
-      ws.send(JSON.stringify({ type: "page.ask", id, message }));
+      ws.send(JSON.stringify({ type: MESSAGE_TYPES.PAGE_ASK, id, message }));
     });
   };
 
@@ -212,7 +214,7 @@ try {
       orig.log("%c⚡ Detour bridge connected", "color:#0f0;font-weight:bold;font-size:13px");
       orig.log("%c  Panel: click ⚡ FAB (bottom-right)", "color:#aaa");
       ws.send(JSON.stringify({
-        type: "identify",
+        type: MESSAGE_TYPES.IDENTIFY,
         url: location.href,
         title: document.title || location.hostname,
       }));
@@ -224,8 +226,8 @@ try {
       var msg;
       try { msg = JSON.parse(event.data); } catch (e) { return; }
 
-      if (msg.type === "eval") handleEval(msg);
-      if (msg.type === "ask.reply") {
+      if (msg.type === MESSAGE_TYPES.EVAL) handleEval(msg);
+      if (msg.type === MESSAGE_TYPES.ASK_REPLY) {
         var pending = pendingAsks[msg.id];
         if (pending) {
           clearTimeout(pending.timer);
@@ -234,7 +236,7 @@ try {
           else pending.resolve(msg.reply);
         }
       }
-      if (msg.type === "agent.reply" && panel) {
+      if (msg.type === MESSAGE_TYPES.AGENT_REPLY && panel) {
         panel.showAgentReply(msg.message);
       }
     };

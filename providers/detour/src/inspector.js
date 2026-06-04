@@ -9,8 +9,9 @@
  */
 
 import { getReactContext, isReactDetected, getNearestComponentName } from "./react-context.js";
+import { DETAIL_LEVELS, DETAIL_LEVEL_VALUES } from "./contracts.js";
 
-const DETAIL_LEVELS = ["compact", "standard", "detailed", "forensic"];
+const SUPPORTED_DETAIL_LEVELS = DETAIL_LEVEL_VALUES;
 
 // ── Element identification ──────────────────────────────────────────────
 
@@ -152,8 +153,9 @@ export function getElementDisplayName(el) {
  * @param {string} detailLevel — "compact" | "standard" | "detailed" | "forensic"
  * @returns {object} context
  */
-export function extractElementContext(element, detailLevel = "standard") {
+export function extractElementContext(element, detailLevel = DETAIL_LEVELS.STANDARD) {
   if (!element) return null;
+  if (!SUPPORTED_DETAIL_LEVELS.includes(detailLevel)) detailLevel = DETAIL_LEVELS.STANDARD;
 
   const tag = element.tagName.toLowerCase();
 
@@ -163,7 +165,7 @@ export function extractElementContext(element, detailLevel = "standard") {
     displayName: getElementDisplayName(element),
   };
 
-  if (detailLevel === "compact") return context;
+  if (detailLevel === DETAIL_LEVELS.COMPACT) return context;
 
   // Standard: + selector, bounding box, viewport, tag path
   context.selector = buildSelector(element);
@@ -178,13 +180,13 @@ export function extractElementContext(element, detailLevel = "standard") {
   context.viewport = { width: window.innerWidth, height: window.innerHeight };
   context.text = getNearbyText(element);
 
-  if (detailLevel === "standard") return context;
+  if (detailLevel === DETAIL_LEVELS.STANDARD) return context;
 
   // Detailed: + classes, styles, nearby text
   context.classes = element.className || undefined;
   context.styles = getKeyStyles(element);
 
-  if (detailLevel === "detailed") return context;
+  if (detailLevel === DETAIL_LEVELS.DETAILED) return context;
 
   // Forensic: + full DOM path, accessibility, React context, source
   context.fullDOMPath = buildFullPath(element);
@@ -206,7 +208,7 @@ export function extractElementContext(element, detailLevel = "standard") {
 /**
  * Generate structured markdown from annotations for AI consumption.
  */
-export function generateAnnotationMarkdown(annotations, detailLevel = "standard") {
+export function generateAnnotationMarkdown(annotations, detailLevel = DETAIL_LEVELS.STANDARD) {
   const lines = [];
   const url = location.href;
   const title = document.title;

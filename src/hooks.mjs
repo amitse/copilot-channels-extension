@@ -1,5 +1,6 @@
 import { BRAND, COPILOT_INSTRUCTIONS_PATH, DEFAULT_STREAM, DEFAULT_STREAM_DESCRIPTION, OWNERSHIP, LIFESPAN } from "./consts.mjs";
 import { checkForUpdate } from "./update/checker.mjs";
+import { normalizeStartScopeAndOwnership } from "./emitter/start-options.mjs";
 
 function sessionInjectorSummary(streams) {
   const subscribed = streams.list().filter((stream) => stream.sessionInjector.enabled);
@@ -32,16 +33,20 @@ async function applyPersistentConfig({ baseCwd, streams, configStore, supervisor
     }
 
     try {
+      const startPolicy = normalizeStartScopeAndOwnership(
+        { scope: LIFESPAN.PERSISTENT, managedBy: entry.ownership },
+        { scope: LIFESPAN.PERSISTENT, managedBy: OWNERSHIP.USER_OWNED }
+      );
       await supervisor.start(
         {
           ...entry,
-          scope: LIFESPAN.PERSISTENT,
-          managedBy: entry.ownership ?? OWNERSHIP.USER_OWNED
+          scope: startPolicy.scope,
+          managedBy: startPolicy.managedBy
         },
         {
           baseCwd,
-          scope: LIFESPAN.PERSISTENT,
-          managedBy: entry.ownership ?? OWNERSHIP.USER_OWNED,
+          scope: startPolicy.scope,
+          managedBy: startPolicy.managedBy,
           subscribe: false,
           force: true
         }

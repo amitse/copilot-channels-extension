@@ -2,20 +2,10 @@ import { DEFAULT_STREAM, DEFAULT_STREAM_DESCRIPTION, EVENT_OUTCOME, OWNERSHIP, L
 import { normalizeName } from "../util/normalize.mjs";
 import { clampLimit } from "../util/text.mjs";
 import { formatStream, formatStreamHistory } from "../format/stream.mjs";
+import { applySessionInjectorPolicy } from "../emitter/injector-policy.mjs";
 
 export function applySessionInjector({ streams, configStore, sessionPort, persist }, rawName, options) {
-  const stream = streams.configureSessionInjector(rawName, options);
-
-  void sessionPort.log(
-    `${stream.sessionInjector.enabled ? "Subscribed" : "Unsubscribed"} stream '${stream.name}' with delivery=${stream.sessionInjector.delivery} lifespan=${stream.sessionInjector.lifespan} ownership=${stream.sessionInjector.ownership}.`
-  );
-
-  if (stream.sessionInjector.lifespan === LIFESPAN.PERSISTENT) {
-    configStore.upsertStream(stream);
-    persist();
-  }
-
-  return stream;
+  return applySessionInjectorPolicy({ streams, configStore, sessionPort, persist }, rawName, options);
 }
 
 function renderStreamList(streams) {

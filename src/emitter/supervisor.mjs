@@ -5,6 +5,7 @@ import { createEventFilter, formatEventFilter } from "../format/event-filter.mjs
 import { buildEmitterState } from "./state.mjs";
 import { createLineRouter } from "./line-router.mjs";
 import { createLifecycle } from "./lifecycle.mjs";
+import { applySessionInjectorPolicy } from "./injector-policy.mjs";
 
 export function createEmitterSupervisor({ streams, configStore, notifications, sessionPort, getBaseCwd, persist }) {
   const emitters = new Map();
@@ -34,22 +35,20 @@ export function createEmitterSupervisor({ streams, configStore, notifications, s
     }
 
     if (options.subscribe === true) {
-      const stream = streams.configureSessionInjector(emitter.stream, {
-        enabled: true,
-        delivery: options.delivery ?? EVENT_OUTCOME.SURFACE,
-        scope: options.scope ?? emitter.lifespan,
-        managedBy: options.managedBy ?? emitter.ownership,
-        description: spec.channelDescription ?? emitter.description,
-        force: options.force
-      });
-
-      void sessionPort.log(
-        `${stream.sessionInjector.enabled ? "Subscribed" : "Unsubscribed"} stream '${stream.name}' with delivery=${stream.sessionInjector.delivery} lifespan=${stream.sessionInjector.lifespan} ownership=${stream.sessionInjector.ownership}.`
+      applySessionInjectorPolicy(
+        { streams, configStore, sessionPort, persist },
+        emitter.stream,
+        {
+          enabled: true,
+          delivery: options.delivery ?? EVENT_OUTCOME.SURFACE,
+          scope: options.scope ?? emitter.lifespan,
+          managedBy: options.managedBy ?? emitter.ownership,
+          description: spec.channelDescription ?? emitter.description,
+          force: options.force
+        },
+        { persistConfig: false }
       );
 
-      if (stream.sessionInjector.lifespan === LIFESPAN.PERSISTENT) {
-        configStore.upsertStream(stream);
-      }
     }
 
     if (emitter.lifespan === LIFESPAN.PERSISTENT) {
