@@ -1,7 +1,7 @@
 import { SOURCE } from "../consts.mjs";
-import { normalizeToolError } from "../errors/handler.mjs";
 import { formatStream, formatStreamHistory } from "../format/stream.mjs";
 import { policyOptions, policyParameterProperties } from "./policy-options.mjs";
+import { wrapToolHandler } from "./tool-handler.mjs";
 
 function renderStreamList(service) {
   const streams = service.listStreams();
@@ -42,15 +42,7 @@ export function createStreamTools(deps) {
     {
       name: "tap_list_streams",
       description: "Lists event streams, session injector state, and recent metadata.",
-      handler: async () => {
-        try {
-          return renderStreamList(runtime);
-        } catch (error) {
-          throw normalizeToolError(error, {
-            context: { tool: "tap_list_streams" }
-          });
-        }
-      }
+      handler: wrapToolHandler("tap_list_streams", {}, async () => renderStreamList(runtime))
     },
     {
       name: "tap_post",
@@ -65,22 +57,16 @@ export function createStreamTools(deps) {
         },
         required: ["channel", "message"]
       },
-      handler: async (args) => {
-        try {
-          const { stream } = runtime.postToStream({
-            channel: args.channel,
-            message: args.message,
-            description: args.description,
-            source: args.source ?? SOURCE.TOOL
-          });
+      handler: wrapToolHandler("tap_post", (args) => ({ channel: args.channel }), async (args) => {
+        const { stream } = runtime.postToStream({
+          channel: args.channel,
+          message: args.message,
+          description: args.description,
+          source: args.source ?? SOURCE.TOOL
+        });
 
-          return `Posted message to stream '${stream.name}'.`;
-        } catch (error) {
-          throw normalizeToolError(error, {
-            context: { tool: "tap_post", channel: args.channel }
-          });
-        }
-      }
+        return `Posted message to stream '${stream.name}'.`;
+      })
     },
     {
       name: "tap_stream_history",
@@ -93,16 +79,10 @@ export function createStreamTools(deps) {
         },
         required: ["channel"]
       },
-      handler: async (args) => {
-        try {
-          const { stream, limit } = runtime.getStreamHistory(args.channel, args.limit);
-          return formatStreamHistory(stream, limit);
-        } catch (error) {
-          throw normalizeToolError(error, {
-            context: { tool: "tap_stream_history", channel: args.channel }
-          });
-        }
-      }
+      handler: wrapToolHandler("tap_stream_history", (args) => ({ channel: args.channel }), async (args) => {
+        const { stream, limit } = runtime.getStreamHistory(args.channel, args.limit);
+        return formatStreamHistory(stream, limit);
+      })
     },
     {
       name: "tap_enable_injector",
@@ -117,22 +97,16 @@ export function createStreamTools(deps) {
         },
         required: ["channel"]
       },
-      handler: async (args) => {
-        try {
-          const { state } = runtime.setInjectorPolicy(args.channel, {
-            enabled: true,
-            delivery: args.delivery,
-            description: args.description,
-            ...policyOptions(args)
-          });
+      handler: wrapToolHandler("tap_enable_injector", (args) => ({ channel: args.channel }), async (args) => {
+        const { state } = runtime.setInjectorPolicy(args.channel, {
+          enabled: true,
+          delivery: args.delivery,
+          description: args.description,
+          ...policyOptions(args)
+        });
 
-          return renderInjectorUpdate("Enabled", state);
-        } catch (error) {
-          throw normalizeToolError(error, {
-            context: { tool: "tap_enable_injector", channel: args.channel }
-          });
-        }
-      }
+        return renderInjectorUpdate("Enabled", state);
+      })
     },
     {
       name: "tap_disable_injector",
@@ -149,20 +123,14 @@ export function createStreamTools(deps) {
         },
         required: ["channel"]
       },
-      handler: async (args) => {
-        try {
-          const { state } = runtime.setInjectorPolicy(args.channel, {
-            enabled: false,
-            ...policyOptions(args)
-          });
+      handler: wrapToolHandler("tap_disable_injector", (args) => ({ channel: args.channel }), async (args) => {
+        const { state } = runtime.setInjectorPolicy(args.channel, {
+          enabled: false,
+          ...policyOptions(args)
+        });
 
-          return renderInjectorUpdate("Disabled", state);
-        } catch (error) {
-          throw normalizeToolError(error, {
-            context: { tool: "tap_disable_injector", channel: args.channel }
-          });
-        }
-      }
+        return renderInjectorUpdate("Disabled", state);
+      })
     }
   ];
 }

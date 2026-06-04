@@ -1,6 +1,5 @@
 import { formatEventFilter } from "../format/event-filter.mjs";
 import { formatConfiguredEmitter, formatRunningEmitter } from "../format/emitter.mjs";
-import { normalizeToolError } from "../errors/handler.mjs";
 import { EVENT_FILTER_PARAMETER_SCHEMA } from "./event-filter-schema.mjs";
 import {
   policyForceParameter,
@@ -9,6 +8,7 @@ import {
   policyParameterProperties,
   policyScopeParameter
 } from "./policy-options.mjs";
+import { wrapToolHandler } from "./tool-handler.mjs";
 
 /**
  * Helper: render the full emitter list from canonical service snapshots.
@@ -44,15 +44,7 @@ export function createEmitterTools(deps) {
     {
       name: "tap_list_emitters",
       description: "Lists session event emitters, their run schedules, and persistent definitions.",
-      handler: async () => {
-        try {
-          return renderEmitterList(runtime);
-        } catch (error) {
-          throw normalizeToolError(error, {
-            context: { tool: "tap_list_emitters" }
-          });
-        }
-      }
+      handler: wrapToolHandler("tap_list_emitters", {}, async () => renderEmitterList(runtime))
     },
     {
       name: "tap_start_emitter",
@@ -80,31 +72,25 @@ export function createEmitterTools(deps) {
         },
         required: ["name"]
       },
-      handler: async (args) => {
-        try {
-          const { state } = await runtime.startEmitter(args);
+      handler: wrapToolHandler("tap_start_emitter", (args) => ({ name: args.name }), async (args) => {
+        const { state } = await runtime.startEmitter(args);
 
-          return [
-            `Started emitter '${state.name}'.`,
-            `lifespan=${state.scope}`,
-            `ownership=${state.ownership}`,
-            `emitterType=${state.emitterType}`,
-            `runSchedule=${state.runSchedule}`,
-            state.everySchedule ? `everySchedule=[${state.everySchedule.join(", ")}]` : null,
-            state.every ? `every=${state.every}` : null,
-            state.maxRuns ? `maxRuns=${state.maxRuns}` : null,
-            `stream=${state.stream}`,
-            `sessionInjector=${state.sessionInjector?.enabled ? "on" : "off"}`,
-            `eventFilter=${formatEventFilter(state.eventFilter)}`
-          ]
-            .filter(Boolean)
-            .join("\n");
-        } catch (error) {
-          throw normalizeToolError(error, {
-            context: { tool: "tap_start_emitter", name: args.name }
-          });
-        }
-      }
+        return [
+          `Started emitter '${state.name}'.`,
+          `lifespan=${state.scope}`,
+          `ownership=${state.ownership}`,
+          `emitterType=${state.emitterType}`,
+          `runSchedule=${state.runSchedule}`,
+          state.everySchedule ? `everySchedule=[${state.everySchedule.join(", ")}]` : null,
+          state.every ? `every=${state.every}` : null,
+          state.maxRuns ? `maxRuns=${state.maxRuns}` : null,
+          `stream=${state.stream}`,
+          `sessionInjector=${state.sessionInjector?.enabled ? "on" : "off"}`,
+          `eventFilter=${formatEventFilter(state.eventFilter)}`
+        ]
+          .filter(Boolean)
+          .join("\n");
+      })
     },
     {
       name: "tap_set_event_filter",
@@ -118,17 +104,11 @@ export function createEmitterTools(deps) {
         },
         required: ["name"]
       },
-      handler: async (args) => {
-        try {
-          const { state } = runtime.updateFilter(args.name, args.eventFilter ?? {}, policyOptions(args));
+      handler: wrapToolHandler("tap_set_event_filter", (args) => ({ name: args.name }), async (args) => {
+        const { state } = runtime.updateFilter(args.name, args.eventFilter ?? {}, policyOptions(args));
 
-          return `Updated event filter for emitter '${state.name}': ${formatEventFilter(state.eventFilter)}`;
-        } catch (error) {
-          throw normalizeToolError(error, {
-            context: { tool: "tap_set_event_filter", name: args.name }
-          });
-        }
-      }
+        return `Updated event filter for emitter '${state.name}': ${formatEventFilter(state.eventFilter)}`;
+      })
     },
     {
       name: "tap_stop_emitter",
@@ -142,17 +122,11 @@ export function createEmitterTools(deps) {
         },
         required: ["name"]
       },
-      handler: async (args) => {
-        try {
-          const { result, state } = await runtime.stopEmitter(args.name, policyOptions(args, { managedBy: false }));
+      handler: wrapToolHandler("tap_stop_emitter", (args) => ({ name: args.name }), async (args) => {
+        const { result, state } = await runtime.stopEmitter(args.name, policyOptions(args, { managedBy: false }));
 
-          return `Stop requested for emitter '${state?.name ?? args.name}' (status=${result.status}).`;
-        } catch (error) {
-          throw normalizeToolError(error, {
-            context: { tool: "tap_stop_emitter", name: args.name }
-          });
-        }
-      }
+        return `Stop requested for emitter '${state?.name ?? args.name}' (status=${result.status}).`;
+      })
     }
   ];
 }
