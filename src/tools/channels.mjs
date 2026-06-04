@@ -17,6 +17,24 @@ function renderStreamList(streams) {
   ].join("\n");
 }
 
+/**
+ * @typedef {Object} StreamToolsDeps
+ * @property {Object} streams - Event stream manager
+ * @property {Object} configStore - Persistent config storage
+ * @property {Object} sessionPort - Session logging interface
+ * @property {Function} persist - Function to persist config
+ */
+
+/**
+ * Create stream management tools with capability-specific injection.
+ * Different handlers use different subsets of deps:
+ * - tap_list_streams / tap_post / tap_stream_history: only need streams + sessionPort
+ * - tap_enable/disable_injector: need full deps (streams, sessionPort, configStore, persist)
+ * 
+ * This is acceptable because the injector operations are stateful and cross-cutting,
+ * while the simpler operations are isolated to streams.
+ * @param {StreamToolsDeps} deps
+ */
 export function createStreamTools(deps) {
   const { streams, sessionPort } = deps;
   return [

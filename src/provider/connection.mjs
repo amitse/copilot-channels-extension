@@ -37,8 +37,24 @@ function generateProviderId() {
 }
 
 /**
+ * @typedef {Object} ProviderConnectionOptions
+ * @property {string} expectedToken - Token for authentication
+ * @property {Array} activeSessions - List of available sessions for binding
+ * @property {Function} [onBound] - Callback when provider successfully binds (called with connection)
+ * @property {Function} [onUnbound] - Callback when provider disconnects (called with connection)
+ * @property {Function} [onToolResult] - Callback when tool result received (called with connection, result)
+ * @property {Function} [checkToolConflict] - Callback to check tool name conflicts (called with tools array)
+ * @property {Function} [log] - Logging function (default: no-op)
+ */
+
+/**
  * Create a per-connection state machine that manages a single WebSocket
  * connection from a provider.
+ * 
+ * Minimal interface: all parameters are capabilities that drive state machine behavior.
+ * Only what's needed for this connection lifecycle is injected.
+ * @param {WebSocket} ws - WebSocket connection
+ * @param {ProviderConnectionOptions} options
  */
 export function createProviderConnection(ws, options) {
   const {

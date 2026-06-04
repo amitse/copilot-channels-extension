@@ -2,7 +2,19 @@ import { BRAND, EVENT_OUTCOME, SOURCE, STREAM } from "../consts.mjs";
 import { evaluateEventFilter } from "../format/event-filter.mjs";
 import { splitTextLines } from "../util/text.mjs";
 
-export function createLineRouter({ streams, notifications, sessionPort }) {
+/**
+ * @typedef {Object} LineRouterDeps
+ * @property {Object} streams - Event stream manager
+ * @property {Object} notifications - Notification queue for event injection
+ */
+
+/**
+ * Create line router with capability-specific injection.
+ * Only receives capabilities needed: streams (for append) and notifications (for injection).
+ * sessionPort is NOT needed here.
+ * @param {{ streams: Object, notifications: Object }} deps
+ */
+export function createLineRouter({ streams, notifications }) {
   function appendSystemMessage(emitter, text, notify = false) {
     streams.append(emitter.stream, {
       source: SOURCE.SYSTEM,
@@ -42,9 +54,7 @@ export function createLineRouter({ streams, notifications, sessionPort }) {
     });
 
     if (outcome === EVENT_OUTCOME.SURFACE) {
-      if (sessionPort && sessionPort.log) {
-        sessionPort.log(`${BRAND} ${emitter.name}: ${text}`);
-      }
+      // Note: logging surface-level events is now delegated to lifecycle/supervisor layer
     } else if (outcome === EVENT_OUTCOME.INJECT) {
       notifications.enqueue({
         channel: emitter.stream,

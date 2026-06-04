@@ -8,6 +8,20 @@ import { createLineRouter } from "./line-router.mjs";
 import { createLifecycle } from "./lifecycle.mjs";
 import { applySessionInjectorPolicy } from "./injector-policy.mjs";
 
+/**
+ * @typedef {Object} SupervisorDeps
+ * @property {Object} streams - Event stream manager
+ * @property {Object} configStore - Persistent config storage
+ * @property {Object} notifications - Notification dispatcher for event injection
+ * @property {Object} sessionPort - Session logging interface
+ * @property {Function} getBaseCwd - Function that returns base working directory
+ * @property {Function} persist - Function to persist config
+ */
+
+/**
+ * Create emitter supervisor with minimal dependency injection.
+ * @param {SupervisorDeps} deps
+ */
 export function createEmitterSupervisor({ streams, configStore, notifications, sessionPort, getBaseCwd, persist }) {
   const emitters = new Map();
   const lineRouter = createLineRouter({ streams, notifications });

@@ -14,6 +14,17 @@ import { isTerminalEmitterStatus } from "../util/policy.mjs";
 import { describeEmitterWork } from "../format/emitter.mjs";
 import { readLines, spawnEmitterProcess } from "./spawn.mjs";
 
+/**
+ * @typedef {Object} LifecycleDeps
+ * @property {Object} lineRouter - Line handler with appendSystemMessage, handleLine methods
+ * @property {Object} sessionPort - Session logging and idle state checks
+ */
+
+/**
+ * Create lifecycle state machine for emitter execution.
+ * Manages process spawning, scheduling (timed/idle/one-time), and state transitions.
+ * @param {LifecycleDeps} deps
+ */
 export function createLifecycle({ lineRouter, sessionPort }) {
   function isIdleEmitter(emitter) {
     return emitter?.runSchedule === RUN_SCHEDULE.IDLE;

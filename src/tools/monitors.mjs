@@ -4,6 +4,10 @@ import { formatEventFilter } from "../format/event-filter.mjs";
 import { formatConfiguredEmitter, formatRunningEmitter } from "../format/emitter.mjs";
 import { EmitterSpec } from "../emitter/spec.mjs";
 
+/**
+ * Helper: render the full emitter list (requires configStore for configured emitters).
+ * This is internal to the tool setup and not called by handlers.
+ */
 function renderEmitterList(streams, configStore, supervisor) {
   const running = supervisor.list();
   const configured = configStore
@@ -26,6 +30,19 @@ function renderEmitterList(streams, configStore, supervisor) {
   ].join("\n");
 }
 
+/**
+ * @typedef {Object} EmitterToolsDeps
+ * @property {Object} streams - Event stream manager
+ * @property {Object} configStore - Persistent config storage (for list only)
+ * @property {Object} supervisor - Emitter supervisor with start/stop/updateEventFilter
+ * @property {Function} getBaseCwd - Function returning base working directory
+ */
+
+/**
+ * Create emitter management tools with capability-specific injection.
+ * Note: configStore is only used by renderEmitterList, not by individual handlers.
+ * @param {EmitterToolsDeps} deps
+ */
 export function createEmitterTools({ streams, configStore, supervisor, getBaseCwd }) {
   return [
     {
