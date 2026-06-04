@@ -1,9 +1,9 @@
-import { DEFAULT_STREAM, DEFAULT_STREAM_DESCRIPTION, EMITTER_TYPE, LIFESPAN, OWNERSHIP, RUN_SCHEDULE } from "../consts.mjs";
-import { normalizeName, normalizeOwnership } from "../util/normalize.mjs";
+import { DEFAULT_STREAM, DEFAULT_STREAM_DESCRIPTION } from "../consts.mjs";
+import { normalizeName } from "../util/normalize.mjs";
 import { clampLimit } from "../util/text.mjs";
-import { createEventFilter, getEventFilterInput } from "../format/event-filter.mjs";
 import { applySessionInjectorPolicy } from "../emitter/injector-policy.mjs";
 import { EmitterSpec } from "../emitter/spec.mjs";
+import { projectConfiguredEmitter } from "../emitter/projection.mjs";
 import { AppError, NotFoundError, toAppError } from "../errors/index.mjs";
 
 function snapshotRunningEmitter(emitter, stream) {
@@ -21,49 +21,6 @@ function snapshotRunningEmitter(emitter, stream) {
     ownership: emitter.ownership,
     sessionInjector: stream?.sessionInjector ? { ...stream.sessionInjector } : null,
     source: "running"
-  };
-}
-
-function snapshotConfiguredEmitter(entry, stream) {
-  const name = normalizeName(entry.name);
-  const channel = normalizeName(entry.channel ?? entry.stream ?? name, name);
-  const ownership = normalizeOwnership(entry.ownership, OWNERSHIP.USER_OWNED);
-  const eventFilter = createEventFilter(
-    getEventFilterInput(entry),
-    ownership,
-    LIFESPAN.PERSISTENT
-  );
-  const prompt = entry.prompt ? String(entry.prompt) : null;
-  const command = entry.command ? String(entry.command) : null;
-  const every = entry.every ? String(entry.every) : null;
-  const emitterType = prompt ? EMITTER_TYPE.PROMPT : EMITTER_TYPE.COMMAND;
-  const runSchedule = every
-    ? every === "idle" && prompt
-      ? RUN_SCHEDULE.IDLE
-      : RUN_SCHEDULE.TIMED
-    : prompt
-      ? RUN_SCHEDULE.ONE_TIME
-      : RUN_SCHEDULE.CONTINUOUS;
-
-  return {
-    name,
-    status: "configured",
-    scope: LIFESPAN.PERSISTENT,
-    ownership,
-    emitterType,
-    runSchedule,
-    stream: channel,
-    channel,
-    autoStart: entry.autoStart !== false,
-    includeStderr: entry.includeStderr !== false,
-    cwd: entry.cwd ?? null,
-    command,
-    prompt,
-    every,
-    description: entry.description ?? "",
-    eventFilter,
-    sessionInjector: stream?.sessionInjector ? { ...stream.sessionInjector } : null,
-    source: "configured"
   };
 }
 
@@ -131,7 +88,7 @@ export function createEmitterService(deps) {
       .getEmitters()
       .filter((entry) => !supervisor.has(entry.name))
       .sort((left, right) => normalizeName(left.name).localeCompare(normalizeName(right.name)))
-      .map((entry) => snapshotConfiguredEmitter(entry, streams.get(entry.channel ?? entry.stream ?? entry.name)));
+      .map((entry) => projectConfiguredEmitter(entry, { getStream: (channel) => streams.get(channel) }));
 
     return { running, configured };
   }
@@ -280,7 +237,7 @@ export function createEmitterService(deps) {
 
     const configured = configStore.findEmitter(name);
     if (configured) {
-      return snapshotConfiguredEmitter(configured, streams.get(configured.channel ?? configured.stream ?? configured.name));
+      return projectConfiguredEmitter(configured, { getStream: (channel) => streams.get(channel) });
     }
 
     throw new NotFoundError(`Emitter '${name}' was not found in the session or persistent config.`, {

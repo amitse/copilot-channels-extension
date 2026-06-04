@@ -3,8 +3,10 @@ import assert from "node:assert/strict";
 
 import { EVENT_OUTCOME, LIFESPAN, OWNERSHIP, RUN_SCHEDULE, EMITTER_TYPE, EMITTER_STATUS } from "../consts.mjs";
 import { EventFilterService } from "../services/event-filter-service.mjs";
+import { formatConfiguredEmitter } from "../format/emitter.mjs";
 import { normalizeEmitterSpec } from "./spec.mjs";
 import { buildEmitterState } from "./state.mjs";
+import { projectConfiguredEmitter } from "./projection.mjs";
 
 test("normalizeEmitterSpec canonicalizes shared emitter fields", () => {
   const raw = {
@@ -86,4 +88,100 @@ test("buildEmitterState consumes canonical emitter specs", () => {
 
   assert.strictEqual(canonicalState.eventFilter, spec.eventFilter);
   assert.strictEqual(canonicalState.runSchedule, spec.runSchedule);
+});
+
+test("projectConfiguredEmitter preserves configured schedule fields for display", () => {
+  const stream = {
+    sessionInjector: {
+      enabled: true,
+      delivery: "all",
+      ownership: OWNERSHIP.USER_OWNED,
+      lifespan: LIFESPAN.PERSISTENT
+    }
+  };
+  const entry = {
+    name: "Backoff Monitor",
+    channel: "Ops Events",
+    command: "node worker.mjs",
+    cwd: "services/worker",
+    everySchedule: ["10s", "1m"],
+    everyScheduleMs: [10_000, 60_000],
+    maxRuns: 3,
+    autoStart: false,
+    includeStderr: false,
+    ownership: OWNERSHIP.USER_OWNED,
+    lifespan: LIFESPAN.PERSISTENT,
+    eventFilter: {
+      rules: [{ match: "ready", outcome: EVENT_OUTCOME.SURFACE }],
+      ownership: OWNERSHIP.USER_OWNED,
+      lifespan: LIFESPAN.PERSISTENT
+    }
+  };
+
+  const projected = projectConfiguredEmitter(entry, { stream });
+  const reprojected = projectConfiguredEmitter(projected);
+
+  assert.equal(projected.name, "backoff-monitor");
+  assert.equal(projected.stream, "ops-events");
+  assert.equal(projected.channel, "ops-events");
+  assert.equal(projected.scope, LIFESPAN.PERSISTENT);
+  assert.equal(projected.lifespan, LIFESPAN.PERSISTENT);
+  assert.equal(projected.ownership, OWNERSHIP.USER_OWNED);
+  assert.equal(projected.emitterType, EMITTER_TYPE.COMMAND);
+  assert.equal(projected.type, EMITTER_TYPE.COMMAND);
+  assert.equal(projected.runSchedule, RUN_SCHEDULE.TIMED);
+  assert.equal(projected.autoStart, false);
+  assert.equal(projected.includeStderr, false);
+  assert.equal(projected.cwd, "services/worker");
+  assert.deepEqual(projected.everySchedule, ["10s", "1m"]);
+  assert.deepEqual(projected.everyScheduleMs, [10_000, 60_000]);
+  assert.equal(projected.maxRuns, 3);
+  assert.deepEqual(projected.sessionInjector, stream.sessionInjector);
+  assert.notStrictEqual(projected.sessionInjector, stream.sessionInjector);
+  assert.deepEqual(EventFilterService.serialize(projected.eventFilter), {
+    rules: [{ match: "ready", outcome: EVENT_OUTCOME.SURFACE }],
+    ownership: OWNERSHIP.USER_OWNED,
+    lifespan: LIFESPAN.PERSISTENT
+  });
+  assert.deepEqual(EventFilterService.serialize(reprojected.eventFilter), EventFilterService.serialize(projected.eventFilter));
+  assert.deepEqual(reprojected.everySchedule, projected.everySchedule);
+  assert.deepEqual(reprojected.everyScheduleMs, projected.everyScheduleMs);
+  assert.equal(reprojected.maxRuns, projected.maxRuns);
+
+  const formatted = formatConfiguredEmitter(projected);
+  assert.match(formatted, /runSchedule=timed/);
+  assert.match(formatted, /everySchedule=\[10s, 1m\]/);
+  assert.match(formatted, /everyScheduleMs=\[10000, 60000\]/);
+  assert.match(formatted, /maxRuns=3/);
+  assert.match(formatted, /cwd=services\/worker/);
+});
+
+test("projectConfiguredEmitter tolerates incomplete configured entries", () => {
+  const projected = projectConfiguredEmitter({
+    name: "Partial Entry",
+    stream: "raw-stream",
+    every: "idle",
+    enabled: false
+  });
+
+  assert.equal(projected.name, "partial-entry");
+  assert.equal(projected.stream, "raw-stream");
+  assert.equal(projected.command, null);
+  assert.equal(projected.prompt, null);
+  assert.equal(projected.emitterType, EMITTER_TYPE.COMMAND);
+  assert.equal(projected.idle, false);
+  assert.equal(projected.runSchedule, RUN_SCHEDULE.TIMED);
+  assert.equal(projected.autoStart, true);
+  assert.equal(projected.enabled, false);
+  assert.doesNotThrow(() => formatConfiguredEmitter(projected));
+
+  const typedPrompt = projectConfiguredEmitter({
+    name: "Typed Prompt",
+    type: "prompt",
+    idle: true
+  });
+  assert.equal(typedPrompt.emitterType, EMITTER_TYPE.PROMPT);
+  assert.equal(typedPrompt.type, EMITTER_TYPE.PROMPT);
+  assert.equal(typedPrompt.idle, true);
+  assert.equal(typedPrompt.runSchedule, RUN_SCHEDULE.IDLE);
 });

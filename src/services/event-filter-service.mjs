@@ -1,5 +1,5 @@
 import { EVENT_OUTCOME, LIFESPAN, OWNERSHIP } from "../consts.mjs";
-import { normalizeOwnership, normalizeLifespan } from "../util/normalize.mjs";
+import { normalizeOwnership, normalizeLifespan, normalizeOutcome } from "../util/normalize.mjs";
 import { compileRegex } from "../util/regex.mjs";
 
 /**
@@ -16,8 +16,25 @@ import { compileRegex } from "../util/regex.mjs";
  * - lifespan: LIFESPAN.* value
  */
 
+const ALLOWED_OUTCOMES = new Set(Object.values(EVENT_OUTCOME));
+const INVALID_RULE_OUTCOME_FALLBACK = EVENT_OUTCOME.DROP;
+
 function isPlainObject(value) {
   return Object.prototype.toString.call(value) === "[object Object]";
+}
+
+function normalizeRuleOutcome(value) {
+  return normalizeOutcome(value, INVALID_RULE_OUTCOME_FALLBACK);
+}
+
+function hasCanonicalRules(filter) {
+  return Boolean(filter)
+    && Array.isArray(filter.rules)
+    && filter.rules.every((rule) =>
+      isPlainObject(rule)
+      && ALLOWED_OUTCOMES.has(rule.outcome)
+      && (rule.regex === null || rule.regex instanceof RegExp)
+    );
 }
 
 function resolveInput(source) {
@@ -30,7 +47,7 @@ function compileRules(rules) {
   return rules.map((rule) => ({
     match: String(rule?.match ?? ""),
     regex: compileRegex(rule?.match, "rule.match"),
-    outcome: rule?.outcome
+    outcome: normalizeRuleOutcome(rule?.outcome)
   }));
 }
 
@@ -106,11 +123,11 @@ export function update(existing, changes = {}) {
  */
 export function evaluate(filter, event) {
   const text = String(event ?? "");
-  const resolved = filter && Array.isArray(filter.rules) ? filter : canonicalize(filter);
+  const resolved = hasCanonicalRules(filter) ? filter : canonicalize(filter);
 
   for (const rule of resolved.rules) {
     if (rule?.regex && rule.regex.test(text)) {
-      return rule.outcome;
+      return normalizeRuleOutcome(rule.outcome);
     }
   }
 

@@ -6,6 +6,7 @@ import { createSessionPort } from "../session/port.mjs";
 import { createNotificationDispatcher } from "../streams/notifications.mjs";
 import { createStreamStore } from "../streams/store.mjs";
 import { checkForUpdate } from "../update/checker.mjs";
+import { normalizeBaseCwd } from "../util/path.mjs";
 import { createEmitterService } from "./emitter-service.mjs";
 
 function sessionInjectorSummary(streams) {
@@ -24,17 +25,12 @@ function sessionInjectorSummary(streams) {
   ].join("\n");
 }
 
-function normalizeBaseCwd(value) {
-  return typeof value === "string" && value.trim() ? value : process.cwd();
-}
-
 function createRuntimeSubsystems(options = {}) {
   let baseCwd = normalizeBaseCwd(options.cwd ?? options.getBaseCwd?.());
 
   const getBaseCwd = () => baseCwd;
   const setBaseCwd = (next) => {
-    const candidate = typeof next === "string" && next.trim() ? next : baseCwd;
-    baseCwd = normalizeBaseCwd(candidate);
+    baseCwd = normalizeBaseCwd(next, baseCwd);
     options.setBaseCwd?.(baseCwd);
     return baseCwd;
   };

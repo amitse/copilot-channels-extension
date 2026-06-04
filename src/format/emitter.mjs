@@ -1,7 +1,6 @@
-import { OWNERSHIP, LIFESPAN, EMITTER_TYPE, RUN_SCHEDULE } from "../consts.mjs";
-import { normalizeOwnership, normalizeName } from "../util/normalize.mjs";
 import { previewText } from "../util/text.mjs";
-import { createEventFilter, formatEventFilter, getEventFilterInput } from "./event-filter.mjs";
+import { projectConfiguredEmitter } from "../emitter/projection.mjs";
+import { formatEventFilter } from "./event-filter.mjs";
 
 export function describeEmitterWork(emitter) {
   if (emitter.command) {
@@ -42,36 +41,39 @@ export function formatRunningEmitter(emitter, stream) {
 }
 
 export function formatConfiguredEmitter(entry) {
-  const eventFilter = createEventFilter(
-    getEventFilterInput(entry),
-    entry.eventFilter?.ownership ?? entry.ownership ?? OWNERSHIP.USER_OWNED,
-    LIFESPAN.PERSISTENT
-  );
-  const prompt = entry.prompt ? `  prompt=${JSON.stringify(previewText(entry.prompt, 90))}` : null;
-  const command = entry.command ? `  command=${entry.command}` : null;
-  const every = entry.every ? `  every=${entry.every}` : null;
-  const emitterType = entry.prompt ? EMITTER_TYPE.PROMPT : EMITTER_TYPE.COMMAND;
-  const runSchedule = entry.every
-    ? (entry.every === "idle" && entry.prompt ? RUN_SCHEDULE.IDLE : RUN_SCHEDULE.TIMED)
-    : entry.prompt
-      ? RUN_SCHEDULE.ONE_TIME
-      : RUN_SCHEDULE.CONTINUOUS;
+  const emitter = projectConfiguredEmitter(entry);
+  const prompt = emitter.prompt ? `  prompt=${JSON.stringify(previewText(emitter.prompt, 90))}` : null;
+  const command = emitter.command ? `  command=${emitter.command}` : null;
+  const everySchedule = emitter.everySchedule
+    ? `  everySchedule=[${emitter.everySchedule.join(", ")}]`
+    : null;
+  const everyScheduleMs = emitter.everyScheduleMs
+    ? `  everyScheduleMs=[${emitter.everyScheduleMs.join(", ")}]`
+    : null;
+  const every = emitter.every && !emitter.everySchedule && !emitter.everyScheduleMs
+    ? `  every=${emitter.every}`
+    : null;
+
   return [
-    `- ${normalizeName(entry.name)}:`,
+    `- ${emitter.name}:`,
     "  status=configured",
-    `  scope=${LIFESPAN.PERSISTENT}`,
-    `  ownership=${normalizeOwnership(entry.ownership, OWNERSHIP.USER_OWNED)}`,
-    `  emitterType=${emitterType}`,
-    `  runSchedule=${runSchedule}`,
-    `  stream=${normalizeName(entry.channel, normalizeName(entry.name))}`,
-    `  autoStart=${entry.autoStart !== false}`,
-    `  includeStderr=${entry.includeStderr !== false}`,
-    entry.cwd ? `  cwd=${entry.cwd}` : null,
+    `  scope=${emitter.scope}`,
+    `  ownership=${emitter.ownership}`,
+    `  emitterType=${emitter.emitterType}`,
+    `  runSchedule=${emitter.runSchedule}`,
+    `  stream=${emitter.stream}`,
+    `  autoStart=${emitter.autoStart}`,
+    emitter.enabled === undefined ? null : `  enabled=${emitter.enabled}`,
+    `  includeStderr=${emitter.includeStderr}`,
+    emitter.cwd ? `  cwd=${emitter.cwd}` : null,
     command,
     prompt,
+    everySchedule,
+    everyScheduleMs,
     every,
-    `  eventFilter=${formatEventFilter(eventFilter)}`,
-    entry.description ? `  description=${entry.description}` : null
+    emitter.maxRuns ? `  maxRuns=${emitter.maxRuns}` : null,
+    `  eventFilter=${formatEventFilter(emitter.eventFilter)}`,
+    emitter.description ? `  description=${emitter.description}` : null
   ]
     .filter(Boolean)
     .join("\n");

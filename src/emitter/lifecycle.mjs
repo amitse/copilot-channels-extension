@@ -61,6 +61,14 @@ function applyState(emitter, nextState) {
   Object.assign(emitter, nextState);
 }
 
+function shouldRouteCommandOutput(emitter, stream) {
+  if (stream === STREAM.STDERR) {
+    return emitter.includeStderr !== false;
+  }
+
+  return true;
+}
+
 function runAction(emitter, action, context) {
   switch (action.type) {
     case LIFECYCLE_ACTION.CLEAR_TIMER:
@@ -108,6 +116,12 @@ function wireStreams(emitter, context) {
     context.lineRouter.handleLine(emitter, line, STREAM.STDOUT, SOURCE.EMITTER);
   });
   emitter.stderrReader = context.processAdapter.readLines(child.stderr, (line) => {
+    // Keep consuming stderr to avoid process back-pressure, but only route it
+    // when the command emitter policy allows stderr through to filtering.
+    if (!shouldRouteCommandOutput(emitter, STREAM.STDERR)) {
+      return;
+    }
+
     context.lineRouter.handleLine(emitter, line, STREAM.STDERR, SOURCE.EMITTER_STDERR);
   });
 }

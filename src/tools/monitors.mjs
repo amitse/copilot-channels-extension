@@ -1,6 +1,7 @@
 import { formatEventFilter } from "../format/event-filter.mjs";
 import { formatConfiguredEmitter, formatRunningEmitter } from "../format/emitter.mjs";
 import { normalizeToolError } from "../errors/handler.mjs";
+import { EVENT_FILTER_PARAMETER_SCHEMA } from "./event-filter-schema.mjs";
 
 /**
  * Helper: render the full emitter list from canonical service snapshots.
@@ -64,24 +65,7 @@ export function createEmitterTools(deps) {
           managedBy: { type: "string", description: "Ownership label: 'userOwned' or 'modelOwned'." },
           autoStart: { type: "boolean", description: "When persistent, whether the emitter should auto-start next session." },
           includeStderr: { type: "boolean", description: "Whether stderr lines are eligible for event outcome evaluation." },
-          eventFilter: {
-            type: "object",
-            description: "Canonical event filter object. Provide ordered rules as [{ match, outcome }].",
-            properties: {
-              rules: {
-                type: "array",
-                minItems: 1,
-                items: {
-                  type: "object",
-                  properties: {
-                    match: { type: "string" },
-                    outcome: { type: "string" }
-                  },
-                  required: ["match", "outcome"]
-                }
-              }
-            }
-          },
+          eventFilter: EVENT_FILTER_PARAMETER_SCHEMA,
           subscribe: { type: "boolean", description: "Whether to attach a session injector to the stream as part of emitter creation." },
           delivery: { type: "string", description: "Session injector delivery ceiling: 'important' (only important lines inject) or 'all' (all lines eligible). Delivery opens the door; EventFilter rules decide which lines walk through it." },
           maxRuns: { type: "integer", description: "Maximum number of iterations before the emitter auto-completes. Useful for idle and timed loops." },
@@ -122,24 +106,7 @@ export function createEmitterTools(deps) {
         type: "object",
         properties: {
           name: { type: "string", description: "Emitter name." },
-          eventFilter: {
-            type: "object",
-            description: "Canonical event filter object with ordered rules.",
-            properties: {
-              rules: {
-                type: "array",
-                minItems: 1,
-                items: {
-                  type: "object",
-                  properties: {
-                    match: { type: "string" },
-                    outcome: { type: "string" }
-                  },
-                  required: ["match", "outcome"]
-                }
-              }
-            }
-          },
+          eventFilter: EVENT_FILTER_PARAMETER_SCHEMA,
           scope: { type: "string", description: "Use 'temporary' for session-only or 'persistent' to write config." },
           managedBy: { type: "string", description: "Ownership label: 'userOwned' or 'modelOwned'." },
           force: { type: "boolean", description: "Required only when transferring ownership of a protected emitter." }

@@ -1,11 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import path from "node:path";
 
-import { LIFESPAN, OWNERSHIP } from "../consts.mjs";
+import { CONFIG_LOCATIONS, LIFESPAN, OWNERSHIP } from "../consts.mjs";
+import { ValidationError } from "../errors/index.mjs";
 import { CONFIG_VERSION as MIGRATION_CONFIG_VERSION } from "./migrations.mjs";
 import { normalizePersistedConfig } from "./normalization.mjs";
-import { serializeConfig, serializeEmitter, serializeStream } from "./serialization.mjs";
-import { serializeEmitter as storeSerializeEmitter, serializeStream as storeSerializeStream } from "./store.mjs";
+import { defaultConfigPath, serializeConfig, serializeEmitter, serializeStream } from "./serialization.mjs";
+import { createConfigStore, serializeEmitter as storeSerializeEmitter, serializeStream as storeSerializeStream } from "./store.mjs";
 
 test("config helpers preserve raw fields and canonicalize nested filters", () => {
   const raw = {
@@ -86,4 +88,46 @@ test("config modules preserve legacy public exports", () => {
   assert.strictEqual(MIGRATION_CONFIG_VERSION.V2, 2);
   assert.strictEqual(storeSerializeEmitter, serializeEmitter);
   assert.strictEqual(storeSerializeStream, serializeStream);
+});
+
+test("config store load falls back to the stored cwd for invalid input", () => {
+  const cwd = path.join("workspace", "repo");
+  const checkedPaths = [];
+  const fs = {
+    existsSync(filePath) {
+      checkedPaths.push(filePath);
+      return false;
+    },
+    readFileSync() {
+      throw new Error("readFileSync should not be called when no config exists");
+    },
+    writeFileSync() {
+      throw new Error("writeFileSync should not be called when no config exists");
+    }
+  };
+  const store = createConfigStore({ cwd, fs });
+
+  const undefinedResult = store.load(undefined);
+  const whitespaceResult = store.load("   ");
+
+  assert.equal(store.getCwd(), cwd);
+  assert.deepEqual(undefinedResult, { found: false, filePath: defaultConfigPath(cwd) });
+  assert.deepEqual(whitespaceResult, { found: false, filePath: defaultConfigPath(cwd) });
+  assert.deepEqual(checkedPaths, [
+    ...CONFIG_LOCATIONS.map((relativePath) => path.join(cwd, relativePath)),
+    ...CONFIG_LOCATIONS.map((relativePath) => path.join(cwd, relativePath))
+  ]);
+});
+
+test("default config path rejects invalid cwd with a validation error", () => {
+  assert.throws(
+    () => defaultConfigPath(undefined),
+    (error) => {
+      assert.ok(error instanceof ValidationError);
+      assert.equal(error.code, "VALIDATION");
+      assert.match(error.message, /non-empty string/);
+      assert.deepEqual(error.context, { baseCwd: undefined, type: "undefined" });
+      return true;
+    }
+  );
 });

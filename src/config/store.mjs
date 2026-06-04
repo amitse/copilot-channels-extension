@@ -3,6 +3,7 @@ import path from "node:path";
 
 import { CONFIG_LOCATIONS, OWNERSHIP } from "../consts.mjs";
 import { normalizeOwnership, normalizeName } from "../util/normalize.mjs";
+import { normalizeBaseCwd } from "../util/path.mjs";
 import { assertMutable } from "../util/policy.mjs";
 import { LATEST_CONFIG_VERSION, migrateConfig } from "./migrations.mjs";
 import { normalizePersistedEmitter, normalizePersistedStream } from "./normalization.mjs";
@@ -13,7 +14,7 @@ export { serializeEmitter, serializeStream } from "./serialization.mjs";
 export function createConfigStore(options = {}) {
   const fs = options.fs ?? { existsSync, readFileSync, writeFileSync };
   const state = {
-    cwd: options.cwd ?? process.cwd(),
+    cwd: normalizeBaseCwd(options.cwd),
     filePath: null,
     config: createEmptyConfig(LATEST_CONFIG_VERSION)
   };
@@ -27,12 +28,13 @@ export function createConfigStore(options = {}) {
         };
 
   function load(baseCwd) {
-    state.cwd = baseCwd;
-    state.filePath = defaultConfigPath(baseCwd);
+    const resolvedBaseCwd = normalizeBaseCwd(baseCwd, state.cwd);
+    state.cwd = resolvedBaseCwd;
+    state.filePath = defaultConfigPath(resolvedBaseCwd);
     state.config = createEmptyConfig(LATEST_CONFIG_VERSION);
 
     for (const relativePath of CONFIG_LOCATIONS) {
-      const filePath = path.join(baseCwd, relativePath);
+      const filePath = path.join(resolvedBaseCwd, relativePath);
       if (!fs.existsSync(filePath)) {
         continue;
       }

@@ -1,7 +1,9 @@
 import path from "node:path";
 
 import { CONFIG_FILENAME } from "../consts.mjs";
+import { ValidationError } from "../errors/index.mjs";
 import { normalizeName } from "../util/normalize.mjs";
+import { isValidBaseCwd } from "../util/path.mjs";
 import { EventFilterService } from "../services/event-filter-service.mjs";
 
 export function createEmptyConfig(configVersion) {
@@ -147,5 +149,14 @@ function serializeEventFilter(eventFilter) {
 }
 
 export function defaultConfigPath(baseCwd) {
+  if (!isValidBaseCwd(baseCwd)) {
+    throw new ValidationError("Config base cwd must be a non-empty string.", {
+      context: {
+        baseCwd,
+        type: typeof baseCwd
+      }
+    });
+  }
+
   return path.join(baseCwd, CONFIG_FILENAME);
 }
