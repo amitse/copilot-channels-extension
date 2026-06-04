@@ -1,7 +1,8 @@
-import { EVENT_OUTCOME, EMITTER_OPERATION_STATUS, EMITTER_STATUS, LIFESPAN, OWNERSHIP } from "../consts.mjs";
+import { EMITTER_OPERATION_STATUS, EMITTER_STATUS, LIFESPAN, OWNERSHIP } from "../consts.mjs";
 import { normalizeName, normalizeLifespan, normalizeOwnership } from "../util/normalize.mjs";
 import { assertMutable, isTerminalEmitterStatus } from "../util/policy.mjs";
 import { createEventFilter, formatEventFilter } from "../format/event-filter.mjs";
+import { normalizeEmitterSpec } from "./spec.mjs";
 import { buildEmitterState } from "./state.mjs";
 import { createLineRouter } from "./line-router.mjs";
 import { createLifecycle } from "./lifecycle.mjs";
@@ -14,14 +15,23 @@ export function createEmitterSupervisor({ streams, configStore, notifications, s
 
   async function start(spec, options = {}) {
     const baseCwd = options.baseCwd ?? getBaseCwd();
-    const emitter = buildEmitterState(spec, baseCwd, options);
+    const normalizedSpec = spec?.__emitterSpec === true ? spec : normalizeEmitterSpec(spec);
+    const emitterSpec = {
+      ...normalizedSpec,
+      scope: options.scope ?? normalizedSpec.scope,
+      managedBy: options.managedBy ?? normalizedSpec.managedBy,
+      subscribe: options.subscribe ?? normalizedSpec.subscribe,
+      delivery: options.delivery ?? normalizedSpec.delivery,
+      force: options.force ?? normalizedSpec.force
+    };
+    const emitter = buildEmitterState(emitterSpec, baseCwd);
     const existing = emitters.get(emitter.name);
 
     if (existing && !isTerminalEmitterStatus(existing.status)) {
       throw new Error(`Emitter '${emitter.name}' is already active.`);
     }
     if (existing) {
-      assertMutable(existing.ownership, options.force, `Emitter '${emitter.name}'`);
+      assertMutable(existing.ownership, emitterSpec.force, `Emitter '${emitter.name}'`);
     }
 
     streams.ensure(emitter.stream, emitter.description || `Events for ${emitter.name}`);
@@ -34,17 +44,17 @@ export function createEmitterSupervisor({ streams, configStore, notifications, s
       throw error;
     }
 
-    if (options.subscribe === true) {
+    if (emitterSpec.subscribe === true) {
       applySessionInjectorPolicy(
         { streams, configStore, sessionPort, persist },
         emitter.stream,
         {
           enabled: true,
-          delivery: options.delivery ?? EVENT_OUTCOME.SURFACE,
-          scope: options.scope ?? emitter.lifespan,
-          managedBy: options.managedBy ?? emitter.ownership,
-          description: spec.channelDescription ?? emitter.description,
-          force: options.force
+          delivery: emitterSpec.delivery,
+          scope: emitter.lifespan,
+          managedBy: emitter.ownership,
+          description: emitter.description,
+          force: emitterSpec.force
         },
         { persistConfig: false }
       );
@@ -54,7 +64,7 @@ export function createEmitterSupervisor({ streams, configStore, notifications, s
     if (emitter.lifespan === LIFESPAN.PERSISTENT) {
       configStore.upsertEmitter(emitter);
       persist();
-    } else if (options.subscribe === true && streams.ensure(emitter.stream).sessionInjector.lifespan === LIFESPAN.PERSISTENT) {
+    } else if (emitterSpec.subscribe === true && streams.ensure(emitter.stream).sessionInjector.lifespan === LIFESPAN.PERSISTENT) {
       persist();
     }
 

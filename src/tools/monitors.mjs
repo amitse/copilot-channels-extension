@@ -1,8 +1,8 @@
-import { EVENT_OUTCOME, OWNERSHIP, LIFESPAN } from "../consts.mjs";
+import { OWNERSHIP, LIFESPAN } from "../consts.mjs";
 import { normalizeName } from "../util/normalize.mjs";
 import { formatEventFilter } from "../format/event-filter.mjs";
 import { formatConfiguredEmitter, formatRunningEmitter } from "../format/emitter.mjs";
-import { normalizeStartScopeAndOwnership } from "../emitter/start-options.mjs";
+import { EmitterSpec } from "../emitter/spec.mjs";
 
 function renderEmitterList(streams, configStore, supervisor) {
   const running = supervisor.list();
@@ -62,21 +62,8 @@ export function createEmitterTools({ streams, configStore, supervisor, getBaseCw
         required: ["name"]
       },
       handler: async (args) => {
-        const startPolicy = normalizeStartScopeAndOwnership(args, {
-          scope: LIFESPAN.TEMPORARY,
-          managedBy: OWNERSHIP.MODEL_OWNED
-        });
-        const emitter = await supervisor.start(
-          { ...args, scope: startPolicy.scope, managedBy: startPolicy.managedBy },
-          {
-            baseCwd: getBaseCwd(),
-            scope: startPolicy.scope,
-            managedBy: startPolicy.managedBy,
-            subscribe: args.subscribe !== false,
-            delivery: args.delivery ?? EVENT_OUTCOME.SURFACE,
-            force: args.force === true
-          }
-        );
+        const spec = EmitterSpec.normalize(args);
+        const emitter = await supervisor.start(spec, { baseCwd: getBaseCwd() });
 
         return [
           `Started emitter '${emitter.name}'.`,
