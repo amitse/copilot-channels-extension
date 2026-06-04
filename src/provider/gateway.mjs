@@ -3,18 +3,41 @@ import { WebSocketServer } from "ws";
 import { GATEWAY_PORT, RELOAD_DEBOUNCE_MS, TOKEN_PREFIX, CONNECTION_STATE, TOOL_RESULT_ERROR } from "./consts.mjs";
 import { createProviderRegistry } from "./registry.mjs";
 import { createProviderConnection } from "./connection.mjs";
+import { computeTransition, identifyActions, GATEWAY_EVENT, GATEWAY_ACTION } from "./gateway-state.mjs";
 
-export function createProviderGateway(options = {}) {
+function createDefaultTimerAdapter() {
+  return {
+    schedule(callback, delayMs) {
+      return setTimeout(callback, delayMs);
+    },
+    cancel(timerId) {
+      clearTimeout(timerId);
+    }
+  };
+}
+
+function createDefaultWebSocketAdapter() {
+  return {
+    connect() {
+      return () => {};
+    },
+    send() {},
+    close() {}
+  };
+}
+
+export function createProviderGateway(options = {}, adapters = {}) {
   const {
     sessionPort,
     tapTools,
     getSessionInfo,
-    log = () => {},
+    log = () => {}
   } = options;
 
-  const registry = createProviderRegistry();
+  const timerAdapter = adapters.timerAdapter ?? createDefaultTimerAdapter();
+  const websocketAdapter = adapters.websocketAdapter ?? createDefaultWebSocketAdapter();
 
-  // connection tracking
+  const registry = createProviderRegistry();
   const connectionsByWs = new Map();
   const connectionsByProviderId = new Map();
 
@@ -23,10 +46,7 @@ export function createProviderGateway(options = {}) {
   let running = false;
   let toolsChangedCallback = null;
   let reloadTimer = null;
-
-  // -------------------------------------------------------------------------
-  // Token management
-  // -------------------------------------------------------------------------
+  let reloadPending = false;
 
   function generateToken() {
     token = TOKEN_PREFIX + randomBytes(16).toString("hex");
@@ -34,36 +54,35 @@ export function createProviderGateway(options = {}) {
     return token;
   }
 
-  // -------------------------------------------------------------------------
-  // Debounced reload
-  // -------------------------------------------------------------------------
-
-  function scheduleReload() {
-    if (!running) return;
-    if (reloadTimer) clearTimeout(reloadTimer);
-    reloadTimer = setTimeout(() => {
-      reloadTimer = null;
-      if (toolsChangedCallback) {
-        const currentTapTools = typeof tapTools === "function" ? tapTools() : [];
-        const merged = registry.buildSessionTools(currentTapTools, dispatchToolCall);
-        toolsChangedCallback(merged);
-      }
-    }, RELOAD_DEBOUNCE_MS);
-  }
-
-  // -------------------------------------------------------------------------
-  // Active sessions helper
-  // -------------------------------------------------------------------------
-
   function getActiveSessions() {
     if (typeof getSessionInfo !== "function") return [];
     const info = getSessionInfo();
     return info ? [info] : [];
   }
 
-  // -------------------------------------------------------------------------
-  // Connection callbacks
-  // -------------------------------------------------------------------------
+  function scheduleReload() {
+    const transition = computeTransition(
+      { running, reloadPending, reloadTimerActive: Boolean(reloadTimer), token },
+      { type: GATEWAY_EVENT.SCHEDULE_RELOAD, delayMs: RELOAD_DEBOUNCE_MS }
+    );
+    reloadPending = transition.nextState.reloadPending;
+    for (const action of identifyActions(transition)) {
+      if (action.type === GATEWAY_ACTION.SCHEDULE_TIMER) {
+        if (reloadTimer) {
+          timerAdapter.cancel(reloadTimer);
+        }
+        reloadTimer = timerAdapter.schedule(() => {
+          reloadTimer = null;
+          reloadPending = false;
+          if (toolsChangedCallback && running) {
+            const currentTapTools = typeof tapTools === "function" ? tapTools() : [];
+            const merged = registry.buildSessionTools(currentTapTools, dispatchToolCall);
+            toolsChangedCallback(merged);
+          }
+        }, action.delayMs);
+      }
+    }
+  }
 
   function onBound(conn) {
     connectionsByProviderId.set(conn.providerId, conn);
@@ -75,9 +94,8 @@ export function createProviderGateway(options = {}) {
       return;
     }
 
-    // Check tool conflicts against tap tools and other providers
     const currentTapTools = typeof tapTools === "function" ? tapTools() : [];
-    const tapToolNames = new Set(currentTapTools.map(t => t.name));
+    const tapToolNames = new Set(currentTapTools.map((t) => t.name));
     const conflicts = registry.hasToolConflict(conn.tools, tapToolNames);
     if (conflicts.length > 0) {
       log(`Provider '${conn.providerName}' (${conn.providerId}) has tool conflicts with tap tools: ${conflicts.join(", ")}`);
@@ -96,17 +114,12 @@ export function createProviderGateway(options = {}) {
 
   function checkToolConflict(newTools) {
     const currentTapTools = typeof tapTools === "function" ? tapTools() : [];
-    const existingNames = new Set(currentTapTools.map(t => t.name));
-    // Also include tools from other providers
+    const existingNames = new Set(currentTapTools.map((t) => t.name));
     for (const name of registry.getAllToolNames()) {
       existingNames.add(name);
     }
     return registry.hasToolConflict(newTools, existingNames);
   }
-
-  // -------------------------------------------------------------------------
-  // WebSocket server
-  // -------------------------------------------------------------------------
 
   function handleConnection(ws) {
     const conn = createProviderConnection(ws, {
@@ -116,8 +129,8 @@ export function createProviderGateway(options = {}) {
       onUnbound,
       onToolResult: () => {},
       checkToolConflict,
-      log,
-    });
+      log
+    }, { websocketAdapter });
 
     connectionsByWs.set(ws, conn);
 
@@ -137,10 +150,6 @@ export function createProviderGateway(options = {}) {
     });
   }
 
-  // -------------------------------------------------------------------------
-  // Public API
-  // -------------------------------------------------------------------------
-
   function start() {
     if (running) return;
     generateToken();
@@ -148,14 +157,11 @@ export function createProviderGateway(options = {}) {
     try {
       wss = new WebSocketServer({ port: GATEWAY_PORT, noServer: false });
 
-      // Attach error listener BEFORE the server starts listening
-      // to prevent unhandled 'error' events from crashing the process.
       wss.on("error", (err) => {
         log(`Provider gateway server error: ${err.message}`);
       });
 
       wss.on("connection", handleConnection);
-
       wss.on("listening", () => {
         log(`Provider gateway listening on port ${GATEWAY_PORT}`);
       });
@@ -164,21 +170,18 @@ export function createProviderGateway(options = {}) {
     } catch (err) {
       log(`Failed to start provider gateway on port ${GATEWAY_PORT}: ${err.message}`);
       wss = null;
-      return;
     }
   }
 
   function stop() {
     if (reloadTimer) {
-      clearTimeout(reloadTimer);
+      timerAdapter.cancel(reloadTimer);
       reloadTimer = null;
     }
+    reloadPending = false;
 
-    // Disable callback before closing to prevent reload scheduling during shutdown
-    const savedCallback = toolsChangedCallback;
     toolsChangedCallback = null;
 
-    // Close all provider connections
     for (const conn of connectionsByWs.values()) {
       try { conn.close(); } catch { /* ignore */ }
     }
@@ -212,7 +215,7 @@ export function createProviderGateway(options = {}) {
     if (!conn || conn.state === CONNECTION_STATE.DISCONNECTED) {
       return Promise.resolve({
         error: `Provider '${providerId}' is disconnected`,
-        errorCode: TOOL_RESULT_ERROR.DISCONNECTED,
+        errorCode: TOOL_RESULT_ERROR.DISCONNECTED
       });
     }
     return conn.sendToolCall(callId, conn.sessionId, toolName, args);
@@ -247,6 +250,6 @@ export function createProviderGateway(options = {}) {
     dispatchToolCall,
     broadcastLifecycle,
     onToolsChanged,
-    isRunning,
+    isRunning
   };
 }

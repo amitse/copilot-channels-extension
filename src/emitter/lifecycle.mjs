@@ -1,367 +1,360 @@
-import {
-  EMITTER_STATUS,
-  EMITTER_TYPE,
-  IDLE_PROMPT_BACKOFF_MS,
-  IDLE_PROMPT_DELAY_MS,
-  RUN_SCHEDULE,
-  RUN_STATUS,
-  SOURCE,
-  STREAM
-} from "../consts.mjs";
+import { EMITTER_STATUS, EMITTER_TYPE, RUN_SCHEDULE, RUN_STATUS, SOURCE, STREAM, IDLE_PROMPT_DELAY_MS } from "../consts.mjs";
 import { nowIso } from "../util/time.mjs";
-
 import { isTerminalEmitterStatus } from "../util/policy.mjs";
 import { describeEmitterWork } from "../format/emitter.mjs";
 import { readLines, spawnEmitterProcess } from "./spawn.mjs";
 import { LifecycleError } from "../errors/index.mjs";
+import { computeTransition, identifyActions, LIFECYCLE_ACTION, LIFECYCLE_EVENT } from "./lifecycle-state.mjs";
 
-/**
- * @typedef {Object} LifecycleDeps
- * @property {Object} lineRouter - Line handler with appendSystemMessage, handleLine methods
- * @property {Object} sessionPort - Session logging and idle state checks
- */
-
-/**
- * Create lifecycle state machine for emitter execution.
- * Manages process spawning, scheduling (timed/idle/one-time), and state transitions.
- * @param {LifecycleDeps} deps
- */
-export function createLifecycle({ lineRouter, sessionPort }) {
-  function isIdleEmitter(emitter) {
-    return emitter?.runSchedule === RUN_SCHEDULE.IDLE;
-  }
-
-  /**
-   * Skip idle scheduling when the emitter is no longer eligible to react to a
-   * session.idle transition.
-   */
-  function shouldSkipIdleScheduling(emitter) {
-    return (
-      emitter.stopRequested ||
-      emitter.inFlight ||
-      !isIdleEmitter(emitter) ||
-      isTerminalEmitterStatus(emitter.status)
-    );
-  }
-
-  /**
-   * Skip activity-driven cancellation when the emitter is not an active idle
-   * loop or it has already reached a terminal state.
-   */
-  function shouldSkipActivityCancellation(emitter) {
-    return !isIdleEmitter(emitter) || isTerminalEmitterStatus(emitter.status);
-  }
-
-  function waitForNextIdle(emitter) {
-    emitter.status = EMITTER_STATUS.WAITING;
-  }
-
-  function prepareIdleEmitter(emitter) {
-    waitForNextIdle(emitter);
-    if (sessionPort.isIdle()) {
-      scheduleIteration(emitter, IDLE_PROMPT_DELAY_MS);
+function createDefaultTimerAdapter() {
+  return {
+    schedule(callback, delayMs) {
+      return setTimeout(callback, delayMs);
+    },
+    cancel(timerId) {
+      clearTimeout(timerId);
     }
+  };
+}
+
+function createDefaultProcessAdapter() {
+  return {
+    spawn(command, cwd) {
+      return spawnEmitterProcess(command, cwd);
+    },
+    terminate(child) {
+      child?.kill?.();
+    },
+    readLines
+  };
+}
+
+function createDefaultLoggerAdapter(sessionPort) {
+  return {
+    log(message, options) {
+      return sessionPort.log(message, options);
+    }
+  };
+}
+
+function snapshotEmitter(emitter) {
+  return {
+    name: emitter.name,
+    emitterType: emitter.emitterType,
+    runSchedule: emitter.runSchedule,
+    every: emitter.every,
+    everyMs: emitter.everyMs,
+    everyScheduleMs: emitter.everyScheduleMs,
+    maxRuns: emitter.maxRuns,
+    runCount: emitter.runCount,
+    status: emitter.status,
+    stopRequested: emitter.stopRequested,
+    inFlight: emitter.inFlight,
+    command: emitter.command,
+    cwd: emitter.cwd,
+    prompt: emitter.prompt,
+    process: emitter.process
+  };
+}
+
+function applyState(emitter, nextState) {
+  Object.assign(emitter, nextState);
+}
+
+function runAction(emitter, action, context) {
+  switch (action.type) {
+    case LIFECYCLE_ACTION.CLEAR_TIMER:
+      if (emitter.timer) {
+        context.timerAdapter.cancel(emitter.timer);
+        emitter.timer = null;
+      }
+      return;
+    case LIFECYCLE_ACTION.SCHEDULE_TIMER:
+      scheduleIteration(emitter, context, action.delayMs ?? 0);
+      return;
+    case LIFECYCLE_ACTION.LOG_MESSAGE:
+      void context.loggerAdapter.log(action.message, action.options);
+      return;
+    case LIFECYCLE_ACTION.APPEND_SYSTEM_MESSAGE:
+      context.lineRouter.appendSystemMessage(emitter, action.text, action.notify === true);
+      return;
+    case LIFECYCLE_ACTION.SET_STOP_REQUESTED:
+      emitter.stopRequested = action.value === true;
+      return;
+    default:
+      return;
+  }
+}
+
+function scheduleIteration(emitter, context, delayMs = 0) {
+  if (emitter.stopRequested) {
+    return;
   }
 
-  function wireStreams(emitter) {
-    const child = emitter.process;
-    emitter.stdoutReader = readLines(child.stdout, (line) => {
-      lineRouter.handleLine(emitter, line, STREAM.STDOUT, SOURCE.EMITTER);
+  if (emitter.timer) {
+    context.timerAdapter.cancel(emitter.timer);
+  }
+
+  emitter.status = delayMs > 0 ? EMITTER_STATUS.WAITING : EMITTER_STATUS.QUEUED;
+  emitter.timer = context.timerAdapter.schedule(() => {
+    emitter.timer = null;
+    void runScheduledIteration(emitter, context);
+  }, delayMs);
+}
+
+function wireStreams(emitter, context) {
+  const child = emitter.process;
+  emitter.stdoutReader = context.processAdapter.readLines(child.stdout, (line) => {
+    context.lineRouter.handleLine(emitter, line, STREAM.STDOUT, SOURCE.EMITTER);
+  });
+  emitter.stderrReader = context.processAdapter.readLines(child.stderr, (line) => {
+    context.lineRouter.handleLine(emitter, line, STREAM.STDERR, SOURCE.EMITTER_STDERR);
+  });
+}
+
+function closeStreams(emitter) {
+  if (emitter.stdoutReader) {
+    emitter.stdoutReader.close();
+    emitter.stdoutReader = null;
+  }
+  if (emitter.stderrReader) {
+    emitter.stderrReader.close();
+    emitter.stderrReader = null;
+  }
+}
+
+function startContinuousProcess(emitter, context) {
+  let child;
+  try {
+    child = context.processAdapter.spawn(emitter.command, emitter.cwd);
+  } catch (error) {
+    throw new LifecycleError(`Failed to start emitter '${emitter.name}': ${error.message}`, {
+      cause: error,
+      context: { emitter: emitter.name, command: emitter.command, cwd: emitter.cwd },
+      retryable: true
     });
-    emitter.stderrReader = readLines(child.stderr, (line) => {
-      lineRouter.handleLine(emitter, line, STREAM.STDERR, SOURCE.EMITTER_STDERR);
-    });
   }
 
-  function closeStreams(emitter) {
-    if (emitter.stdoutReader) {
-      emitter.stdoutReader.close();
-      emitter.stdoutReader = null;
-    }
-    if (emitter.stderrReader) {
-      emitter.stderrReader.close();
-      emitter.stderrReader = null;
-    }
+  emitter.process = child;
+  emitter.status = EMITTER_STATUS.RUNNING;
+  wireStreams(emitter, context);
+
+  child.on("error", (error) => {
+    emitter.status = EMITTER_STATUS.ERROR;
+    emitter.process = null;
+    context.lineRouter.appendSystemMessage(emitter, `Emitter '${emitter.name}' failed: ${error.message}`, true);
+    void context.loggerAdapter.log(`Emitter '${emitter.name}' failed: ${error.message}`, { level: "warning" });
+  });
+
+  child.on("exit", (code, signal) => {
+    emitter.status = emitter.stopRequested ? EMITTER_STATUS.STOPPED : EMITTER_STATUS.EXITED;
+    emitter.exitCode = code;
+    emitter.stoppedAt = nowIso();
+    emitter.process = null;
+    emitter.stdoutReader = null;
+    emitter.stderrReader = null;
+
+    const exitMessage = emitter.stopRequested
+      ? `Emitter '${emitter.name}' stopped.`
+      : `Emitter '${emitter.name}' exited with code ${code ?? "null"}${signal ? ` (${signal})` : ""}.`;
+    context.lineRouter.appendSystemMessage(emitter, exitMessage, !emitter.stopRequested);
+    void context.loggerAdapter.log(exitMessage);
+  });
+
+  context.lineRouter.appendSystemMessage(
+    emitter,
+    `Emitter '${emitter.name}' started with ${describeEmitterWork(emitter)}.`
+  );
+}
+
+async function runCommandLoopIteration(emitter, context) {
+  let child;
+  try {
+    child = context.processAdapter.spawn(emitter.command, emitter.cwd);
+  } catch (error) {
+    return { ok: false, error: error.message };
   }
 
-  function startContinuousProcess(emitter) {
-    let child;
-    try {
-      child = spawnEmitterProcess(emitter.command, emitter.cwd);
-    } catch (error) {
-      throw new LifecycleError(`Failed to start emitter '${emitter.name}': ${error.message}`, {
-        cause: error,
-        context: { emitter: emitter.name, command: emitter.command, cwd: emitter.cwd },
-        retryable: true
-      });
-    }
+  emitter.process = child;
+  wireStreams(emitter, context);
 
-    emitter.process = child;
-    emitter.status = EMITTER_STATUS.RUNNING;
-    wireStreams(emitter);
+  return await new Promise((resolve) => {
+    let settled = false;
+
+    const finish = (result) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+
+      closeStreams(emitter);
+      emitter.process = null;
+      emitter.exitCode = result.code ?? emitter.exitCode;
+      resolve(result);
+    };
 
     child.on("error", (error) => {
-      emitter.status = EMITTER_STATUS.ERROR;
-      emitter.process = null;
-      lineRouter.appendSystemMessage(emitter, `Emitter '${emitter.name}' failed: ${error.message}`, true);
-      void sessionPort.log(`Emitter '${emitter.name}' failed: ${error.message}`, { level: "warning" });
+      finish({ ok: false, error: error.message });
     });
 
     child.on("exit", (code, signal) => {
-      emitter.status = emitter.stopRequested ? EMITTER_STATUS.STOPPED : EMITTER_STATUS.EXITED;
-      emitter.exitCode = code;
-      emitter.stoppedAt = nowIso();
-      emitter.process = null;
-      emitter.stdoutReader = null;
-      emitter.stderrReader = null;
-
-      const exitMessage = emitter.stopRequested
-        ? `Emitter '${emitter.name}' stopped.`
-        : `Emitter '${emitter.name}' exited with code ${code ?? "null"}${signal ? ` (${signal})` : ""}.`;
-      lineRouter.appendSystemMessage(emitter, exitMessage, !emitter.stopRequested);
-      void sessionPort.log(exitMessage);
-    });
-
-    lineRouter.appendSystemMessage(
-      emitter,
-      `Emitter '${emitter.name}' started with ${describeEmitterWork(emitter)}.`
-    );
-  }
-
-  async function runCommandLoopIteration(emitter) {
-    let child;
-    try {
-      child = spawnEmitterProcess(emitter.command, emitter.cwd);
-    } catch (error) {
-      return { ok: false, error: error.message };
-    }
-
-    emitter.process = child;
-    wireStreams(emitter);
-
-    return await new Promise((resolve) => {
-      let settled = false;
-
-      const finish = (result) => {
-        if (settled) {
-          return;
-        }
-        settled = true;
-
-        closeStreams(emitter);
-        emitter.process = null;
-        emitter.exitCode = result.code ?? emitter.exitCode;
-        resolve(result);
-      };
-
-      child.on("error", (error) => {
-        finish({ ok: false, error: error.message });
-      });
-
-      child.on("exit", (code, signal) => {
-        finish({
-          ok: (code ?? 0) === 0 || emitter.stopRequested,
-          code,
-          signal,
-          error: (code ?? 0) === 0 || emitter.stopRequested
-            ? null
-            : `Command iteration exited with code ${code ?? "null"}${signal ? ` (${signal})` : ""}`
-        });
+      finish({
+        ok: (code ?? 0) === 0 || emitter.stopRequested,
+        code,
+        signal,
+        error: (code ?? 0) === 0 || emitter.stopRequested
+          ? null
+          : `Command iteration exited with code ${code ?? "null"}${signal ? ` (${signal})` : ""}`
       });
     });
-  }
+  });
+}
 
-  async function runPromptIteration(emitter) {
-    try {
-      await sessionPort.send(emitter.prompt);
+async function runPromptIteration(emitter, context) {
+  try {
+    await context.sessionPort.send(emitter.prompt);
 
-      if (emitter.stopRequested) {
-        return { ok: true };
-      }
-
-      emitter.lineCount += 1;
-
+    if (emitter.stopRequested) {
       return { ok: true };
-    } catch (error) {
-      return {
-        ok: false,
-        error: error.message,
-        deferred:
-          (emitter.runSchedule === RUN_SCHEDULE.TIMED || emitter.runSchedule === RUN_SCHEDULE.IDLE) &&
-          /\bsession\.idle\b/i.test(String(error?.message ?? ""))
-      };
     }
+
+    emitter.lineCount += 1;
+    return { ok: true };
+  } catch (error) {
+    return {
+      ok: false,
+      error: error.message,
+      deferred:
+        (emitter.runSchedule === RUN_SCHEDULE.TIMED || emitter.runSchedule === RUN_SCHEDULE.IDLE) &&
+        /\bsession\.idle\b/i.test(String(error?.message ?? ""))
+    };
+  }
+}
+
+async function runScheduledIteration(emitter, context) {
+  if (emitter.stopRequested || emitter.inFlight) {
+    return;
   }
 
-  function scheduleIteration(emitter, delayMs = 0) {
-    if (emitter.stopRequested) {
-      return;
-    }
-
-    if (emitter.timer) {
-      clearTimeout(emitter.timer);
-    }
-
-    emitter.status = delayMs > 0 ? EMITTER_STATUS.WAITING : EMITTER_STATUS.QUEUED;
-    emitter.timer = setTimeout(() => {
-      emitter.timer = null;
-      void runScheduledIteration(emitter);
-    }, delayMs);
-  }
-
-  function nextDelay(emitter) {
-    if (emitter.runSchedule === RUN_SCHEDULE.IDLE) {
-      return IDLE_PROMPT_DELAY_MS;
-    }
-    if (emitter.everyScheduleMs) {
-      const idx = Math.min(Math.max(0, emitter.runCount - 1), emitter.everyScheduleMs.length - 1);
-      return emitter.everyScheduleMs[idx];
-    }
-    return emitter.everyMs;
-  }
-
-  async function runScheduledIteration(emitter) {
-    if (emitter.stopRequested || emitter.inFlight) {
-      return;
-    }
-
-    if (isIdleEmitter(emitter) && !sessionPort.isIdle()) {
-      emitter.status = EMITTER_STATUS.WAITING;
-      return;
-    }
-
-    emitter.inFlight = true;
-    emitter.status = EMITTER_STATUS.RUNNING;
-    emitter.runCount += 1;
-    emitter.lastRunAt = nowIso();
-
-    const result = emitter.emitterType === EMITTER_TYPE.PROMPT
-      ? await runPromptIteration(emitter)
-      : await runCommandLoopIteration(emitter);
-
-    emitter.inFlight = false;
-
-    if (emitter.stopRequested) {
-      emitter.status = EMITTER_STATUS.STOPPED;
-      emitter.stoppedAt = nowIso();
-      lineRouter.appendSystemMessage(emitter, `Emitter '${emitter.name}' stopped.`);
-      return;
-    }
-
-    if (result.ok) {
-      emitter.lastRunStatus = RUN_STATUS.SUCCESS;
-
-      if (emitter.runSchedule === RUN_SCHEDULE.ONE_TIME) {
-        emitter.status = EMITTER_STATUS.COMPLETED;
-        emitter.stoppedAt = nowIso();
-        lineRouter.appendSystemMessage(
-          emitter,
-          `Emitter '${emitter.name}' completed one run of ${emitter.emitterType} work.`
-        );
-        return;
-      }
-
-      if (emitter.maxRuns && emitter.runCount >= emitter.maxRuns) {
-        emitter.status = EMITTER_STATUS.COMPLETED;
-        emitter.stoppedAt = nowIso();
-        lineRouter.appendSystemMessage(
-          emitter,
-          `Emitter '${emitter.name}' completed ${emitter.runCount} of ${emitter.maxRuns} runs.`
-        );
-        return;
-      }
-
-      if (isIdleEmitter(emitter)) {
-        waitForNextIdle(emitter);
-        // Idle emitters only schedule their next run from session.idle events.
-        return;
-      }
-      emitter.status = EMITTER_STATUS.WAITING;
-      scheduleIteration(emitter, nextDelay(emitter));
-      return;
-    }
-
-    if (result.deferred) {
-      emitter.status = EMITTER_STATUS.WAITING;
-      const retryDelay = emitter.runSchedule === RUN_SCHEDULE.IDLE
-        ? IDLE_PROMPT_BACKOFF_MS
-        : nextDelay(emitter);
-      if (emitter.runSchedule !== RUN_SCHEDULE.IDLE) {
-        lineRouter.appendSystemMessage(
-          emitter,
-          `Emitter '${emitter.name}' deferred this prompt run because the session was still busy. Next attempt in ${emitter.every}.`
-        );
-      }
-      scheduleIteration(emitter, retryDelay);
-      return;
-    }
-
-    emitter.lastRunStatus = RUN_STATUS.FAILURE;
-    lineRouter.appendSystemMessage(
-      emitter,
-      `Emitter '${emitter.name}' iteration failed: ${result.error ?? "unknown error"}.`,
-      true
-    );
-    void sessionPort.log(
-      `Emitter '${emitter.name}' iteration failed: ${result.error ?? "unknown error"}.`,
-      { level: "warning" }
-    );
-
-    if (emitter.runSchedule === RUN_SCHEDULE.ONE_TIME) {
-      emitter.status = EMITTER_STATUS.ERROR;
-      emitter.stoppedAt = nowIso();
-      return;
-    }
-
+  if (emitter.runSchedule === RUN_SCHEDULE.IDLE && !context.sessionPort.isIdle()) {
     emitter.status = EMITTER_STATUS.WAITING;
-    const failRetryDelay = emitter.runSchedule === RUN_SCHEDULE.IDLE
-      ? IDLE_PROMPT_BACKOFF_MS
-      : nextDelay(emitter);
-    scheduleIteration(emitter, failRetryDelay);
+    return;
   }
 
-  function startScheduled(emitter) {
+  emitter.inFlight = true;
+  emitter.status = EMITTER_STATUS.RUNNING;
+  emitter.runCount += 1;
+  emitter.lastRunAt = nowIso();
+
+  const result = emitter.emitterType === EMITTER_TYPE.PROMPT
+    ? await runPromptIteration(emitter, context)
+    : await runCommandLoopIteration(emitter, context);
+
+  emitter.inFlight = false;
+
+  const transition = computeTransition(snapshotEmitter(emitter), {
+    type: LIFECYCLE_EVENT.ITERATION_RESULT,
+    result,
+    timestamp: nowIso()
+  });
+  applyState(emitter, transition.nextState);
+  for (const action of identifyActions(transition)) {
+    runAction(emitter, action, context);
+  }
+
+  if (emitter.stopRequested) {
+    emitter.status = EMITTER_STATUS.STOPPED;
+    emitter.stoppedAt = nowIso();
+    context.lineRouter.appendSystemMessage(emitter, `Emitter '${emitter.name}' stopped.`);
+    return;
+  }
+
+  if (result.ok) {
+    emitter.lastRunStatus = RUN_STATUS.SUCCESS;
+    if (emitter.runSchedule === RUN_SCHEDULE.IDLE) {
+      emitter.status = EMITTER_STATUS.WAITING;
+      return;
+    }
+    return;
+  }
+
+  if (result.deferred) {
+    emitter.status = EMITTER_STATUS.WAITING;
+    if (emitter.runSchedule !== RUN_SCHEDULE.IDLE) {
+      context.lineRouter.appendSystemMessage(
+        emitter,
+        `Emitter '${emitter.name}' deferred this prompt run because the session was still busy. Next attempt in ${emitter.every}.`
+      );
+    }
+    return;
+  }
+
+  emitter.lastRunStatus = RUN_STATUS.FAILURE;
+  if (emitter.runSchedule === RUN_SCHEDULE.ONE_TIME) {
+    emitter.status = EMITTER_STATUS.ERROR;
+    emitter.stoppedAt = nowIso();
+    return;
+  }
+
+  emitter.status = EMITTER_STATUS.WAITING;
+}
+
+export function createLifecycle({
+  lineRouter,
+  sessionPort,
+  timerAdapter = createDefaultTimerAdapter(),
+  processAdapter = createDefaultProcessAdapter(),
+  loggerAdapter = createDefaultLoggerAdapter(sessionPort)
+}) {
+  function start(emitter) {
+    if (emitter.runSchedule === RUN_SCHEDULE.CONTINUOUS) {
+      startContinuousProcess(emitter, { lineRouter, processAdapter, loggerAdapter });
+      return;
+    }
+
+    contextStartScheduled(emitter);
+  }
+
+  function contextStartScheduled(emitter) {
     const scheduleLabel = emitter.runSchedule === RUN_SCHEDULE.TIMED
-      ? (emitter.everySchedule
-        ? `backoff [${emitter.everySchedule.join(", ")}]`
-        : `every ${emitter.every}`)
+      ? (emitter.everySchedule ? `backoff [${emitter.everySchedule.join(", ")}]` : `every ${emitter.every}`)
       : emitter.runSchedule === RUN_SCHEDULE.IDLE
         ? "when idle"
         : RUN_SCHEDULE.ONE_TIME;
-    const initialDelayMs = 0;
-    const firstRunLabel = "";
     lineRouter.appendSystemMessage(
       emitter,
-      `Emitter '${emitter.name}' queued ${emitter.emitterType} work (${scheduleLabel}) with ${describeEmitterWork(emitter)}.${firstRunLabel}`
+      `Emitter '${emitter.name}' queued ${emitter.emitterType} work (${scheduleLabel}) with ${describeEmitterWork(emitter)}.`
     );
-    if (isIdleEmitter(emitter)) {
-      prepareIdleEmitter(emitter);
+
+    const transition = computeTransition(snapshotEmitter(emitter), { type: LIFECYCLE_EVENT.START });
+    applyState(emitter, transition.nextState);
+    for (const action of identifyActions(transition)) {
+      runAction(emitter, action, { lineRouter, timerAdapter, processAdapter, loggerAdapter, sessionPort });
+    }
+
+    if (emitter.runSchedule === RUN_SCHEDULE.IDLE) {
+      if (sessionPort.isIdle()) {
+        scheduleIteration(emitter, { lineRouter, timerAdapter, processAdapter, loggerAdapter, sessionPort }, IDLE_PROMPT_DELAY_MS);
+      }
       return;
     }
 
-    scheduleIteration(emitter, initialDelayMs);
-  }
-
-  function start(emitter) {
-    if (emitter.runSchedule === RUN_SCHEDULE.CONTINUOUS) {
-      startContinuousProcess(emitter);
-    } else {
-      startScheduled(emitter);
-    }
+    scheduleIteration(emitter, { lineRouter, timerAdapter, processAdapter, loggerAdapter, sessionPort }, 0);
   }
 
   async function stop(emitter) {
+    const transition = computeTransition(snapshotEmitter(emitter), { type: LIFECYCLE_EVENT.STOP, timestamp: nowIso() });
+    applyState(emitter, transition.nextState);
+    for (const action of identifyActions(transition)) {
+      runAction(emitter, action, { lineRouter, timerAdapter, processAdapter, loggerAdapter, sessionPort });
+    }
+
     if (isTerminalEmitterStatus(emitter.status)) {
       return;
     }
 
     emitter.stopRequested = true;
     void sessionPort.log(`Stop requested for emitter '${emitter.name}'.`);
-
-    if (emitter.timer) {
-      clearTimeout(emitter.timer);
-      emitter.timer = null;
-    }
 
     if (!emitter.process && !emitter.inFlight) {
       emitter.status = EMITTER_STATUS.STOPPED;
@@ -375,36 +368,23 @@ export function createLifecycle({ lineRouter, sessionPort }) {
     closeStreams(emitter);
 
     if (emitter.process) {
-      emitter.process.kill();
+      processAdapter.terminate(emitter.process);
     }
   }
 
-  /**
-   * React to a session.idle transition by queueing the next idle emitter run.
-   */
   function onSessionIdle(emitter) {
-    if (shouldSkipIdleScheduling(emitter)) {
-      return;
+    const transition = computeTransition(snapshotEmitter(emitter), { type: LIFECYCLE_EVENT.SESSION_IDLE });
+    applyState(emitter, transition.nextState);
+    for (const action of identifyActions(transition)) {
+      runAction(emitter, action, { lineRouter, timerAdapter, processAdapter, loggerAdapter, sessionPort });
     }
-
-    scheduleIteration(emitter, IDLE_PROMPT_DELAY_MS);
   }
 
-  /**
-   * React to non-idle session activity by cancelling any pending idle run.
-   */
   function onSessionActivity(emitter) {
-    if (shouldSkipActivityCancellation(emitter)) {
-      return;
-    }
-
-    if (emitter.timer) {
-      clearTimeout(emitter.timer);
-      emitter.timer = null;
-    }
-
-    if (!emitter.inFlight) {
-      emitter.status = EMITTER_STATUS.WAITING;
+    const transition = computeTransition(snapshotEmitter(emitter), { type: LIFECYCLE_EVENT.SESSION_ACTIVITY });
+    applyState(emitter, transition.nextState);
+    for (const action of identifyActions(transition)) {
+      runAction(emitter, action, { lineRouter, timerAdapter, processAdapter, loggerAdapter, sessionPort });
     }
   }
 
