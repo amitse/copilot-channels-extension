@@ -115,6 +115,21 @@ export function createProviderConnection(ws, options, adapters = {}) {
     pendingCalls.clear();
   }
 
+  function disconnectConnection(reason, { notifyUnbound, closeSocket } = {}) {
+    if (state === CONNECTION_STATE.DISCONNECTED) return;
+
+    transition(CONNECTION_STATE.DISCONNECTED);
+    rejectAllPending(reason);
+
+    if (notifyUnbound && onUnbound) {
+      try { onUnbound(connection); } catch (err) { log(`[connection] onUnbound callback error: ${err.message}`); }
+    }
+
+    if (closeSocket) {
+      try { websocketAdapter.close(ws); } catch { /* ignore */ }
+    }
+  }
+
   function executeAction(action, transitionResult) {
     switch (action.type) {
       case CONNECTION_ACTION.SEND:
@@ -235,12 +250,7 @@ export function createProviderConnection(ws, options, adapters = {}) {
       if (!v.ok) {
         log(`[connection] invalid goodbye: ${v.error}`);
       }
-      transition(CONNECTION_STATE.DISCONNECTED);
-      rejectAllPending("provider sent goodbye");
-      if (onUnbound) {
-        try { onUnbound(connection); } catch (err) { log(`[connection] onUnbound callback error: ${err.message}`); }
-      }
-      try { websocketAdapter.close(ws); } catch { /* ignore */ }
+      disconnectConnection("provider sent goodbye", { notifyUnbound: true, closeSocket: true });
       return;
     }
 
@@ -290,22 +300,12 @@ export function createProviderConnection(ws, options, adapters = {}) {
   }
 
   function onClose() {
-    if (state === CONNECTION_STATE.DISCONNECTED) return;
-    transition(CONNECTION_STATE.DISCONNECTED);
-    rejectAllPending("WebSocket closed");
-    if (wasBound && onUnbound) {
-      try { onUnbound(connection); } catch (err) { log(`[connection] onUnbound callback error: ${err.message}`); }
-    }
+    disconnectConnection("WebSocket closed", { notifyUnbound: wasBound, closeSocket: false });
   }
 
   function onError(err) {
     log(`[connection] WebSocket error: ${err.message}`);
-    if (state === CONNECTION_STATE.DISCONNECTED) return;
-    transition(CONNECTION_STATE.DISCONNECTED);
-    rejectAllPending(`WebSocket error: ${err.message}`);
-    if (wasBound && onUnbound) {
-      try { onUnbound(connection); } catch (err2) { log(`[connection] onUnbound callback error: ${err2.message}`); }
-    }
+    disconnectConnection(`WebSocket error: ${err.message}`, { notifyUnbound: wasBound, closeSocket: false });
   }
 
   websocketAdapter.connect(ws, { message: onMessage, close: onClose, error: onError });
@@ -336,13 +336,7 @@ export function createProviderConnection(ws, options, adapters = {}) {
   }
 
   function close(reason) {
-    if (state === CONNECTION_STATE.DISCONNECTED) return;
-    transition(CONNECTION_STATE.DISCONNECTED);
-    rejectAllPending(reason ?? "connection closed by gateway");
-    if (wasBound && onUnbound) {
-      try { onUnbound(connection); } catch (err) { log(`[connection] onUnbound callback error: ${err.message}`); }
-    }
-    try { websocketAdapter.close(ws); } catch { /* ignore */ }
+    disconnectConnection(reason ?? "connection closed by gateway", { notifyUnbound: wasBound, closeSocket: true });
   }
 
   const connection = {
