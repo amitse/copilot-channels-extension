@@ -3,37 +3,6 @@ import { nowIso } from "../util/time.mjs";
 import { resolveRequestedCwd } from "../util/path.mjs";
 import { normalizeEmitterSpec } from "./spec.mjs";
 
-export const EMITTER_RUNTIME_KEYS = Object.freeze([
-  "emitterType",
-  "runSchedule",
-  "requestedCwd",
-  "startedAt",
-  "stoppedAt",
-  "lineCount",
-  "droppedLineCount",
-  "status",
-  "stopRequested",
-  "timer",
-  "inFlight",
-  "runCount",
-  "lastRunAt",
-  "lastRunStatus",
-  "process",
-  "stdoutReader",
-  "stderrReader",
-  "exitCode"
-]);
-
-export function stripEmitterRuntimeFields(emitter) {
-  const persisted = { ...(emitter ?? {}) };
-
-  for (const key of EMITTER_RUNTIME_KEYS) {
-    delete persisted[key];
-  }
-
-  return persisted;
-}
-
 export function buildEmitterState(spec, baseCwd) {
   const canonicalSpec = spec?.__emitterSpec === true ? spec : normalizeEmitterSpec(spec);
 

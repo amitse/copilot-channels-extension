@@ -5,7 +5,7 @@ import { ValidationError } from "../errors/index.mjs";
 import { normalizeName } from "../util/normalize.mjs";
 import { isValidBaseCwd } from "../util/path.mjs";
 import { EventFilterService } from "../event-filter/service.mjs";
-import { stripEmitterRuntimeFields } from "../emitter/state.mjs";
+import { stripEmitterRuntimeFields } from "./emitter-schema.mjs";
 
 export function createEmptyConfig(configVersion) {
   return { configVersion, streams: [], emitters: [] };
