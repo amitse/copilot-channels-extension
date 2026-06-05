@@ -2,6 +2,7 @@ import { BRAND, COPILOT_INSTRUCTIONS_PATH } from "../consts.mjs";
 import { createConfigStore } from "../config/store.mjs";
 import { createEmitterSupervisor } from "../emitter/supervisor.mjs";
 import { formatSessionInjectorContextSummary } from "../format/stream.mjs";
+import { createSessionActivityBridge } from "../session/listeners.mjs";
 import { createSessionPort } from "../session/port.mjs";
 import { createNotificationDispatcher } from "../streams/notifications.mjs";
 import { createStreamStore } from "../streams/store.mjs";
@@ -71,52 +72,7 @@ export function createTapRuntimeService(options = {}) {
     setBaseCwd
   });
   const { loadPersistentConfig } = configBootstrapService;
-
-  let cleanupSessionListeners = () => {};
-
-  const resetSessionListeners = () => {
-    cleanupSessionListeners();
-    cleanupSessionListeners = () => {};
-  };
-
-  const wireSessionListeners = (session) => {
-    resetSessionListeners();
-    if (!session || typeof session.on !== "function") {
-      return;
-    }
-
-    const unsubscribers = [
-      session.on("session.idle", () => {
-        sessionPort.setIdle(true);
-        supervisor.onSessionIdle();
-      })
-    ];
-
-    for (const eventType of [
-      "session.start",
-      "session.resume",
-      "user.message",
-      "assistant.message",
-      "tool.execution_start",
-      "tool.execution_complete",
-      "session.error"
-    ]) {
-      unsubscribers.push(session.on(eventType, () => {
-        sessionPort.setIdle(false);
-        supervisor.onSessionActivity();
-      }));
-    }
-
-    cleanupSessionListeners = () => {
-      for (const unsubscribe of unsubscribers) {
-        try {
-          unsubscribe?.();
-        } catch {
-          // Listener cleanup must never interrupt session attach.
-        }
-      }
-    };
-  };
+  const sessionActivityBridge = createSessionActivityBridge({ sessionPort, supervisor });
 
   function getSessionInfo() {
     const session = sessionPort.current();
@@ -126,11 +82,11 @@ export function createTapRuntimeService(options = {}) {
 
   function attachSession(session) {
     sessionPort.attach(session);
-    wireSessionListeners(session);
+    sessionActivityBridge.attach(session);
   }
 
   async function stopAllEmitters() {
-    resetSessionListeners();
+    sessionActivityBridge.detach();
     await supervisor.stopAll();
   }
 
