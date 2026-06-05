@@ -26,7 +26,11 @@ import { ConflictError, LifecycleError, NotFoundError, AppError } from "../error
  */
 export function createEmitterSupervisor({ streams, configStore, notifications, sessionPort, getBaseCwd, persist }) {
   const emitters = new Map();
-  const lineRouter = createLineRouter({ streams, notifications });
+  const lineRouter = createLineRouter({
+    streams,
+    notifications,
+    surface: (message, options) => sessionPort.log(message, options)
+  });
   const lifecycle = createLifecycle({ lineRouter, sessionPort });
 
   async function start(spec, options = {}) {

@@ -1,4 +1,4 @@
-import { BRAND, EVENT_OUTCOME, SOURCE, STREAM } from "../consts.mjs";
+import { EVENT_OUTCOME, SOURCE, STREAM } from "../consts.mjs";
 import { EventFilterService } from "../event-filter/service.mjs";
 import { splitTextLines } from "../util/text.mjs";
 
@@ -6,15 +6,69 @@ import { splitTextLines } from "../util/text.mjs";
  * @typedef {Object} LineRouterDeps
  * @property {Object} streams - Event stream manager
  * @property {Object} notifications - Notification queue for event injection
+ * @property {Function} [surface] - Optional non-inject surfacing callback
  */
 
 /**
  * Create line router with capability-specific injection.
- * Only receives capabilities needed: streams (for append) and notifications (for injection).
+ * Only receives capabilities needed: streams (for append), notifications
+ * (for injection), and optional surface logging.
  * sessionPort is NOT needed here.
- * @param {{ streams: Object, notifications: Object }} deps
+ * @param {{ streams: Object, notifications: Object, surface?: Function }} deps
  */
-export function createLineRouter({ streams, notifications }) {
+export function createLineRouter({ streams, notifications, surface = null }) {
+  function getSessionInjector(emitter) {
+    return streams.ensure(emitter.stream).sessionInjector ?? {};
+  }
+
+  function deliveryMode(sessionInjector) {
+    return String(sessionInjector?.delivery ?? EVENT_OUTCOME.SURFACE).trim().toLowerCase();
+  }
+
+  function canInject(sessionInjector, outcome) {
+    if (sessionInjector?.enabled !== true || outcome !== EVENT_OUTCOME.INJECT) {
+      return false;
+    }
+
+    const delivery = deliveryMode(sessionInjector);
+    return delivery === "important" ||
+      delivery === "all" ||
+      delivery === EVENT_OUTCOME.SURFACE ||
+      delivery === EVENT_OUTCOME.INJECT;
+  }
+
+  function canSurface(sessionInjector, outcome) {
+    if (sessionInjector?.enabled !== true) {
+      return false;
+    }
+
+    const delivery = deliveryMode(sessionInjector);
+    if (delivery === "all") {
+      return outcome === EVENT_OUTCOME.KEEP || outcome === EVENT_OUTCOME.SURFACE;
+    }
+
+    return delivery === EVENT_OUTCOME.SURFACE && outcome === EVENT_OUTCOME.SURFACE;
+  }
+
+  function formatSurfaceMessage(notification) {
+    const streamLabel = notification.stream ? `/${notification.stream}` : "";
+    return `Surfaced event stream='${notification.channel}' emitter='${notification.monitorName}'${streamLabel}: ${notification.text}`;
+  }
+
+  function surfaceEvent(notification, outcome) {
+    if (typeof surface !== "function" || !canSurface(getSessionInjector({ stream: notification.channel }), outcome)) {
+      return;
+    }
+
+    void Promise.resolve(surface(formatSurfaceMessage(notification), { level: "info" })).catch(() => {});
+  }
+
+  function enqueueEvent(emitter, notification, outcome) {
+    if (canInject(getSessionInjector(emitter), outcome)) {
+      notifications.enqueue(notification);
+    }
+  }
+
   function appendSystemMessage(emitter, text, notify = false) {
     streams.append(emitter.stream, {
       source: SOURCE.SYSTEM,
@@ -22,13 +76,13 @@ export function createLineRouter({ streams, notifications }) {
       monitorName: emitter.name
     });
 
-    if (notify && streams.ensure(emitter.stream).sessionInjector.enabled) {
-      notifications.enqueue({
+    if (notify) {
+      enqueueEvent(emitter, {
         channel: emitter.stream,
         monitorName: emitter.name,
         stream: STREAM.SYSTEM,
         text
-      });
+      }, EVENT_OUTCOME.INJECT);
     }
   }
 
@@ -53,15 +107,17 @@ export function createLineRouter({ streams, notifications }) {
       stream
     });
 
-    if (outcome === EVENT_OUTCOME.SURFACE) {
-      // Note: logging surface-level events is now delegated to lifecycle/supervisor layer
-    } else if (outcome === EVENT_OUTCOME.INJECT) {
-      notifications.enqueue({
-        channel: emitter.stream,
-        monitorName: emitter.name,
-        stream,
-        text
-      });
+    const notification = {
+      channel: emitter.stream,
+      monitorName: emitter.name,
+      stream,
+      text
+    };
+
+    if (outcome === EVENT_OUTCOME.INJECT) {
+      enqueueEvent(emitter, notification, outcome);
+    } else {
+      surfaceEvent(notification, outcome);
     }
   }
 

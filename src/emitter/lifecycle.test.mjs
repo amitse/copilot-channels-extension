@@ -8,15 +8,21 @@ import { createLifecycle } from "./lifecycle.mjs";
 import { createLineRouter } from "./line-router.mjs";
 import { createMockLoggerAdapter, createMockProcessAdapter, createMockTimerAdapter } from "../test-support/adapters.mjs";
 
-function createLineRouterHarness() {
+function createLineRouterHarness(options = {}) {
   const appended = [];
   const enqueued = [];
+  const surfaced = [];
+  const sessionInjector = {
+    enabled: true,
+    delivery: EVENT_OUTCOME.SURFACE,
+    ...(options.sessionInjector ?? {})
+  };
   const streams = {
     append(channel, entry) {
       appended.push({ channel, ...entry });
     },
     ensure() {
-      return { sessionInjector: { enabled: true } };
+      return { sessionInjector };
     }
   };
   const notifications = {
@@ -24,11 +30,15 @@ function createLineRouterHarness() {
       enqueued.push(entry);
     }
   };
+  const surface = options.surface ?? ((message, meta) => {
+    surfaced.push({ message, meta });
+  });
 
   return {
     appended,
     enqueued,
-    lineRouter: createLineRouter({ streams, notifications })
+    surfaced,
+    lineRouter: createLineRouter({ streams, notifications, surface })
   };
 }
 
@@ -165,6 +175,73 @@ test("lifecycle transition defers idle prompt retry without system message", () 
   assert.equal(transition.nextState.status, EMITTER_STATUS.WAITING);
   assert.deepEqual(identifyActions(transition), [
     { type: LIFECYCLE_ACTION.SCHEDULE_TIMER, delayMs: IDLE_PROMPT_BACKOFF_MS }
+  ]);
+});
+
+test("lifecycle transition exhausts maxRuns after failed scheduled attempt", () => {
+  const stoppedAt = "2026-06-05T00:00:00.000Z";
+  const transition = computeTransition(
+    {
+      name: "demo",
+      emitterType: EMITTER_TYPE.PROMPT,
+      runSchedule: RUN_SCHEDULE.TIMED,
+      every: "5m",
+      everyMs: 300_000,
+      maxRuns: 2,
+      runCount: 2,
+      status: EMITTER_STATUS.RUNNING
+    },
+    {
+      type: LIFECYCLE_EVENT.ITERATION_RESULT,
+      result: { ok: false, error: "boom" },
+      timestamp: stoppedAt
+    }
+  );
+
+  assert.equal(transition.nextState.status, EMITTER_STATUS.ERROR);
+  assert.equal(transition.nextState.lastRunStatus, RUN_STATUS.FAILURE);
+  assert.equal(transition.nextState.stoppedAt, stoppedAt);
+  assert.deepEqual(identifyActions(transition), [
+    {
+      type: LIFECYCLE_ACTION.APPEND_SYSTEM_MESSAGE,
+      text: "Emitter 'demo' exhausted its run budget (2 of 2 attempts) after iteration failed: boom."
+    },
+    {
+      type: LIFECYCLE_ACTION.LOG_MESSAGE,
+      message: "Emitter 'demo' exhausted its run budget (2 of 2 attempts) after iteration failed: boom."
+    }
+  ]);
+});
+
+test("lifecycle transition exhausts maxRuns after deferred scheduled attempt", () => {
+  const transition = computeTransition(
+    {
+      name: "demo",
+      emitterType: EMITTER_TYPE.PROMPT,
+      runSchedule: RUN_SCHEDULE.TIMED,
+      every: "5m",
+      everyMs: 300_000,
+      maxRuns: 1,
+      runCount: 1,
+      status: EMITTER_STATUS.RUNNING
+    },
+    {
+      type: LIFECYCLE_EVENT.ITERATION_RESULT,
+      result: { ok: false, deferred: true }
+    }
+  );
+
+  assert.equal(transition.nextState.status, EMITTER_STATUS.ERROR);
+  assert.equal(transition.nextState.lastRunStatus, RUN_STATUS.FAILURE);
+  assert.deepEqual(identifyActions(transition), [
+    {
+      type: LIFECYCLE_ACTION.APPEND_SYSTEM_MESSAGE,
+      text: "Emitter 'demo' exhausted its run budget (1 of 1 attempts) after a deferred prompt run."
+    },
+    {
+      type: LIFECYCLE_ACTION.LOG_MESSAGE,
+      message: "Emitter 'demo' exhausted its run budget (1 of 1 attempts) after a deferred prompt run."
+    }
   ]);
 });
 
@@ -366,4 +443,149 @@ test("command emitter stderr routing honors includeStderr policy", () => {
     );
     assert.equal(emitter.lineCount, expectedEntries.length, `${label}: routed line count`);
   }
+});
+
+test("line router does not enqueue when session injector is disabled", () => {
+  const { appended, enqueued, surfaced, lineRouter } = createLineRouterHarness({
+    sessionInjector: { enabled: false, delivery: "all" }
+  });
+  const emitter = createCommandEmitter();
+
+  lineRouter.handleLine(emitter, "urgent line", STREAM.STDOUT, SOURCE.EMITTER);
+  lineRouter.appendSystemMessage(emitter, "system alert", true);
+
+  assert.deepEqual(appended.map(({ text }) => text), ["urgent line", "system alert"]);
+  assert.deepEqual(enqueued, []);
+  assert.deepEqual(surfaced, []);
+});
+
+test("line router applies delivery modes to inject and surface outcomes", () => {
+  const cases = [
+    {
+      label: "important only injects inject outcomes",
+      delivery: "important",
+      outcome: EVENT_OUTCOME.SURFACE,
+      expectedEnqueued: [],
+      expectedSurfaced: []
+    },
+    {
+      label: "surface logs surface outcomes",
+      delivery: EVENT_OUTCOME.SURFACE,
+      outcome: EVENT_OUTCOME.SURFACE,
+      expectedEnqueued: [],
+      expectedSurfaced: ["surface line"]
+    },
+    {
+      label: "all surfaces kept outcomes",
+      delivery: "all",
+      outcome: EVENT_OUTCOME.KEEP,
+      expectedEnqueued: [],
+      expectedSurfaced: ["keep line"]
+    },
+    {
+      label: "keep suppresses inject outcomes",
+      delivery: EVENT_OUTCOME.KEEP,
+      outcome: EVENT_OUTCOME.INJECT,
+      expectedEnqueued: [],
+      expectedSurfaced: []
+    },
+    {
+      label: "inject delivers inject outcomes",
+      delivery: EVENT_OUTCOME.INJECT,
+      outcome: EVENT_OUTCOME.INJECT,
+      expectedEnqueued: ["inject line"],
+      expectedSurfaced: []
+    }
+  ];
+
+  for (const { label, delivery, outcome, expectedEnqueued, expectedSurfaced } of cases) {
+    const { enqueued, surfaced, lineRouter } = createLineRouterHarness({
+      sessionInjector: { enabled: true, delivery }
+    });
+    const text = `${outcome} line`;
+    const emitter = createCommandEmitter({
+      eventFilter: EventFilterService.normalize({
+        rules: [{ match: ".*", outcome }]
+      })
+    });
+
+    lineRouter.handleLine(emitter, text, STREAM.STDOUT, SOURCE.EMITTER);
+
+    assert.deepEqual(enqueued.map((entry) => entry.text), expectedEnqueued, `${label}: enqueued`);
+    assert.deepEqual(
+      surfaced.map((entry) => entry.message.replace(/^.*: /, "")),
+      expectedSurfaced,
+      `${label}: surfaced`
+    );
+  }
+});
+
+test("scheduled command iteration waits for close before completing", async () => {
+  const timerAdapter = createMockTimerAdapter();
+  const loggerAdapter = createMockLoggerAdapter();
+  const { appended, lineRouter } = createLineRouterHarness();
+  const { processAdapter } = createProcessAdapterWithLineReaders();
+  const lifecycle = createLifecycle({
+    lineRouter,
+    sessionPort: { isIdle: () => false, log: async () => {}, send: async () => {} },
+    timerAdapter,
+    processAdapter,
+    loggerAdapter
+  });
+  const emitter = createCommandEmitter({
+    runSchedule: RUN_SCHEDULE.TIMED,
+    every: "5m",
+    everyMs: 300_000,
+    maxRuns: 1
+  });
+
+  lifecycle.start(emitter);
+  timerAdapter.advance(0);
+  const child = processAdapter.children.at(-1);
+
+  child.emit("exit", 0, null);
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(emitter.inFlight, true);
+  assert.equal(emitter.status, EMITTER_STATUS.RUNNING);
+
+  child.stdout.emit("line", "trailing stdout");
+  child.emit("close", 0, null);
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(emitter.inFlight, false);
+  assert.equal(emitter.status, EMITTER_STATUS.COMPLETED);
+  assert.ok(appended.some((entry) => entry.text === "trailing stdout"));
+});
+
+test("scheduled command signal termination fails unless stop was requested", async () => {
+  const timerAdapter = createMockTimerAdapter();
+  const loggerAdapter = createMockLoggerAdapter();
+  const { appended, lineRouter } = createLineRouterHarness();
+  const { processAdapter } = createProcessAdapterWithLineReaders();
+  const lifecycle = createLifecycle({
+    lineRouter,
+    sessionPort: { isIdle: () => false, log: async () => {}, send: async () => {} },
+    timerAdapter,
+    processAdapter,
+    loggerAdapter
+  });
+  const emitter = createCommandEmitter({
+    runSchedule: RUN_SCHEDULE.TIMED,
+    every: "5m",
+    everyMs: 300_000,
+    maxRuns: 1
+  });
+
+  lifecycle.start(emitter);
+  timerAdapter.advance(0);
+  const child = processAdapter.children.at(-1);
+
+  child.emit("close", null, "SIGTERM");
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(emitter.inFlight, false);
+  assert.equal(emitter.status, EMITTER_STATUS.ERROR);
+  assert.equal(emitter.lastRunStatus, RUN_STATUS.FAILURE);
+  assert.ok(appended.some((entry) => /SIGTERM/.test(entry.text)));
 });

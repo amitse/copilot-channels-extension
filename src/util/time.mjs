@@ -1,6 +1,8 @@
 import { RUN_INTERVAL_PATTERN } from "../consts.mjs";
 import { ValidationError } from "../errors/index.mjs";
 
+export const MAX_TIMER_DELAY_MS = 2_147_483_647;
+
 export function nowIso() {
   return new Date().toISOString();
 }
@@ -60,8 +62,15 @@ export function parseLoopInterval(value) {
     multiplier = 24 * 60 * 60 * 1000;
   }
 
+  const ms = amount * multiplier;
+  if (ms > MAX_TIMER_DELAY_MS) {
+    throw new ValidationError(
+      `Invalid every interval '${value}'. Intervals must be ${MAX_TIMER_DELAY_MS}ms or less (about 24 days) to avoid timer overflow.`
+    );
+  }
+
   return {
     text: `${amount}${unit}`,
-    ms: amount * multiplier
+    ms
   };
 }

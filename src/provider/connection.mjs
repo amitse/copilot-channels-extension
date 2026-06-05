@@ -24,6 +24,7 @@ import {
   ConflictError,
   LifecycleError,
   NotFoundError,
+  TimeoutError,
   ValidationError
 } from "../errors/index.mjs";
 import { mapErrorToResponse } from "../errors/handler.mjs";
@@ -45,11 +46,22 @@ function createDefaultWebSocketAdapter() {
         ws.off?.("error", handlers.error);
       };
     },
-    send(ws, msg) {
-      ws.send(JSON.stringify(msg));
+    send(ws, msg, callback) {
+      ws.send(JSON.stringify(msg), callback);
     },
     close(ws) {
       ws.close();
+    }
+  };
+}
+
+function createDefaultTimerAdapter() {
+  return {
+    schedule(callback, delayMs) {
+      return setTimeout(callback, delayMs);
+    },
+    cancel(timerId) {
+      clearTimeout(timerId);
     }
   };
 }
@@ -66,6 +78,7 @@ export function createProviderConnection(ws, options, adapters = {}) {
   } = options;
 
   const websocketAdapter = adapters.websocketAdapter ?? createDefaultWebSocketAdapter();
+  const timerAdapter = adapters.timerAdapter ?? createDefaultTimerAdapter();
 
   let state = CONNECTION_STATE.AWAIT_AUTH;
   let providerId = null;
@@ -76,11 +89,24 @@ export function createProviderConnection(ws, options, adapters = {}) {
 
   const pendingCalls = new Map();
 
-  function send(msg) {
+  function send(msg, onFailure) {
     try {
-      websocketAdapter.send(ws, msg);
+      websocketAdapter.send(ws, msg, (err) => {
+        if (!err) {
+          return;
+        }
+        log(`[connection] send failed: ${err.message}`);
+        if (onFailure) {
+          onFailure(err);
+        }
+      });
+      return true;
     } catch (err) {
       log(`[connection] send failed: ${err.message}`);
+      if (onFailure) {
+        onFailure(err);
+      }
+      return false;
     }
   }
 
@@ -105,7 +131,7 @@ export function createProviderConnection(ws, options, adapters = {}) {
 
   function rejectAllPending(reason) {
     for (const [callId, entry] of pendingCalls) {
-      if (entry.timer) clearTimeout(entry.timer);
+      if (entry.timer) timerAdapter.cancel(entry.timer);
       entry.reject(new LifecycleError(reason ?? "provider disconnected", {
         code: TOOL_RESULT_ERROR.DISCONNECTED,
         context: { callId, providerId },
@@ -113,6 +139,73 @@ export function createProviderConnection(ws, options, adapters = {}) {
       }));
     }
     pendingCalls.clear();
+  }
+
+  function clearPendingTimer(entry) {
+    if (entry?.timer) {
+      timerAdapter.cancel(entry.timer);
+      entry.timer = null;
+    }
+  }
+
+  function rejectPendingCall(callId, error) {
+    const pending = pendingCalls.get(callId);
+    if (!pending) {
+      return false;
+    }
+    clearPendingTimer(pending);
+    pendingCalls.delete(callId);
+    pending.reject(error);
+    return true;
+  }
+
+  function resolvePendingCall(callId, result) {
+    const pending = pendingCalls.get(callId);
+    if (!pending) {
+      return false;
+    }
+    clearPendingTimer(pending);
+    pendingCalls.delete(callId);
+    pending.resolve(result);
+    return true;
+  }
+
+  function findToolDefinition(toolName) {
+    return tools.find((tool) => tool.name === toolName) ?? null;
+  }
+
+  function getToolTimeoutMs(toolName) {
+    const tool = findToolDefinition(toolName);
+    if (typeof tool?.timeout === "number" && tool.timeout > 0 && Number.isFinite(tool.timeout)) {
+      return tool.timeout;
+    }
+    return null;
+  }
+
+  function createToolCallContext(callId, toolName, extra = {}) {
+    return {
+      providerId,
+      providerName,
+      sessionId,
+      callId,
+      toolName,
+      ...extra
+    };
+  }
+
+  function handleToolCallTimeout(callId, targetSessionId, toolName, timeoutMs) {
+    const rejected = rejectPendingCall(callId, new TimeoutError(
+      `Provider tool '${toolName}' timed out after ${timeoutMs}ms`,
+      {
+        code: TOOL_RESULT_ERROR.TIMEOUT,
+        context: createToolCallContext(callId, toolName, { timeoutMs }),
+        retryable: true
+      }
+    ));
+
+    if (rejected) {
+      sendToolCancelMsg(callId, targetSessionId, "timeout");
+    }
   }
 
   function disconnectConnection(reason, { notifyUnbound, closeSocket } = {}) {
@@ -220,22 +313,19 @@ export function createProviderConnection(ws, options, adapters = {}) {
       const pending = pendingCalls.get(result.id);
 
       if (pending) {
-        if (pending.timer) clearTimeout(pending.timer);
-        pendingCalls.delete(result.id);
-
         if (result.error) {
           const errorContext = { providerId, providerName, sessionId, callId: result.id };
           if (result.errorCode === TOOL_RESULT_ERROR.NOT_FOUND) {
-            pending.reject(new NotFoundError(result.error, { code: result.errorCode, context: errorContext }));
+            rejectPendingCall(result.id, new NotFoundError(result.error, { code: result.errorCode, context: errorContext }));
           } else if (result.errorCode === TOOL_RESULT_ERROR.TIMEOUT) {
-            pending.reject(new AppError(result.error, { code: result.errorCode, context: errorContext, retryable: true }));
+            rejectPendingCall(result.id, new TimeoutError(result.error, { code: result.errorCode, context: errorContext, retryable: true }));
           } else if (result.errorCode === TOOL_RESULT_ERROR.DISCONNECTED || result.errorCode === TOOL_RESULT_ERROR.CANCELLED) {
-            pending.reject(new LifecycleError(result.error, { code: result.errorCode, context: errorContext }));
+            rejectPendingCall(result.id, new LifecycleError(result.error, { code: result.errorCode, context: errorContext }));
           } else {
-            pending.reject(new AppError(result.error, { code: result.errorCode ?? TOOL_RESULT_ERROR.INTERNAL, context: errorContext }));
+            rejectPendingCall(result.id, new AppError(result.error, { code: result.errorCode ?? TOOL_RESULT_ERROR.INTERNAL, context: errorContext }));
           }
         } else {
-          pending.resolve(result);
+          resolvePendingCall(result.id, result);
         }
       }
 
@@ -319,9 +409,37 @@ export function createProviderConnection(ws, options, adapters = {}) {
       }));
     }
 
+    let message;
+    try {
+      message = buildToolCall(callId, targetSessionId, toolName, args);
+    } catch (err) {
+      return Promise.reject(err);
+    }
+
+    const timeoutMs = getToolTimeoutMs(toolName);
+
     return new Promise((resolve, reject) => {
-      pendingCalls.set(callId, { resolve, reject, timer: null });
-      send(buildToolCall(callId, targetSessionId, toolName, args));
+      const entry = { resolve, reject, timer: null };
+      pendingCalls.set(callId, entry);
+
+      if (timeoutMs !== null) {
+        entry.timer = timerAdapter.schedule(() => {
+          handleToolCallTimeout(callId, targetSessionId, toolName, timeoutMs);
+        }, timeoutMs);
+      }
+
+      const sent = send(message, (err) => {
+        rejectPendingCall(callId, new LifecycleError(`failed to send tool call: ${err.message}`, {
+          code: TOOL_RESULT_ERROR.DISCONNECTED,
+          context: createToolCallContext(callId, toolName),
+          retryable: false,
+          cause: err
+        }));
+      });
+
+      if (!sent) {
+        return;
+      }
     });
   }
 

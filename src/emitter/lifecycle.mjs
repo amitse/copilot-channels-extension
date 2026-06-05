@@ -216,19 +216,27 @@ async function runCommandLoopIteration(emitter, context) {
       resolve(result);
     };
 
+    const buildCloseResult = (code, signal) => {
+      const stopped = emitter.stopRequested === true;
+      const ok = stopped || (code === 0 && !signal);
+      return {
+        ok,
+        code,
+        signal,
+        error: ok
+          ? null
+          : `Command iteration exited with code ${code ?? "null"}${signal ? ` (${signal})` : ""}`
+      };
+    };
+
     child.on("error", (error) => {
       finish({ ok: false, error: error.message });
     });
 
-    child.on("exit", (code, signal) => {
-      finish({
-        ok: (code ?? 0) === 0 || emitter.stopRequested,
-        code,
-        signal,
-        error: (code ?? 0) === 0 || emitter.stopRequested
-          ? null
-          : `Command iteration exited with code ${code ?? "null"}${signal ? ` (${signal})` : ""}`
-      });
+    // Use 'close' instead of 'exit' so readline has a chance to drain the
+    // child's stdio streams before the scheduled iteration is considered done.
+    child.on("close", (code, signal) => {
+      finish(buildCloseResult(code, signal));
     });
   });
 }

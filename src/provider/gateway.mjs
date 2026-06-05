@@ -26,6 +26,10 @@ function createDefaultWebSocketAdapter() {
   };
 }
 
+function createDefaultWebSocketServer(options) {
+  return new WebSocketServer(options);
+}
+
 export function createProviderGateway(options = {}, adapters = {}) {
   const {
     tapTools,
@@ -35,6 +39,7 @@ export function createProviderGateway(options = {}, adapters = {}) {
 
   const timerAdapter = adapters.timerAdapter ?? createDefaultTimerAdapter();
   const websocketAdapter = adapters.websocketAdapter ?? createDefaultWebSocketAdapter();
+  const webSocketServerFactory = adapters.webSocketServerFactory ?? createDefaultWebSocketServer;
 
   const registry = createProviderRegistry();
   const connectionsByWs = new Map();
@@ -43,6 +48,7 @@ export function createProviderGateway(options = {}, adapters = {}) {
   let wss = null;
   let token = null;
   let running = false;
+  let starting = false;
   let toolsChangedCallback = null;
   let reloadTimer = null;
   let reloadPending = false;
@@ -205,34 +211,68 @@ export function createProviderGateway(options = {}, adapters = {}) {
     });
   }
 
+  function closeServer(server) {
+    if (!server) return;
+    try {
+      server.close();
+    } catch {
+      // Best-effort cleanup only.
+    }
+  }
+
+  function resetFailedStart(server, err) {
+    log(`Failed to start provider gateway on port ${GATEWAY_PORT}: ${err.message}`);
+    starting = false;
+    if (wss === server) {
+      wss = null;
+    }
+    closeServer(server);
+    applyGatewayTransition({ type: GATEWAY_EVENT.STOP });
+  }
+
   function start() {
-    if (running) return;
+    if (running || starting) return;
     const nextToken = generateToken();
+    let server = null;
 
     try {
-      wss = new WebSocketServer({ port: GATEWAY_PORT, noServer: false });
+      starting = true;
+      let listened = false;
+      server = webSocketServerFactory({ port: GATEWAY_PORT, noServer: false });
+      wss = server;
 
-      wss.on("error", (err) => {
+      server.on("error", (err) => {
+        if (wss !== server) {
+          return;
+        }
+        if (!listened) {
+          resetFailedStart(server, err);
+          return;
+        }
         log(`Provider gateway server error: ${err.message}`);
       });
 
-      wss.on("connection", handleConnection);
-      wss.on("listening", () => {
+      server.on("connection", handleConnection);
+      server.on("listening", () => {
+        if (wss !== server) {
+          return;
+        }
+        listened = true;
+        starting = false;
+        applyGatewayTransition({ type: GATEWAY_EVENT.START, token: nextToken });
         log(`Provider gateway listening on port ${GATEWAY_PORT}`);
       });
-
-      applyGatewayTransition({ type: GATEWAY_EVENT.START, token: nextToken });
     } catch (err) {
-      log(`Failed to start provider gateway on port ${GATEWAY_PORT}: ${err.message}`);
-      wss = null;
+      resetFailedStart(server, err);
     }
   }
 
   function stop() {
+    starting = false;
     applyGatewayTransition({ type: GATEWAY_EVENT.STOP });
 
-    toolsChangedCallback = null;
-
+    // Preserve toolsChangedCallback across cached runtime stop/start cycles;
+    // tap-runtime registers it once when the runtime is first created.
     for (const conn of connectionsByWs.values()) {
       try { conn.close(); } catch { /* ignore */ }
     }
@@ -240,7 +280,7 @@ export function createProviderGateway(options = {}, adapters = {}) {
     connectionsByProviderId.clear();
 
     if (wss) {
-      wss.close();
+      closeServer(wss);
       wss = null;
     }
   }

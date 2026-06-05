@@ -45,6 +45,19 @@ function buildCompleteMessage(state) {
   return null;
 }
 
+function buildRunBudgetExhaustedMessage(state, result) {
+  const budget = `${state.runCount} of ${state.maxRuns}`;
+  if (result?.deferred) {
+    return `Emitter '${state.name}' exhausted its run budget (${budget} attempts) after a deferred prompt run.`;
+  }
+
+  return `Emitter '${state.name}' exhausted its run budget (${budget} attempts) after iteration failed: ${result?.error ?? "unknown error"}.`;
+}
+
+function isRunBudgetExhausted(state) {
+  return Boolean(state.maxRuns && state.runCount >= state.maxRuns);
+}
+
 function buildStopCompletionActions(state) {
   const text = `Emitter '${state.name}' stopped.`;
   return [
@@ -171,6 +184,23 @@ export function computeTransition(currentState, event) {
         nextState: { ...state, status: EMITTER_STATUS.WAITING, lastRunStatus: RUN_STATUS.SUCCESS },
         actions: [
           { type: LIFECYCLE_ACTION.SCHEDULE_TIMER, delayMs: scheduleDelay(state) }
+        ]
+      };
+    }
+
+    if (isRunBudgetExhausted(state)) {
+      const message = buildRunBudgetExhaustedMessage(state, result);
+      return {
+        currentState,
+        nextState: {
+          ...state,
+          status: EMITTER_STATUS.ERROR,
+          lastRunStatus: RUN_STATUS.FAILURE,
+          stoppedAt: event?.timestamp ?? null
+        },
+        actions: [
+          { type: LIFECYCLE_ACTION.APPEND_SYSTEM_MESSAGE, text: message },
+          { type: LIFECYCLE_ACTION.LOG_MESSAGE, message }
         ]
       };
     }

@@ -81,7 +81,7 @@ export function createStreamTools(deps) {
         type: "object",
         properties: {
           channel: { type: "string", description: "EventStream name." },
-          delivery: { type: "string", description: "Event outcome mode: 'important' or 'all'." },
+          delivery: { type: "string", description: "Session injector delivery mode. 'important'/'inject' only send inject-outcome events, 'surface' surfaces surface outcomes and sends inject outcomes, 'all' surfaces all accepted events while inject outcomes still push into the conversation, and 'keep'/'drop' store without proactive delivery." },
           description: { type: "string", description: "Optional stream description." },
           ...policyParameterProperties({ force: "sessionInjector" })
         },
