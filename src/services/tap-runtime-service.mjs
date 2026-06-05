@@ -1,15 +1,13 @@
-import { BRAND, COPILOT_INSTRUCTIONS_PATH } from "../consts.mjs";
 import { createConfigStore } from "../config/store.mjs";
 import { createEmitterSupervisor } from "../emitter/supervisor.mjs";
-import { formatSessionInjectorContextSummary } from "../format/stream.mjs";
 import { createSessionActivityBridge } from "../session/listeners.mjs";
 import { createSessionPort } from "../session/port.mjs";
 import { createNotificationDispatcher } from "../streams/notifications.mjs";
 import { createStreamStore } from "../streams/store.mjs";
-import { checkForUpdate } from "../update/checker.mjs";
 import { normalizeBaseCwd } from "../util/path.mjs";
 import { createConfigBootstrapService } from "./config-bootstrap-service.mjs";
 import { createEmitterService } from "./emitter-service.mjs";
+import { createRuntimeHooks } from "./runtime-hooks.mjs";
 
 function createRuntimeSubsystems(options = {}) {
   let baseCwd = normalizeBaseCwd(options.cwd ?? options.getBaseCwd?.());
@@ -94,24 +92,6 @@ export function createTapRuntimeService(options = {}) {
     return streams.append(name, entry);
   }
 
-  function getSessionStartContext(configSummary) {
-    return [
-      `${BRAND} is active.`,
-      "Use event emitters to run background commands or prompts; use event filters to control which events are kept, surfaced, or injected; use session injectors when you want events surfaced or injected into the session.",
-      "Session injector updates are sent immediately from emitter output and do not wait for transcript events.",
-      `Repo guidance is available at ${COPILOT_INSTRUCTIONS_PATH} if you want to read the project-specific instructions.`,
-      configSummary,
-      formatSessionInjectorContextSummary(streams.list())
-    ]
-      .filter(Boolean)
-      .join("\n");
-  }
-
-  function getPromptContext() {
-    const summary = formatSessionInjectorContextSummary(streams.list());
-    return summary ? { additionalContext: summary } : undefined;
-  }
-
   const streamCapabilities = {
     listStreams: () => emitterService.listStreams(),
     postToStream: (input) => emitterService.postToStream(input),
@@ -130,35 +110,18 @@ export function createTapRuntimeService(options = {}) {
     getEmitterState: (name) => emitterService.getEmitterState(name)
   };
 
-  const hookCapabilities = {
-    onSessionStart: async (input = {}) => {
-      // Fire-and-forget update check — never blocks session start.
-      checkForUpdate(sessionPort).catch(() => {});
-
-      let configSummary = "No config loaded.";
-      try {
-        configSummary = await loadPersistentConfig(input.cwd);
-        await sessionPort.log(configSummary);
-      } catch (error) {
-        configSummary = `Config load failed: ${error?.message ?? error}`;
-        await sessionPort.log(configSummary, { level: "warning" });
-      }
-
-      return {
-        additionalContext: getSessionStartContext(configSummary)
-      };
-    },
-
-    onUserPromptSubmitted: async () => getPromptContext(),
-
-    onSessionEnd: async () => {
-      await stopAllEmitters();
-      return {
-        sessionSummary: `${BRAND} tracked ${streamCapabilities.listStreams().length} event streams and ${emitterCapabilities.listEmitters().configured.length} persistent emitter definitions.`,
-        cleanupActions: [`Stopped session emitters managed by ${BRAND}.`]
-      };
-    }
-  };
+  const {
+    hooks: hookCapabilities,
+    getSessionStartContext,
+    getPromptContext
+  } = createRuntimeHooks({
+    streams,
+    sessionPort,
+    loadPersistentConfig,
+    stopAllEmitters,
+    listStreams: streamCapabilities.listStreams,
+    listEmitters: emitterCapabilities.listEmitters
+  });
 
   const sessionCapabilities = {
     attachSession,
