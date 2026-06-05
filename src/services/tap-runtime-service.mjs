@@ -1,6 +1,7 @@
 import { BRAND, COPILOT_INSTRUCTIONS_PATH } from "../consts.mjs";
 import { createConfigStore } from "../config/store.mjs";
 import { createEmitterSupervisor } from "../emitter/supervisor.mjs";
+import { formatSessionInjectorContextSummary } from "../format/stream.mjs";
 import { createSessionPort } from "../session/port.mjs";
 import { createNotificationDispatcher } from "../streams/notifications.mjs";
 import { createStreamStore } from "../streams/store.mjs";
@@ -8,22 +9,6 @@ import { checkForUpdate } from "../update/checker.mjs";
 import { normalizeBaseCwd } from "../util/path.mjs";
 import { createConfigBootstrapService } from "./config-bootstrap-service.mjs";
 import { createEmitterService } from "./emitter-service.mjs";
-
-function sessionInjectorSummary(streams) {
-  const subscribed = streams.list().filter((stream) => stream.sessionInjector.enabled);
-
-  if (subscribed.length === 0) {
-    return "";
-  }
-
-  return [
-    "Session injectors:",
-    ...subscribed.map(
-      (stream) =>
-        `- ${stream.name} delivery=${stream.sessionInjector.delivery} lifespan=${stream.sessionInjector.lifespan} ownership=${stream.sessionInjector.ownership}`
-    )
-  ].join("\n");
-}
 
 function createRuntimeSubsystems(options = {}) {
   let baseCwd = normalizeBaseCwd(options.cwd ?? options.getBaseCwd?.());
@@ -160,14 +145,14 @@ export function createTapRuntimeService(options = {}) {
       "Session injector updates are sent immediately from emitter output and do not wait for transcript events.",
       `Repo guidance is available at ${COPILOT_INSTRUCTIONS_PATH} if you want to read the project-specific instructions.`,
       configSummary,
-      sessionInjectorSummary(streams)
+      formatSessionInjectorContextSummary(streams.list())
     ]
       .filter(Boolean)
       .join("\n");
   }
 
   function getPromptContext() {
-    const summary = sessionInjectorSummary(streams);
+    const summary = formatSessionInjectorContextSummary(streams.list());
     return summary ? { additionalContext: summary } : undefined;
   }
 

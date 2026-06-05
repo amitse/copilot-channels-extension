@@ -1,7 +1,44 @@
+function formatSessionInjectorPolicyFields(sessionInjector, separator = " ") {
+  return [
+    `delivery=${sessionInjector.delivery}`,
+    `lifespan=${sessionInjector.lifespan}`,
+    `ownership=${sessionInjector.ownership}`
+  ].join(separator);
+}
+
 export function formatSessionInjector(stream) {
   const sessionInjector = stream.sessionInjector;
   const state = sessionInjector.enabled ? "on" : "off";
-  return `sessionInjector=${state} delivery=${sessionInjector.delivery} lifespan=${sessionInjector.lifespan} ownership=${sessionInjector.ownership}`;
+  return `sessionInjector=${state} ${formatSessionInjectorPolicyFields(sessionInjector)}`;
+}
+
+export function formatSessionInjectorDetails(stream) {
+  return formatSessionInjectorPolicyFields(stream.sessionInjector, "\n");
+}
+
+export function formatSessionInjectorUpdate(action, stream) {
+  return [
+    `${action} session injector for stream '${stream.name}'.`,
+    formatSessionInjectorDetails(stream)
+  ].join("\n");
+}
+
+export function formatSessionInjectorContextSummary(streamList) {
+  const subscribed = streamList.filter((stream) => stream.sessionInjector.enabled);
+
+  if (subscribed.length === 0) {
+    return "";
+  }
+
+  return [
+    "Session injectors:",
+    ...subscribed.map((stream) => `- ${stream.name} ${formatSessionInjectorPolicyFields(stream.sessionInjector)}`)
+  ].join("\n");
+}
+
+export function formatSessionInjectorPolicyLog(stream) {
+  const action = stream.sessionInjector.enabled ? "Subscribed" : "Unsubscribed";
+  return `${action} stream '${stream.name}' with ${formatSessionInjectorPolicyFields(stream.sessionInjector)}.`;
 }
 
 export function formatStream(stream) {

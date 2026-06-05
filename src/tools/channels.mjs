@@ -1,5 +1,5 @@
 import { SOURCE } from "../consts.mjs";
-import { formatStream, formatStreamHistory } from "../format/stream.mjs";
+import { formatSessionInjectorUpdate, formatStream, formatStreamHistory } from "../format/stream.mjs";
 import { policyOptions, policyParameterProperties } from "./policy-options.mjs";
 import { wrapToolHandler } from "./tool-handler.mjs";
 
@@ -13,16 +13,6 @@ function renderStreamList(service) {
   return [
     `Event streams (${streams.length}):`,
     ...streams.map((stream) => formatStream(stream))
-  ].join("\n");
-}
-
-function renderInjectorUpdate(action, stream) {
-  const injector = stream.sessionInjector;
-  return [
-    `${action} session injector for stream '${stream.name}'.`,
-    `delivery=${injector.delivery}`,
-    `lifespan=${injector.lifespan}`,
-    `ownership=${injector.ownership}`
   ].join("\n");
 }
 
@@ -105,7 +95,7 @@ export function createStreamTools(deps) {
           ...policyOptions(args)
         });
 
-        return renderInjectorUpdate("Enabled", state);
+        return formatSessionInjectorUpdate("Enabled", state);
       })
     },
     {
@@ -129,7 +119,7 @@ export function createStreamTools(deps) {
           ...policyOptions(args)
         });
 
-        return renderInjectorUpdate("Disabled", state);
+        return formatSessionInjectorUpdate("Disabled", state);
       })
     }
   ];
