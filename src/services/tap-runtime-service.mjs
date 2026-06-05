@@ -1,48 +1,8 @@
-import { createConfigStore } from "../config/store.mjs";
-import { createEmitterSupervisor } from "../emitter/supervisor.mjs";
 import { createSessionActivityBridge } from "../session/listeners.mjs";
-import { createSessionPort } from "../session/port.mjs";
-import { createNotificationDispatcher } from "../streams/notifications.mjs";
-import { createStreamStore } from "../streams/store.mjs";
-import { normalizeBaseCwd } from "../util/path.mjs";
 import { createConfigBootstrapService } from "./config-bootstrap-service.mjs";
 import { createEmitterService } from "./emitter-service.mjs";
 import { createRuntimeHooks } from "./runtime-hooks.mjs";
-
-function createRuntimeSubsystems(options = {}) {
-  let baseCwd = normalizeBaseCwd(options.cwd ?? options.getBaseCwd?.());
-
-  const getBaseCwd = () => baseCwd;
-  const setBaseCwd = (next) => {
-    baseCwd = normalizeBaseCwd(next, baseCwd);
-    options.setBaseCwd?.(baseCwd);
-    return baseCwd;
-  };
-
-  const sessionPort = options.sessionPort ?? createSessionPort(options.session ?? null);
-  const streams = options.streams ?? createStreamStore();
-  const configStore = options.configStore ?? createConfigStore({ cwd: baseCwd });
-  const notifications = options.notifications ?? createNotificationDispatcher({ sessionPort });
-  const persist = options.persist ?? (() => configStore.save());
-  const supervisor = options.supervisor ?? createEmitterSupervisor({
-    streams,
-    configStore,
-    notifications,
-    sessionPort,
-    getBaseCwd,
-    persist
-  });
-
-  return {
-    streams,
-    configStore,
-    supervisor,
-    sessionPort,
-    getBaseCwd,
-    setBaseCwd,
-    persist
-  };
-}
+import { createRuntimeSubsystems } from "./runtime-subsystems.mjs";
 
 export function createTapRuntimeService(options = {}) {
   const {
