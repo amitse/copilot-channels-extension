@@ -1,5 +1,5 @@
 import { BRAND, EVENT_OUTCOME, SOURCE, STREAM } from "../consts.mjs";
-import { EventFilterService } from "../services/event-filter-service.mjs";
+import { EventFilterService } from "../event-filter/service.mjs";
 import { splitTextLines } from "../util/text.mjs";
 
 /**

@@ -1,5 +1,5 @@
 import { EMITTER_TYPE, LIFESPAN, OWNERSHIP } from "../consts.mjs";
-import { EventFilterService } from "../services/event-filter-service.mjs";
+import { EventFilterService } from "../event-filter/service.mjs";
 import { normalizeLifespan, normalizeName, normalizeOwnership } from "../util/normalize.mjs";
 import { deriveRunSchedule } from "./schedule.mjs";
 

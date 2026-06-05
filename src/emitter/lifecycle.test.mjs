@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { EMITTER_STATUS, EMITTER_TYPE, EVENT_OUTCOME, IDLE_PROMPT_BACKOFF_MS, RUN_SCHEDULE, RUN_STATUS, SOURCE, STREAM } from "../consts.mjs";
-import { EventFilterService } from "../services/event-filter-service.mjs";
+import { EventFilterService } from "../event-filter/service.mjs";
 import { computeTransition, identifyActions, LIFECYCLE_EVENT, LIFECYCLE_ACTION } from "./lifecycle-state.mjs";
 import { createLifecycle } from "./lifecycle.mjs";
 import { createLineRouter } from "./line-router.mjs";

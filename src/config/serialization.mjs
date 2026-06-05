@@ -4,7 +4,7 @@ import { CONFIG_FILENAME } from "../consts.mjs";
 import { ValidationError } from "../errors/index.mjs";
 import { normalizeName } from "../util/normalize.mjs";
 import { isValidBaseCwd } from "../util/path.mjs";
-import { EventFilterService } from "../services/event-filter-service.mjs";
+import { EventFilterService } from "../event-filter/service.mjs";
 import { stripEmitterRuntimeFields } from "../emitter/state.mjs";
 
 export function createEmptyConfig(configVersion) {

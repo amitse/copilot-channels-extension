@@ -1,7 +1,7 @@
 import { EVENT_OUTCOME, LIFESPAN, OWNERSHIP } from "../consts.mjs";
 import { ValidationError } from "../errors/index.mjs";
 import { normalizeDelivery, normalizeLifespan, normalizeName, normalizeOwnership } from "../util/normalize.mjs";
-import { EventFilterService } from "../services/event-filter-service.mjs";
+import { EventFilterService } from "../event-filter/service.mjs";
 import { stripEmitterRuntimeFields } from "../emitter/state.mjs";
 
 export const CONFIG_VERSION = Object.freeze({

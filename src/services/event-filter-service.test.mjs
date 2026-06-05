@@ -5,7 +5,7 @@ import { EVENT_OUTCOME, LIFESPAN, OWNERSHIP } from "../consts.mjs";
 import { formatEventFilter } from "../format/event-filter.mjs";
 import { compileRegex } from "../util/regex.mjs";
 import { normalizeOwnership, normalizeLifespan, normalizeOutcome } from "../util/normalize.mjs";
-import { EventFilterService } from "./event-filter-service.mjs";
+import { EventFilterService } from "../event-filter/service.mjs";
 
 const SAFE_RULE_OUTCOME = EVENT_OUTCOME.DROP;
 

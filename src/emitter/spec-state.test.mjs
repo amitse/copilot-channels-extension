@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { EVENT_OUTCOME, LIFESPAN, OWNERSHIP, RUN_SCHEDULE, EMITTER_TYPE, EMITTER_STATUS, RUN_STATUS } from "../consts.mjs";
-import { EventFilterService } from "../services/event-filter-service.mjs";
+import { EventFilterService } from "../event-filter/service.mjs";
 import { formatConfiguredEmitter } from "../format/emitter.mjs";
 import { normalizeEmitterSpec } from "./spec.mjs";
 import { buildEmitterState } from "./state.mjs";

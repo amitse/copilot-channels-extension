@@ -1,5 +1,5 @@
 import { EVENT_OUTCOME, EMITTER_TYPE, LIFESPAN, OWNERSHIP } from "../consts.mjs";
-import { EventFilterService } from "../services/event-filter-service.mjs";
+import { EventFilterService } from "../event-filter/service.mjs";
 import { normalizeDelivery, normalizeName, normalizeLifespan, normalizeOwnership } from "../util/normalize.mjs";
 import { parseIntervalSchedule, parseLoopInterval } from "../util/time.mjs";
 import { ValidationError } from "../errors/index.mjs";

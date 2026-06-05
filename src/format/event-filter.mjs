@@ -1,5 +1,5 @@
 import { OWNERSHIP, LIFESPAN } from "../consts.mjs";
-import { EventFilterService } from "../services/event-filter-service.mjs";
+import { EventFilterService } from "../event-filter/service.mjs";
 
 export function createEventFilter(source = {}, fallbackOwnership = OWNERSHIP.MODEL_OWNED, fallbackLifespan = LIFESPAN.TEMPORARY) {
   return EventFilterService.normalize(source, fallbackOwnership, fallbackLifespan);
