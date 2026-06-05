@@ -25,10 +25,7 @@ export function createTapRuntimeService(options = {}) {
     streams,
     configStore,
     supervisor,
-    sessionPort,
-    getBaseCwd,
-    persist,
-    streamService
+    getBaseCwd
   });
   const configBootstrapService = createConfigBootstrapService({
     streams,

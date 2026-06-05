@@ -2,7 +2,6 @@ import { normalizeName } from "../util/normalize.mjs";
 import { EmitterSpec } from "../emitter/spec.mjs";
 import { projectConfiguredEmitter, projectRunningEmitter } from "../emitter/projection.mjs";
 import { AppError, NotFoundError, toAppError } from "../errors/index.mjs";
-import { createStreamService } from "./stream-service.mjs";
 
 function rethrowServiceError(error, message, context) {
   if (error instanceof AppError) {
@@ -23,27 +22,18 @@ function rethrowServiceError(error, message, context) {
  *   streams: Object,
  *   configStore: Object,
  *   supervisor: Object,
- *   sessionPort: Object,
- *   getBaseCwd: Function,
- *   persist: Function,
- *   streamService?: Object
+ *   getBaseCwd: Function
  * }} deps
  * @returns {{
  *   listEmitters: Function,
- *   listStreams: Function,
- *   postToStream: Function,
- *   getStreamHistory: Function,
  *   startEmitter: Function,
  *   stopEmitter: Function,
  *   updateFilter: Function,
- *   setInjectorPolicy: Function,
- *   getEmitterState: Function,
- *   getStreamState: Function
+ *   getEmitterState: Function
  * }}
  */
 export function createEmitterService(deps) {
-  const { streams, configStore, supervisor, sessionPort, getBaseCwd, persist } = deps;
-  const streamService = deps.streamService ?? createStreamService({ streams, configStore, sessionPort, persist });
+  const { streams, configStore, supervisor, getBaseCwd } = deps;
 
   /**
    * Return a combined view of running and configured emitters.
@@ -150,39 +140,11 @@ export function createEmitterService(deps) {
     });
   }
 
-  /**
-   * Compatibility delegates for stream-facing service methods.
-   */
-  function listStreams() {
-    return streamService.listStreams();
-  }
-
-  function postToStream(input) {
-    return streamService.postToStream(input);
-  }
-
-  function getStreamHistory(channel, limit) {
-    return streamService.getStreamHistory(channel, limit);
-  }
-
-  function setInjectorPolicy(id, policy) {
-    return streamService.setInjectorPolicy(id, policy);
-  }
-
-  function getStreamState(id) {
-    return streamService.getStreamState(id);
-  }
-
   return {
     listEmitters,
-    listStreams,
-    postToStream,
-    getStreamHistory,
     startEmitter,
     stopEmitter,
     updateFilter,
-    setInjectorPolicy,
-    getEmitterState,
-    getStreamState
+    getEmitterState
   };
 }
