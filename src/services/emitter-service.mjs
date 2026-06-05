@@ -1,10 +1,8 @@
-import { DEFAULT_STREAM, DEFAULT_STREAM_DESCRIPTION } from "../consts.mjs";
 import { normalizeName } from "../util/normalize.mjs";
-import { clampLimit } from "../util/text.mjs";
-import { applySessionInjectorPolicy } from "../emitter/injector-policy.mjs";
 import { EmitterSpec } from "../emitter/spec.mjs";
-import { projectConfiguredEmitter, projectRunningEmitter, projectStream } from "../emitter/projection.mjs";
+import { projectConfiguredEmitter, projectRunningEmitter } from "../emitter/projection.mjs";
 import { AppError, NotFoundError, toAppError } from "../errors/index.mjs";
+import { createStreamService } from "./stream-service.mjs";
 
 function rethrowServiceError(error, message, context) {
   if (error instanceof AppError) {
@@ -27,7 +25,8 @@ function rethrowServiceError(error, message, context) {
  *   supervisor: Object,
  *   sessionPort: Object,
  *   getBaseCwd: Function,
- *   persist: Function
+ *   persist: Function,
+ *   streamService?: Object
  * }} deps
  * @returns {{
  *   listEmitters: Function,
@@ -44,6 +43,7 @@ function rethrowServiceError(error, message, context) {
  */
 export function createEmitterService(deps) {
   const { streams, configStore, supervisor, sessionPort, getBaseCwd, persist } = deps;
+  const streamService = deps.streamService ?? createStreamService({ streams, configStore, sessionPort, persist });
 
   /**
    * Return a combined view of running and configured emitters.
@@ -61,45 +61,6 @@ export function createEmitterService(deps) {
       .map((entry) => projectConfiguredEmitter(entry, { getStream: (channel) => streams.get(channel) }));
 
     return { running, configured };
-  }
-
-  /**
-   * Return the current stream catalog, ensuring the default stream exists.
-   */
-  function listStreams() {
-    streams.ensure(DEFAULT_STREAM, DEFAULT_STREAM_DESCRIPTION);
-    return streams.list().map((stream) => projectStream(stream));
-  }
-
-  /**
-   * Fetch a stream and clamp the requested history window.
-   */
-  function getStreamHistory(channel, limit) {
-    const name = normalizeName(channel);
-    const stream = streams.get(name);
-    if (!stream) {
-      throw new NotFoundError(`Stream '${name}' does not exist.`, {
-        context: { channel: name }
-      });
-    }
-
-    return {
-      stream: projectStream(stream),
-      limit: clampLimit(limit, 20)
-    };
-  }
-
-  /**
-   * Append a message to a stream and return the updated stream snapshot.
-   */
-  function postToStream({ channel, message, source, description }) {
-    const stream = streams.ensure(channel, description ?? "");
-    streams.append(stream.name, {
-      source,
-      text: message
-    });
-    void sessionPort.log(`Posted message to stream '${stream.name}'.`);
-    return { stream: projectStream(stream) };
   }
 
   /**
@@ -170,32 +131,6 @@ export function createEmitterService(deps) {
   }
 
   /**
-   * Configure the session injector policy for a stream.
-   */
-  function setInjectorPolicy(id, policy) {
-    const name = normalizeName(id);
-
-    try {
-      const stream = applySessionInjectorPolicy(
-        { streams, configStore, sessionPort, persist },
-        name,
-        policy,
-        { persistConfig: true }
-      );
-
-      return {
-        stream: projectStream(stream),
-        state: projectStream(stream)
-      };
-    } catch (error) {
-      rethrowServiceError(error, `Failed to update session injector for stream '${name}'.`, {
-        operation: "setInjectorPolicy",
-        name
-      });
-    }
-  }
-
-  /**
    * Return the current runtime or persisted state for one emitter.
    */
   function getEmitterState(id) {
@@ -216,17 +151,26 @@ export function createEmitterService(deps) {
   }
 
   /**
-   * Return a snapshot of the named stream.
+   * Compatibility delegates for stream-facing service methods.
    */
+  function listStreams() {
+    return streamService.listStreams();
+  }
+
+  function postToStream(input) {
+    return streamService.postToStream(input);
+  }
+
+  function getStreamHistory(channel, limit) {
+    return streamService.getStreamHistory(channel, limit);
+  }
+
+  function setInjectorPolicy(id, policy) {
+    return streamService.setInjectorPolicy(id, policy);
+  }
+
   function getStreamState(id) {
-    const name = normalizeName(id, DEFAULT_STREAM);
-    const stream = streams.get(name);
-    if (!stream) {
-      throw new NotFoundError(`Stream '${name}' does not exist.`, {
-        context: { channel: name }
-      });
-    }
-    return projectStream(stream);
+    return streamService.getStreamState(id);
   }
 
   return {

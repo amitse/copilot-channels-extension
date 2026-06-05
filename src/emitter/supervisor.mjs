@@ -6,7 +6,7 @@ import { normalizeEmitterSpec } from "./spec.mjs";
 import { buildEmitterState } from "./state.mjs";
 import { createLineRouter } from "./line-router.mjs";
 import { createLifecycle } from "./lifecycle.mjs";
-import { applySessionInjectorPolicy } from "./injector-policy.mjs";
+import { applySessionInjectorPolicy } from "../streams/injector-policy.mjs";
 import { EventFilterService } from "../event-filter/service.mjs";
 import { ConflictError, LifecycleError, NotFoundError, AppError } from "../errors/index.mjs";
 

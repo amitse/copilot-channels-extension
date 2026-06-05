@@ -3,6 +3,7 @@ import { createConfigBootstrapService } from "./config-bootstrap-service.mjs";
 import { createEmitterService } from "./emitter-service.mjs";
 import { createRuntimeHooks } from "./runtime-hooks.mjs";
 import { createRuntimeSubsystems } from "./runtime-subsystems.mjs";
+import { createStreamService } from "./stream-service.mjs";
 
 export function createTapRuntimeService(options = {}) {
   const {
@@ -14,13 +15,20 @@ export function createTapRuntimeService(options = {}) {
     setBaseCwd,
     persist
   } = createRuntimeSubsystems(options);
+  const streamService = createStreamService({
+    streams,
+    configStore,
+    sessionPort,
+    persist
+  });
   const emitterService = createEmitterService({
     streams,
     configStore,
     supervisor,
     sessionPort,
     getBaseCwd,
-    persist
+    persist,
+    streamService
   });
   const configBootstrapService = createConfigBootstrapService({
     streams,
@@ -53,13 +61,11 @@ export function createTapRuntimeService(options = {}) {
   }
 
   const streamCapabilities = {
-    listStreams: () => emitterService.listStreams(),
-    postToStream: (input) => emitterService.postToStream(input),
-    getStreamHistory: (channel, limit) => emitterService.getStreamHistory(channel, limit),
-    // Session injector policy is stream-facing even though persistence is coordinated
-    // through the emitter service.
-    setInjectorPolicy: (name, policy) => emitterService.setInjectorPolicy(name, policy),
-    getStreamState: (name) => emitterService.getStreamState(name)
+    listStreams: () => streamService.listStreams(),
+    postToStream: (input) => streamService.postToStream(input),
+    getStreamHistory: (channel, limit) => streamService.getStreamHistory(channel, limit),
+    setInjectorPolicy: (name, policy) => streamService.setInjectorPolicy(name, policy),
+    getStreamState: (name) => streamService.getStreamState(name)
   };
 
   const emitterCapabilities = {
