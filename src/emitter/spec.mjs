@@ -1,8 +1,9 @@
-import { EVENT_OUTCOME, EMITTER_TYPE, LIFESPAN, OWNERSHIP, RUN_SCHEDULE } from "../consts.mjs";
+import { EVENT_OUTCOME, EMITTER_TYPE, LIFESPAN, OWNERSHIP } from "../consts.mjs";
 import { EventFilterService } from "../services/event-filter-service.mjs";
 import { normalizeDelivery, normalizeName, normalizeLifespan, normalizeOwnership } from "../util/normalize.mjs";
 import { parseIntervalSchedule, parseLoopInterval } from "../util/time.mjs";
 import { ValidationError } from "../errors/index.mjs";
+import { deriveRunSchedule } from "./schedule.mjs";
 
 function isPlainObject(value) {
   return Object.prototype.toString.call(value) === "[object Object]";
@@ -94,16 +95,6 @@ function resolveEmitterType(prompt) {
   return prompt ? EMITTER_TYPE.PROMPT : EMITTER_TYPE.COMMAND;
 }
 
-function resolveRunSchedule({ prompt, every, everyMs, everyScheduleMs }) {
-  if (every === "idle") {
-    return RUN_SCHEDULE.IDLE;
-  }
-  if (everyMs !== null || everyScheduleMs !== null) {
-    return RUN_SCHEDULE.TIMED;
-  }
-  return prompt ? RUN_SCHEDULE.ONE_TIME : RUN_SCHEDULE.CONTINUOUS;
-}
-
 export function normalizeEmitterSpec(rawInput = {}) {
   const { name, command, prompt } = validateEmitterSpecSchema(rawInput);
 
@@ -135,11 +126,12 @@ export function normalizeEmitterSpec(rawInput = {}) {
   }
 
   const emitterType = resolveEmitterType(prompt);
-  const runSchedule = resolveRunSchedule({
-    prompt,
+  const runSchedule = deriveRunSchedule({
+    emitterType,
     every: parsedEvery?.text ?? null,
     everyMs: parsedEvery?.ms ?? null,
-    everyScheduleMs
+    everyScheduleMs,
+    idle: parsedEvery?.idle === true
   });
 
   const canonical = {

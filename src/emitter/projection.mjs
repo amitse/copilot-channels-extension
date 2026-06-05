@@ -1,6 +1,7 @@
-import { EMITTER_TYPE, LIFESPAN, OWNERSHIP, RUN_SCHEDULE } from "../consts.mjs";
+import { EMITTER_TYPE, LIFESPAN, OWNERSHIP } from "../consts.mjs";
 import { EventFilterService } from "../services/event-filter-service.mjs";
 import { normalizeLifespan, normalizeName, normalizeOwnership } from "../util/normalize.mjs";
+import { deriveRunSchedule } from "./schedule.mjs";
 
 function readOptionalText(value) {
   return value ? String(value) : null;
@@ -56,22 +57,6 @@ function cloneOptionalArray(value) {
   return Array.isArray(value) ? [...value] : null;
 }
 
-function resolveRunSchedule({ emitterType, every, idle, everySchedule, everyScheduleMs }) {
-  if (idle) {
-    return RUN_SCHEDULE.IDLE;
-  }
-
-  if (every) {
-    return RUN_SCHEDULE.TIMED;
-  }
-
-  if (everySchedule || everyScheduleMs) {
-    return RUN_SCHEDULE.TIMED;
-  }
-
-  return emitterType === EMITTER_TYPE.PROMPT ? RUN_SCHEDULE.ONE_TIME : RUN_SCHEDULE.CONTINUOUS;
-}
-
 /**
  * Project a persisted/configured emitter entry into the display snapshot shape
  * used by tap_list_emitters and formatter code. This intentionally stays more
@@ -109,7 +94,7 @@ export function projectConfiguredEmitter(entry = {}, options = {}) {
     ownership,
     type: emitterType,
     emitterType,
-    runSchedule: resolveRunSchedule({ emitterType, every, idle, everySchedule, everyScheduleMs }),
+    runSchedule: deriveRunSchedule({ emitterType, every, idle, everySchedule, everyScheduleMs }),
     stream: channel,
     channel,
     autoStart: entry.autoStart !== false,
