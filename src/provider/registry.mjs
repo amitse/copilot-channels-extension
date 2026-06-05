@@ -1,6 +1,6 @@
 import { MAX_TOOLS_PER_PROVIDER } from "./consts.mjs";
-import { AppError, ConflictError } from "../errors/index.mjs";
-import { normalizeToolError } from "../errors/handler.mjs";
+import { buildProviderSessionTools } from "./tool-proxy.mjs";
+import { ConflictError } from "../errors/index.mjs";
 
 export function createProviderRegistry() {
   // Map<providerId, { id, name, tools[], sessionId }>
@@ -35,31 +35,7 @@ export function createProviderRegistry() {
   }
 
   function buildSessionTools(tapTools, dispatchToolCall) {
-    const providerTools = getProviderTools();
-    const wrapped = providerTools.map(tool => ({
-      name: tool.name,
-      description: tool.description,
-      parameters: tool.parameters || { type: "object", properties: {} },
-      handler: async (args, context) => {
-        const callId = context?.callId || `call-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-        try {
-          const result = await dispatchToolCall(tool.providerId, tool.name, callId, args);
-          if (result.error) {
-            throw new AppError(result.error, {
-              code: result.errorCode ?? "INTERNAL",
-              context: { providerId: tool.providerId, providerName: tool.providerName, toolName: tool.name, callId }
-            });
-          }
-          return result.data;
-        } catch (error) {
-          throw normalizeToolError(error, {
-            context: { providerId: tool.providerId, providerName: tool.providerName, toolName: tool.name, callId }
-          });
-        }
-      }
-    }));
-
-    return [...tapTools, ...wrapped];
+    return buildProviderSessionTools(tapTools, getProviderTools(), dispatchToolCall);
   }
 
   function hasToolConflict(newTools, existingToolNames) {
