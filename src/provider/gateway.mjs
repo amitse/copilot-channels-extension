@@ -1,45 +1,61 @@
 import { randomBytes } from "node:crypto";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { WebSocketServer } from "ws";
-import { GATEWAY_PORT, RELOAD_DEBOUNCE_MS, TOKEN_PREFIX, CONNECTION_STATE, TOOL_RESULT_ERROR } from "./consts.mjs";
+import {
+  GATEWAY_PORT,
+  RELOAD_DEBOUNCE_MS,
+  TOKEN_PREFIX,
+  ERROR_CODE,
+  CONNECTION_STATE,
+  TOOL_RESULT_ERROR,
+  SESSION_LIFECYCLE_STATE
+} from "./consts.mjs";
 import { createProviderRegistry } from "./registry.mjs";
 import { createProviderConnection } from "./connection.mjs";
 import { computeTransition, identifyActions, GATEWAY_EVENT, GATEWAY_ACTION } from "./gateway-state.mjs";
+import { createDefaultTimerAdapter } from "../util/timer-adapter.mjs";
+import { ConflictError } from "../errors/index.mjs";
 
-function createDefaultTimerAdapter() {
-  return {
-    schedule(callback, delayMs) {
-      return setTimeout(callback, delayMs);
-    },
-    cancel(timerId) {
-      clearTimeout(timerId);
-    }
-  };
-}
-
-function createDefaultWebSocketAdapter() {
-  return {
-    connect() {
-      return () => {};
-    },
-    send() {},
-    close() {}
-  };
-}
+const DEFAULT_PROVIDER_HOST = "127.0.0.1";
 
 function createDefaultWebSocketServer(options) {
   return new WebSocketServer(options);
+}
+
+function createDefaultFsAdapter() {
+  return {
+    mkdirSync: (...args) => fs.mkdirSync(...args),
+    writeFileSync: (...args) => fs.writeFileSync(...args),
+    chmodSync: (...args) => fs.chmodSync(...args),
+    rmSync: (...args) => fs.rmSync(...args)
+  };
+}
+
+function createDefaultPathAdapter() {
+  return {
+    join: (...parts) => path.join(...parts)
+  };
 }
 
 export function createProviderGateway(options = {}, adapters = {}) {
   const {
     tapTools,
     getSessionInfo,
-    log = () => {}
+    deliverPush,
+    log = () => {},
+    host = DEFAULT_PROVIDER_HOST
   } = options;
 
   const timerAdapter = adapters.timerAdapter ?? createDefaultTimerAdapter();
-  const websocketAdapter = adapters.websocketAdapter ?? createDefaultWebSocketAdapter();
+  const hasCustomWebSocketAdapter = adapters.websocketAdapter != null;
+  const websocketAdapter = hasCustomWebSocketAdapter ? adapters.websocketAdapter : null;
   const webSocketServerFactory = adapters.webSocketServerFactory ?? createDefaultWebSocketServer;
+  const fsAdapter = adapters.fsAdapter ?? createDefaultFsAdapter();
+  const pathAdapter = adapters.pathAdapter ?? createDefaultPathAdapter();
+  const environment = adapters.environment ?? process.env;
+  const homeDirectory = adapters.homeDirectory ?? (() => os.homedir());
 
   const registry = createProviderRegistry();
   const connectionsByWs = new Map();
@@ -52,6 +68,9 @@ export function createProviderGateway(options = {}, adapters = {}) {
   let toolsChangedCallback = null;
   let reloadTimer = null;
   let reloadPending = false;
+  let providerTokenFilePath = null;
+  let shutdownTimer = null;
+  let gracefulShutdownActive = false;
 
   function generateToken() {
     return TOKEN_PREFIX + randomBytes(16).toString("hex");
@@ -74,24 +93,111 @@ export function createProviderGateway(options = {}, adapters = {}) {
     token = nextState.token ?? null;
   }
 
-  function setToken(nextToken) {
-    token = nextToken ?? null;
-    if (token) {
-      process.env.TAP_PROVIDER_TOKEN = token;
-    } else {
-      delete process.env.TAP_PROVIDER_TOKEN;
+  function resolveProviderTokenPaths() {
+    const copilotHome = environment.COPILOT_HOME || pathAdapter.join(homeDirectory(), ".copilot");
+    const tokenDir = pathAdapter.join(copilotHome, "extensions", "tap");
+    return {
+      tokenDir,
+      tokenFile: pathAdapter.join(tokenDir, ".provider-token")
+    };
+  }
+
+  function writeProviderTokenFile(nextToken) {
+    let paths;
+    try {
+      paths = resolveProviderTokenPaths();
+      providerTokenFilePath = paths.tokenFile;
+      fsAdapter.mkdirSync(paths.tokenDir, { recursive: true, mode: 0o700 });
+      fsAdapter.writeFileSync(paths.tokenFile, `${nextToken}\n`, { encoding: "utf8", mode: 0o600 });
+    } catch (err) {
+      log(`Failed to write provider token file: ${err.message}`);
+      return;
     }
+
+    try {
+      fsAdapter.chmodSync?.(paths.tokenFile, 0o600);
+    } catch (err) {
+      log(`Failed to restrict provider token file permissions: ${err.message}`);
+    }
+  }
+
+  function removeProviderTokenFile() {
+    const tokenFile = providerTokenFilePath;
+    if (!tokenFile) {
+      return;
+    }
+    try {
+      fsAdapter.rmSync(tokenFile, { force: true });
+    } catch (err) {
+      log(`Failed to remove provider token file: ${err.message}`);
+    } finally {
+      providerTokenFilePath = null;
+    }
+  }
+
+  function setToken(nextToken) {
+    if (!nextToken) {
+      clearToken();
+      return;
+    }
+    token = nextToken ?? null;
+    environment.TAP_PROVIDER_TOKEN = token;
+    writeProviderTokenFile(token);
   }
 
   function clearToken() {
     token = null;
-    delete process.env.TAP_PROVIDER_TOKEN;
+    delete environment.TAP_PROVIDER_TOKEN;
+    removeProviderTokenFile();
   }
 
   function cancelReloadTimer() {
     if (reloadTimer) {
       timerAdapter.cancel(reloadTimer);
       reloadTimer = null;
+    }
+  }
+
+  function cancelShutdownTimer() {
+    if (shutdownTimer) {
+      timerAdapter.cancel(shutdownTimer);
+      shutdownTimer = null;
+    }
+    gracefulShutdownActive = false;
+  }
+
+  function closeProviderConnections(reason = "gateway stopped") {
+    const connections = [...new Set(connectionsByWs.values())];
+    for (const conn of connections) {
+      try { conn.close(reason); } catch { /* ignore */ }
+    }
+    connectionsByWs.clear();
+    connectionsByProviderId.clear();
+  }
+
+  function finishGracefulShutdown(reason = "shutdown deadline reached") {
+    shutdownTimer = null;
+    gracefulShutdownActive = false;
+    closeProviderConnections(reason);
+  }
+
+  function beginGracefulShutdown(deadlineMs) {
+    if (typeof deadlineMs !== "number" || deadlineMs <= 0 || !Number.isFinite(deadlineMs)) {
+      return;
+    }
+    if (connectionsByWs.size === 0) {
+      return;
+    }
+    cancelShutdownTimer();
+    gracefulShutdownActive = true;
+    shutdownTimer = timerAdapter.schedule(() => {
+      finishGracefulShutdown("shutdown deadline reached");
+    }, deadlineMs);
+  }
+
+  function maybeCancelGracefulShutdownWhenDrained() {
+    if (gracefulShutdownActive && connectionsByWs.size === 0) {
+      cancelShutdownTimer();
     }
   }
 
@@ -173,25 +279,60 @@ export function createProviderGateway(options = {}, adapters = {}) {
     log(`Provider '${conn.providerName}' (${conn.providerId}) disconnected`);
   }
 
-  function checkToolConflict(newTools) {
+  function checkToolConflict(newTools, excludedProviderId = null) {
     const currentTapTools = typeof tapTools === "function" ? tapTools() : [];
     const existingNames = new Set(currentTapTools.map((t) => t.name));
-    for (const name of registry.getAllToolNames()) {
+    for (const name of registry.getAllToolNames({ excludedProviderId })) {
       existingNames.add(name);
     }
     return registry.hasToolConflict(newTools, existingNames);
   }
 
+  function onPush(conn, push) {
+    if (typeof deliverPush !== "function") {
+      log(`Provider '${conn.providerName}' (${conn.providerId}) pushed '${push.level}' but no delivery adapter is registered`);
+      return;
+    }
+
+    deliverPush({
+      providerId: conn.providerId,
+      providerName: conn.providerName,
+      sessionId: conn.sessionId
+    }, push);
+  }
+
+  function onToolsUpdate(conn, update) {
+    const conflicts = checkToolConflict(update.tools, conn.providerId);
+    if (conflicts.length > 0) {
+      throw new ConflictError(`tool name conflict: ${conflicts.join(", ")}`, {
+        code: ERROR_CODE.TOOL_CONFLICT,
+        context: {
+          providerId: conn.providerId,
+          providerName: conn.providerName,
+          sessionId: conn.sessionId,
+          conflicts: conflicts.join(", ")
+        }
+      });
+    }
+
+    registry.updateTools(conn.providerId, update.tools);
+    scheduleReload();
+    log(`Provider '${conn.providerName}' (${conn.providerId}) updated tools: ${update.tools.length}`);
+  }
+
   function handleConnection(ws) {
+    const connectionAdapters = hasCustomWebSocketAdapter ? { websocketAdapter } : {};
     const conn = createProviderConnection(ws, {
       expectedToken: token,
       activeSessions: getActiveSessions(),
       onBound,
       onUnbound,
+      onPush,
+      onToolsUpdate,
       onToolResult: () => {},
       checkToolConflict,
       log
-    }, { websocketAdapter });
+    }, connectionAdapters);
 
     connectionsByWs.set(ws, conn);
 
@@ -200,6 +341,7 @@ export function createProviderGateway(options = {}, adapters = {}) {
       if (conn.providerId) {
         connectionsByProviderId.delete(conn.providerId);
       }
+      maybeCancelGracefulShutdownWhenDrained();
     });
 
     ws.on("error", (err) => {
@@ -208,6 +350,7 @@ export function createProviderGateway(options = {}, adapters = {}) {
       if (conn.providerId) {
         connectionsByProviderId.delete(conn.providerId);
       }
+      maybeCancelGracefulShutdownWhenDrained();
     });
   }
 
@@ -232,13 +375,15 @@ export function createProviderGateway(options = {}, adapters = {}) {
 
   function start() {
     if (running || starting) return;
+    cancelShutdownTimer();
+    closeProviderConnections("gateway restarting");
     const nextToken = generateToken();
     let server = null;
 
     try {
       starting = true;
       let listened = false;
-      server = webSocketServerFactory({ port: GATEWAY_PORT, noServer: false });
+      server = webSocketServerFactory({ port: GATEWAY_PORT, host, noServer: false });
       wss = server;
 
       server.on("error", (err) => {
@@ -269,20 +414,23 @@ export function createProviderGateway(options = {}, adapters = {}) {
 
   function stop() {
     starting = false;
+    const keepConnectionsUntilShutdownDeadline = gracefulShutdownActive && connectionsByWs.size > 0;
     applyGatewayTransition({ type: GATEWAY_EVENT.STOP });
 
     // Preserve toolsChangedCallback across cached runtime stop/start cycles;
     // tap-runtime registers it once when the runtime is first created.
-    for (const conn of connectionsByWs.values()) {
-      try { conn.close(); } catch { /* ignore */ }
-    }
-    connectionsByWs.clear();
-    connectionsByProviderId.clear();
-
     if (wss) {
       closeServer(wss);
       wss = null;
     }
+
+    if (keepConnectionsUntilShutdownDeadline) {
+      maybeCancelGracefulShutdownWhenDrained();
+      return;
+    }
+
+    cancelShutdownTimer();
+    closeProviderConnections("gateway stopped");
   }
 
   function getToken() {
@@ -318,6 +466,9 @@ export function createProviderGateway(options = {}, adapters = {}) {
           log(`Failed to send lifecycle to provider '${conn.providerName}': ${err.message}`);
         }
       }
+    }
+    if (state === SESSION_LIFECYCLE_STATE.SHUTDOWN_PENDING) {
+      beginGracefulShutdown(deadline);
     }
   }
 

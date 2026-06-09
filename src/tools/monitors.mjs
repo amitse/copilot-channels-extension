@@ -3,7 +3,9 @@ import { formatConfiguredEmitter, formatRunningEmitter } from "../format/emitter
 import { EVENT_FILTER_PARAMETER_SCHEMA } from "./event-filter-schema.mjs";
 import {
   policyForceParameter,
+  policyLifespanParameter,
   policyManagedByParameter,
+  policyOwnershipParameter,
   policyOptions,
   policyParameterProperties,
   policyScopeParameter
@@ -48,7 +50,7 @@ export function createEmitterTools(deps) {
     },
     {
       name: "tap_start_emitter",
-      description: "Starts a command emitter or prompt emitter. Use 'command' for shell commands whose stdout needs filtering (CommandEmitter). Use 'prompt' for agent-driven tasks (PromptEmitter) — always injects, no filter needed. Prefer prompt for simple repeated messages or agent actions; prefer command for log tailing, process monitoring, or noisy output that needs filtering.",
+      description: "Starts a command emitter or prompt emitter. Use 'command' for shell commands whose stdout needs filtering (CommandEmitter). Use 'prompt' for agent-driven tasks (PromptEmitter) — always injects, no filter needed. Prefer prompt for simple repeated messages or agent actions; prefer command for log tailing, process monitoring, or noisy output that needs filtering. Use lifespan/ownership for canonical policy fields; legacy scope/managedBy aliases remain supported.",
       parameters: {
         type: "object",
         properties: {
@@ -57,9 +59,11 @@ export function createEmitterTools(deps) {
           prompt: { type: "string", description: "Prompt to send to the agent (creates a PromptEmitter). Always injects — bypasses EventFilter entirely. Use for repeated agent tasks, status checks, or simple messages." },
           description: { type: "string", description: "Short summary." },
           channel: { type: "string", description: "EventStream to receive accepted events." },
-          cwd: { type: "string", description: "Optional working directory relative to the session cwd." },
+          cwd: { type: "string", description: "Optional subdirectory relative to the session cwd. Absolute paths and paths that escape the session cwd are rejected." },
           every: { type: "string", description: "Optional repeat interval like 30s, 5m, 2h, or 1d (maximum about 24 days). Use 'idle' for prompts that re-run whenever the session is idle. When omitted, commands run continuously and prompts run once." },
           everySchedule: { type: "array", minItems: 1, items: { type: "string" }, description: "Optional backoff schedule — an ordered non-empty list of interval strings (e.g. ['10s','20s','30s','1m','2m','5m','10m']; each maximum about 24 days). The emitter uses each interval in sequence, then repeats the last one forever. Overrides 'every' when provided. Cannot be 'idle' entries." },
+          lifespan: policyLifespanParameter(),
+          ownership: policyOwnershipParameter(),
           scope: policyScopeParameter(),
           managedBy: policyManagedByParameter(),
           autoStart: { type: "boolean", description: "When persistent, whether the emitter should auto-start next session." },
@@ -77,7 +81,7 @@ export function createEmitterTools(deps) {
 
         return [
           `Started emitter '${state.name}'.`,
-          `lifespan=${state.scope}`,
+          `lifespan=${state.lifespan ?? state.scope}`,
           `ownership=${state.ownership}`,
           `emitterType=${state.emitterType}`,
           `runSchedule=${state.runSchedule}`,
@@ -94,7 +98,7 @@ export function createEmitterTools(deps) {
     },
     {
       name: "tap_set_event_filter",
-      description: "Updates the canonical event filter rules that determine event outcomes (drop, keep, surface, inject) for an emitter.",
+      description: "Updates the canonical event filter rules that determine event outcomes (drop, keep, surface, inject) for an emitter. Use lifespan/ownership for canonical policy fields; legacy scope/managedBy aliases remain supported.",
       parameters: {
         type: "object",
         properties: {
@@ -112,11 +116,12 @@ export function createEmitterTools(deps) {
     },
     {
       name: "tap_stop_emitter",
-      description: "Stops a running event emitter. With lifespan='persistent', also removes the stored definition from config.",
+      description: "Stops a running event emitter. With lifespan='persistent', also removes the stored definition from config. Legacy scope remains supported as an alias for lifespan.",
       parameters: {
         type: "object",
         properties: {
           name: { type: "string", description: "Emitter name." },
+          lifespan: policyLifespanParameter("simple"),
           scope: policyScopeParameter("simple"),
           force: policyForceParameter("emitter")
         },

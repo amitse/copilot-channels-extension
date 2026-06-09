@@ -12,8 +12,6 @@ export { CONFIG_VERSION } from "./normalization.mjs";
  */
 export const LATEST_CONFIG_VERSION = CONFIG_VERSION.V2;
 
-export { normalizePersistedConfig, normalizePersistedEmitter, normalizePersistedStream } from "./normalization.mjs";
-
 /**
  * Final v1 → v2 migration.
  *
@@ -21,7 +19,7 @@ export { normalizePersistedConfig, normalizePersistedEmitter, normalizePersisted
  * event-filter/session-injector fields are converted to canonical names before
  * the config is re-saved.
  */
-export function migrate_v1_to_v2(config, options = {}) {
+function migrate_v1_to_v2(config, options = {}) {
   return {
     ...normalizePersistedConfig(config, options),
     configVersion: CONFIG_VERSION.V2
@@ -31,7 +29,7 @@ export function migrate_v1_to_v2(config, options = {}) {
 /**
  * Reserved migration for the next breaking change.
  */
-export function migrate_v2_to_v3(config, options = {}) {
+function migrate_v2_to_v3(config, options = {}) {
   return {
     ...normalizePersistedConfig(config, options),
     configVersion: CONFIG_VERSION.V3
@@ -67,17 +65,4 @@ export function migrateConfig(config, targetVersion = LATEST_CONFIG_VERSION, opt
   }
 
   return current;
-}
-
-export function getConfigVersionLabel(version) {
-  switch (getConfigVersion(version)) {
-    case CONFIG_VERSION.V1:
-      return "v1";
-    case CONFIG_VERSION.V2:
-      return "v2";
-    case CONFIG_VERSION.V3:
-      return "v3";
-    default:
-      return `v${version}`;
-  }
 }

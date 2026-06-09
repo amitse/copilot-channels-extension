@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { isDeepStrictEqual } from "node:util";
 
 import { CONFIG_LOCATIONS, OWNERSHIP } from "../consts.mjs";
 import { normalizeOwnership, normalizeName } from "../util/normalize.mjs";
@@ -11,12 +12,63 @@ import { createEmptyConfig, defaultConfigPath, mergeEmitterEntries, mergeStreamE
 
 export { serializeEmitter, serializeStream } from "./serialization.mjs";
 
+const CONFIG_LOAD_ERROR_CODE = "CONFIG_LOAD";
+
+class ConfigLoadError extends Error {
+  constructor(message, options = {}) {
+    super(message, options.cause ? { cause: options.cause } : undefined);
+    this.name = "ConfigLoadError";
+    this.code = CONFIG_LOAD_ERROR_CODE;
+    this.context = Object.freeze(createConfigLoadContext(options));
+  }
+}
+
+function createConfigLoadContext({ phase, filePath }) {
+  const context = {};
+  if (typeof phase === "string" && phase.trim().length > 0) {
+    context.phase = phase;
+  }
+  if (typeof filePath === "string" && filePath.trim().length > 0) {
+    context.filePath = filePath;
+  }
+  return context;
+}
+
+function withConfigLoadPhase(phase, message, operation, context = {}) {
+  try {
+    return operation();
+  } catch (error) {
+    if (error?.code === CONFIG_LOAD_ERROR_CODE) {
+      throw error;
+    }
+
+    throw new ConfigLoadError(message, {
+      ...context,
+      phase,
+      cause: error
+    });
+  }
+}
+
+function toJsonValue(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+
+function serializeConfigForComparison(config) {
+  return toJsonValue(serializeConfig(config, LATEST_CONFIG_VERSION));
+}
+
+function shouldPersistLoadedConfig(parsedConfig, normalizedConfig) {
+  return !isDeepStrictEqual(parsedConfig, serializeConfigForComparison(normalizedConfig));
+}
+
 export function createConfigStore(options = {}) {
   const fs = options.fs ?? { existsSync, readFileSync, writeFileSync };
   const state = {
     cwd: normalizeBaseCwd(options.cwd),
     filePath: null,
-    config: createEmptyConfig(LATEST_CONFIG_VERSION)
+    config: createEmptyConfig(LATEST_CONFIG_VERSION),
+    persistenceBlocked: null
   };
 
   const warn = typeof options.logWarning === "function"
@@ -28,30 +80,94 @@ export function createConfigStore(options = {}) {
         };
 
   function load(baseCwd) {
-    const resolvedBaseCwd = normalizeBaseCwd(baseCwd, state.cwd);
-    state.cwd = resolvedBaseCwd;
-    state.filePath = defaultConfigPath(resolvedBaseCwd);
-    state.config = createEmptyConfig(LATEST_CONFIG_VERSION);
+    try {
+      const resolvedBaseCwd = normalizeBaseCwd(baseCwd, state.cwd);
+      const defaultFilePath = withConfigLoadPhase(
+        "resolving config path",
+        "Unable to determine the default tap config path. Ensure the workspace directory is available.",
+        () => defaultConfigPath(resolvedBaseCwd)
+      );
 
-    for (const relativePath of CONFIG_LOCATIONS) {
-      const filePath = path.join(resolvedBaseCwd, relativePath);
-      if (!fs.existsSync(filePath)) {
-        continue;
+      for (const relativePath of CONFIG_LOCATIONS) {
+        const filePath = withConfigLoadPhase(
+          "resolving config path",
+          "Unable to resolve a tap config search path. Ensure configured locations are valid.",
+          () => path.join(resolvedBaseCwd, relativePath)
+        );
+        const exists = withConfigLoadPhase(
+          "checking config path",
+          "Unable to check whether the tap config file exists.",
+          () => fs.existsSync(filePath),
+          { filePath }
+        );
+        if (!exists) {
+          continue;
+        }
+
+        const rawConfig = withConfigLoadPhase(
+          "reading config file",
+          "Unable to read the tap config file.",
+          () => fs.readFileSync(filePath, "utf8"),
+          { filePath }
+        );
+        const parsedConfig = withConfigLoadPhase(
+          "parsing config file",
+          "The tap config file is not valid JSON.",
+          () => JSON.parse(rawConfig),
+          { filePath }
+        );
+        const loadedConfig = withConfigLoadPhase(
+          "migrating config file",
+          "The tap config file could not be normalized or migrated.",
+          () => migrateConfig(parsedConfig, LATEST_CONFIG_VERSION, { warn }),
+          { filePath }
+        );
+
+        state.cwd = resolvedBaseCwd;
+        state.filePath = filePath;
+        state.config = loadedConfig;
+        state.persistenceBlocked = null;
+
+        if (shouldPersistLoadedConfig(parsedConfig, loadedConfig)) {
+          try {
+            save();
+          } catch (error) {
+            const detail = error instanceof Error ? error.message : String(error);
+            try {
+              warn(`Loaded config from ${filePath} but could not save migrated tap config file: ${detail}`);
+            } catch {
+              // Migration persistence is best-effort; warning delivery must not
+              // turn a readable config into a load failure.
+            }
+          }
+        }
+        return { found: true, filePath };
       }
 
-      state.filePath = filePath;
-      state.config = migrateConfig(JSON.parse(fs.readFileSync(filePath, "utf8")), LATEST_CONFIG_VERSION, {
-        warn
-      });
-      save();
-      return { found: true, filePath };
+      state.cwd = resolvedBaseCwd;
+      state.filePath = defaultFilePath;
+      state.config = createEmptyConfig(LATEST_CONFIG_VERSION);
+      state.persistenceBlocked = null;
+      return { found: false, filePath: defaultFilePath };
+    } catch (error) {
+      state.persistenceBlocked = error;
+      throw error;
     }
-
-    state.config = createEmptyConfig(LATEST_CONFIG_VERSION);
-    return { found: false, filePath: state.filePath };
   }
 
   function save() {
+    if (state.persistenceBlocked) {
+      const context = state.persistenceBlocked.context ?? {};
+      throw new ConfigLoadError(
+        "Refusing to save tap config because the previous config load failed. Fix the config and reload successfully before persisting changes.",
+        {
+          phase: "blocked persistence",
+          filePath: context.filePath,
+          cause: state.persistenceBlocked
+        }
+      );
+    }
+
     if (!state.filePath) {
       state.filePath = defaultConfigPath(state.cwd);
     }

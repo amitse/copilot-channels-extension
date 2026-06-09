@@ -1,6 +1,6 @@
 const SCOPE_PARAMETER_DESCRIPTIONS = {
-  config: "Use 'temporary' for session-only or 'persistent' to write config.",
-  simple: "Use 'temporary' or 'persistent'."
+  config: "Lifespan: use 'temporary' for session-only or 'persistent' to write config.",
+  simple: "Lifespan: use 'temporary' or 'persistent'."
 };
 
 const MANAGED_BY_PARAMETER_DESCRIPTIONS = {
@@ -22,10 +22,18 @@ function booleanParameter(description) {
 }
 
 export function policyScopeParameter(variant = "config") {
+  return stringParameter(`Legacy alias for lifespan. ${SCOPE_PARAMETER_DESCRIPTIONS[variant]}`);
+}
+
+export function policyLifespanParameter(variant = "config") {
   return stringParameter(SCOPE_PARAMETER_DESCRIPTIONS[variant]);
 }
 
 export function policyManagedByParameter(variant = "ownership") {
+  return stringParameter(`Legacy alias for ownership. ${MANAGED_BY_PARAMETER_DESCRIPTIONS[variant]}`);
+}
+
+export function policyOwnershipParameter(variant = "ownership") {
   return stringParameter(MANAGED_BY_PARAMETER_DESCRIPTIONS[variant]);
 }
 
@@ -41,10 +49,12 @@ export function policyParameterProperties({
   const properties = {};
 
   if (scope) {
+    properties.lifespan = policyLifespanParameter(scope);
     properties.scope = policyScopeParameter(scope);
   }
 
   if (managedBy) {
+    properties.ownership = policyOwnershipParameter(managedBy);
     properties.managedBy = policyManagedByParameter(managedBy);
   }
 
@@ -55,13 +65,13 @@ export function policyParameterProperties({
   return properties;
 }
 
-export function policyOptions(args, { managedBy = true } = {}) {
+export function policyOptions(args = {}, { managedBy = true } = {}) {
   const options = {
-    scope: args.scope
+    scope: args.lifespan ?? args.scope
   };
 
   if (managedBy) {
-    options.managedBy = args.managedBy;
+    options.managedBy = args.ownership ?? args.managedBy;
   }
 
   options.force = args.force === true;

@@ -12,6 +12,8 @@ External processes can register tools with your Copilot session through the **Pr
 │ Dispatches calls │  ◄── hello ────────────     │ Handles calls    │
 │                  │  ── tool.call ─────────►     │                  │
 │                  │  ◄── tool.result ──────     │                  │
+│                  │  ◄── push ─────────────     │ Pushes events    │
+│                  │  ◄── tools.update ─────     │ Updates tools    │
 └─────────────────┘                              └─────────────────┘
 ```
 
@@ -19,7 +21,12 @@ External processes can register tools with your Copilot session through the **Pr
 
 ### 1. Start a Copilot session
 
-The gateway starts automatically on port 9400 when ※ tap loads. It generates an auth token and stores it in the `TAP_PROVIDER_TOKEN` environment variable.
+The gateway starts automatically on loopback port 9400 (`127.0.0.1`, reachable as `localhost`) when ※ tap loads. It generates an auth token and exposes it in two local-only discovery locations:
+
+- `TAP_PROVIDER_TOKEN` for providers launched with the Copilot environment.
+- `<COPILOT_HOME or ~/.copilot>/extensions/tap/.provider-token` for sibling terminals and SDK auto-discovery.
+
+The token directory is created with restrictive permissions (`0700`), the token file is written as `0600`, and the token file is removed when the gateway stops.
 
 ### 2. Write a provider
 
@@ -27,8 +34,17 @@ A provider is any process that speaks the WebSocket protocol. Here's a minimal e
 
 ```js
 import WebSocket from "ws";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
-const TOKEN = process.env.TAP_PROVIDER_TOKEN;
+function discoverToken() {
+  if (process.env.TAP_PROVIDER_TOKEN) return process.env.TAP_PROVIDER_TOKEN;
+  const copilotHome = process.env.COPILOT_HOME || path.join(os.homedir(), ".copilot");
+  return fs.readFileSync(path.join(copilotHome, "extensions", "tap", ".provider-token"), "utf8").trim();
+}
+
+const TOKEN = discoverToken();
 const ws = new WebSocket("ws://localhost:9400");
 
 ws.on("open", () => {
@@ -97,12 +113,16 @@ ws.on("message", (raw) => {
 ### 3. Run it
 
 ```bash
-# In the terminal where Copilot is running, grab the token:
+# If you are in the terminal where Copilot is running, the token is also in env:
 echo $TAP_PROVIDER_TOKEN   # macOS/Linux
 echo %TAP_PROVIDER_TOKEN%  # Windows
 
-# In another terminal, start the provider:
+# In another terminal, either pass the token explicitly:
 TAP_PROVIDER_TOKEN=ptk-... node my-provider.mjs
+
+# Or let the SDK/sample discover it from
+# <COPILOT_HOME or ~/.copilot>/extensions/tap/.provider-token:
+node my-provider.mjs
 ```
 
 Once connected, the `greet` tool appears in Copilot alongside the existing ※ tap tools. Ask Copilot to use it:
@@ -117,8 +137,10 @@ AwaitAuth ──auth──► AwaitHello ──hello──► Bound ──goodby
 
 1. **AwaitAuth** — Provider sends `auth` with the token. Gateway responds with `sessions` (list of active sessions).
 2. **AwaitHello** — Provider sends `hello` with its name, protocol version, session choice, and tool definitions. Gateway responds with `hello.ack`.
-3. **Bound** — Provider receives `tool.call` messages and responds with `tool.result`. Gateway sends `session.lifecycle` events.
+3. **Bound** — Provider receives `tool.call` messages and responds with `tool.result`. It may also send `push` events or replace its tool list with `tools.update`. Gateway sends `session.lifecycle` events.
 4. **Disconnected** — On `goodbye`, WebSocket close, or crash. All tools are removed and in-flight calls fail.
+
+On `session.lifecycle` with `state: "shutdown.pending"`, send `goodbye` promptly. The gateway keeps existing provider sockets open until `goodbye` or the shutdown deadline, then closes any remaining sockets.
 
 ## Message reference
 
@@ -127,10 +149,12 @@ AwaitAuth ──auth──► AwaitHello ──hello──► Bound ──goodby
 | Provider → Gateway | `auth` | First message — send the token |
 | Gateway → Provider | `sessions` | After auth — pick a session |
 | Provider → Gateway | `hello` | After sessions — register tools |
-| Gateway → Provider | `hello.ack` | Bound — tools are live |
+| Gateway → Provider | `hello.ack` | Bound — tools are live; includes `providerId` and `sessionId` |
 | Gateway → Provider | `tool.call` | Copilot invokes your tool |
 | Provider → Gateway | `tool.result` | Your response (exactly one per call) |
 | Gateway → Provider | `tool.cancel` | Timeout/interrupt — respond with `CANCELLED` |
+| Provider → Gateway | `push` | Store, surface, or inject a provider event |
+| Provider → Gateway | `tools.update` | Replace this provider's tool list |
 | Gateway → Provider | `session.lifecycle` | Session state changes (`started`, `idle`, `shutdown.pending`) |
 | Gateway → Provider | `error` | Something went wrong |
 | Provider → Gateway | `goodbye` | Before disconnecting |
@@ -148,6 +172,32 @@ Each tool in the `hello` message needs:
 
 A provider can register up to **100 tools**.
 
+Bound providers may replace the entire list with:
+
+```json
+{ "type": "tools.update", "tools": [ /* same tool definition shape as hello.tools */ ] }
+```
+
+The update is session-bound: if `sessionId` is supplied it must match the session selected in `hello`. Success is silent and triggers the same debounced tool refresh as provider connect/disconnect. Rejected updates receive `error` (for example `TOOL_CONFLICT`), and the previously registered tool list stays active. In-flight calls to tools removed by an accepted update continue to their normal result, timeout, cancellation, or disconnect outcome.
+
+## Push events
+
+The provider SDK helpers map to bound-provider `push` messages:
+
+```js
+provider.keep("stored in the provider stream only");
+provider.surface("visible in the Copilot timeline");
+provider.push("inject this into the active session");
+```
+
+Wire shape:
+
+```json
+{ "type": "push", "level": "inject", "event": "Browser page asks for help", "stream": "detour" }
+```
+
+`level` must be `keep`, `surface`, or `inject`. `stream` is optional and defaults to the provider name. Pushes are delivered only to the session chosen in `hello`; an optional `sessionId` must match that bound session. `metadata` may be a JSON object and is stored with the event.
+
 ## Error handling
 
 | Code | Fatal? | Meaning |
@@ -159,6 +209,12 @@ A provider can register up to **100 tools**.
 | `PAYLOAD_TOO_LARGE` | No | Message exceeds size limit |
 
 Payload limits: `tool.result` max 5 MB, all other messages max 2 MB.
+
+When a bound provider has in-flight `tool.call` messages, malformed JSON,
+oversized messages, or invalid `tool.result` messages that cannot be correlated
+are fail-fast: one pending call is rejected with the protocol error; multiple
+pending calls cause the provider to disconnect and all in-flight calls to fail
+with `DISCONNECTED`.
 
 ## Writing providers in other languages
 
@@ -177,6 +233,8 @@ When a provider connects or disconnects, ※ tap:
 3. Calls `session.rpc.extensions.reload()` to make the CLI pick up the new tools
 
 This happens automatically — providers just connect and their tools appear.
+
+After binding, providers can also send `tools.update` to replace their own tool list without reconnecting. ※ tap validates the new definitions, rejects conflicts without changing the active list, and uses the same debounced `registerTools()` + extension reload path on success.
 
 ## Further reading
 

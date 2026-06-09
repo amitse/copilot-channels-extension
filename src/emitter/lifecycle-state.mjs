@@ -24,15 +24,37 @@ export const LIFECYCLE_ACTION = Object.freeze({
   APPEND_SYSTEM_MESSAGE: "appendSystemMessage"
 });
 
+function scheduleIndex(state, length) {
+  return Math.min(Math.max(0, (state.runCount ?? 0) - 1), length - 1);
+}
+
 function scheduleDelay(state) {
   if (state.runSchedule === RUN_SCHEDULE.IDLE) {
     return IDLE_PROMPT_DELAY_MS;
   }
   if (Array.isArray(state.everyScheduleMs) && state.everyScheduleMs.length > 0) {
-    const index = Math.min(Math.max(0, (state.runCount ?? 0) - 1), state.everyScheduleMs.length - 1);
+    const index = scheduleIndex(state, state.everyScheduleMs.length);
     return state.everyScheduleMs[index];
   }
   return state.everyMs ?? 0;
+}
+
+function scheduleLabel(state) {
+  if (Array.isArray(state.everySchedule) && state.everySchedule.length > 0) {
+    const index = Array.isArray(state.everyScheduleMs) && state.everyScheduleMs.length > 0
+      ? scheduleIndex(state, state.everyScheduleMs.length)
+      : scheduleIndex(state, state.everySchedule.length);
+    const label = state.everySchedule[index];
+    if (label !== undefined && label !== null && String(label).trim() !== "") {
+      return String(label).trim();
+    }
+  }
+
+  if (state.every !== undefined && state.every !== null && String(state.every).trim() !== "") {
+    return String(state.every).trim();
+  }
+
+  return `${scheduleDelay(state)}ms`;
 }
 
 function buildCompleteMessage(state) {
@@ -68,180 +90,219 @@ function buildStopCompletionActions(state) {
   ];
 }
 
+function buildNoopTransition(currentState, state) {
+  return { currentState, nextState: state, actions: [] };
+}
+
+function computeStartTransition(currentState, state, event) {
+  if (state.runSchedule === RUN_SCHEDULE.CONTINUOUS) {
+    return {
+      currentState,
+      nextState: { ...state, status: EMITTER_STATUS.RUNNING },
+      actions: []
+    };
+  }
+  const startStatus = state.runSchedule === RUN_SCHEDULE.IDLE
+    ? EMITTER_STATUS.WAITING
+    : EMITTER_STATUS.QUEUED;
+  return {
+    currentState,
+    nextState: { ...state, status: startStatus },
+    actions: [
+      { type: LIFECYCLE_ACTION.APPEND_SYSTEM_MESSAGE, text: event?.message }
+    ].filter((action) => action.text)
+  };
+}
+
+function computeStopTransition(currentState, state, event) {
+  if (isTerminalEmitterStatus(state.status)) {
+    return buildNoopTransition(currentState, state);
+  }
+  if (!state.process && !state.inFlight) {
+    return {
+      currentState,
+      nextState: { ...state, status: EMITTER_STATUS.STOPPED, stoppedAt: event?.timestamp ?? null },
+      actions: [
+        { type: LIFECYCLE_ACTION.CLEAR_TIMER },
+        { type: LIFECYCLE_ACTION.LOG_MESSAGE, message: `Emitter '${state.name}' stopped.` },
+        { type: LIFECYCLE_ACTION.APPEND_SYSTEM_MESSAGE, text: `Emitter '${state.name}' stopped.` }
+      ]
+    };
+  }
+  return {
+    currentState,
+    nextState: { ...state, status: EMITTER_STATUS.STOPPING, stopRequested: true },
+    actions: [
+      { type: LIFECYCLE_ACTION.SET_STOP_REQUESTED, value: true },
+      { type: LIFECYCLE_ACTION.CLEAR_TIMER }
+    ]
+  };
+}
+
+function computeSessionIdleTransition(currentState, state) {
+  const eligible = !state.stopRequested && !state.inFlight && state.runSchedule === RUN_SCHEDULE.IDLE && !isTerminalEmitterStatus(state.status);
+  if (!eligible) {
+    return buildNoopTransition(currentState, state);
+  }
+  return {
+    currentState,
+    nextState: { ...state, status: EMITTER_STATUS.WAITING },
+    actions: [{ type: LIFECYCLE_ACTION.SCHEDULE_TIMER, delayMs: IDLE_PROMPT_DELAY_MS }]
+  };
+}
+
+function computeSessionActivityTransition(currentState, state) {
+  const eligible = state.runSchedule === RUN_SCHEDULE.IDLE && !isTerminalEmitterStatus(state.status);
+  if (!eligible) {
+    return buildNoopTransition(currentState, state);
+  }
+  const nextState = { ...state };
+  if (!state.inFlight) {
+    nextState.status = EMITTER_STATUS.WAITING;
+  }
+  return {
+    currentState,
+    nextState,
+    actions: [{ type: LIFECYCLE_ACTION.CLEAR_TIMER }]
+  };
+}
+
+function computeSuccessfulIterationTransition(currentState, state, event) {
+  const completionMessage = buildCompleteMessage(state);
+  if (completionMessage) {
+    return {
+      currentState,
+      nextState: {
+        ...state,
+        status: EMITTER_STATUS.COMPLETED,
+        stoppedAt: event?.timestamp ?? null,
+        lastRunStatus: RUN_STATUS.SUCCESS
+      },
+      actions: [{ type: LIFECYCLE_ACTION.APPEND_SYSTEM_MESSAGE, text: completionMessage }]
+    };
+  }
+
+  if (state.runSchedule === RUN_SCHEDULE.IDLE) {
+    return {
+      currentState,
+      nextState: { ...state, status: EMITTER_STATUS.WAITING, lastRunStatus: RUN_STATUS.SUCCESS },
+      actions: []
+    };
+  }
+
+  return {
+    currentState,
+    nextState: { ...state, status: EMITTER_STATUS.WAITING, lastRunStatus: RUN_STATUS.SUCCESS },
+    actions: [
+      { type: LIFECYCLE_ACTION.SCHEDULE_TIMER, delayMs: scheduleDelay(state) }
+    ]
+  };
+}
+
+function computeRunBudgetExhaustedTransition(currentState, state, event, result) {
+  const message = buildRunBudgetExhaustedMessage(state, result);
+  return {
+    currentState,
+    nextState: {
+      ...state,
+      status: EMITTER_STATUS.ERROR,
+      lastRunStatus: RUN_STATUS.FAILURE,
+      stoppedAt: event?.timestamp ?? null
+    },
+    actions: [
+      { type: LIFECYCLE_ACTION.APPEND_SYSTEM_MESSAGE, text: message },
+      { type: LIFECYCLE_ACTION.LOG_MESSAGE, message }
+    ]
+  };
+}
+
+function computeDeferredIterationTransition(currentState, state) {
+  const actions = [
+    { type: LIFECYCLE_ACTION.SCHEDULE_TIMER, delayMs: state.runSchedule === RUN_SCHEDULE.IDLE ? IDLE_PROMPT_BACKOFF_MS : scheduleDelay(state) }
+  ];
+  if (state.runSchedule !== RUN_SCHEDULE.IDLE) {
+    actions.push({
+      type: LIFECYCLE_ACTION.APPEND_SYSTEM_MESSAGE,
+      text: `Emitter '${state.name}' deferred this prompt run because the session was still busy. Next attempt in ${scheduleLabel(state)}.`
+    });
+  }
+  return {
+    currentState,
+    nextState: { ...state, status: EMITTER_STATUS.WAITING },
+    actions
+  };
+}
+
+function computeFailedIterationTransition(currentState, state, event, result) {
+  if (isRunBudgetExhausted(state)) {
+    return computeRunBudgetExhaustedTransition(currentState, state, event, result);
+  }
+
+  if (result.deferred) {
+    return computeDeferredIterationTransition(currentState, state);
+  }
+
+  if (state.runSchedule === RUN_SCHEDULE.ONE_TIME) {
+    return {
+      currentState,
+      nextState: { ...state, status: EMITTER_STATUS.ERROR, lastRunStatus: RUN_STATUS.FAILURE, stoppedAt: event?.timestamp ?? null },
+      actions: [{ type: LIFECYCLE_ACTION.APPEND_SYSTEM_MESSAGE, text: `Emitter '${state.name}' iteration failed: ${result.error ?? "unknown error"}.` }]
+    };
+  }
+
+  return {
+    currentState,
+    nextState: { ...state, status: EMITTER_STATUS.WAITING, lastRunStatus: RUN_STATUS.FAILURE },
+    actions: [
+      { type: LIFECYCLE_ACTION.APPEND_SYSTEM_MESSAGE, text: `Emitter '${state.name}' iteration failed: ${result.error ?? "unknown error"}.` },
+      { type: LIFECYCLE_ACTION.LOG_MESSAGE, message: `Emitter '${state.name}' iteration failed: ${result.error ?? "unknown error"}.` },
+      { type: LIFECYCLE_ACTION.SCHEDULE_TIMER, delayMs: state.runSchedule === RUN_SCHEDULE.IDLE ? IDLE_PROMPT_BACKOFF_MS : scheduleDelay(state) }
+    ]
+  };
+}
+
+function computeIterationResultTransition(currentState, state, event) {
+  const result = event?.result ?? { ok: false };
+  if (state.stopRequested) {
+    return {
+      currentState,
+      nextState: { ...state, status: EMITTER_STATUS.STOPPED, stoppedAt: event?.timestamp ?? null },
+      actions: buildStopCompletionActions(state)
+    };
+  }
+
+  if (result.ok) {
+    return computeSuccessfulIterationTransition(currentState, state, event);
+  }
+
+  return computeFailedIterationTransition(currentState, state, event, result);
+}
+
 export function computeTransition(currentState, event) {
   const state = { ...currentState };
-  const actions = [];
   const type = event?.type;
 
   if (type === LIFECYCLE_EVENT.START) {
-    if (state.runSchedule === RUN_SCHEDULE.CONTINUOUS) {
-      return {
-        currentState,
-        nextState: { ...state, status: EMITTER_STATUS.RUNNING },
-        actions
-      };
-    }
-    const startStatus = state.runSchedule === RUN_SCHEDULE.IDLE
-      ? EMITTER_STATUS.WAITING
-      : EMITTER_STATUS.QUEUED;
-    return {
-      currentState,
-      nextState: { ...state, status: startStatus },
-      actions: [
-        { type: LIFECYCLE_ACTION.APPEND_SYSTEM_MESSAGE, text: event?.message }
-      ].filter((action) => action.text)
-    };
+    return computeStartTransition(currentState, state, event);
   }
 
   if (type === LIFECYCLE_EVENT.STOP) {
-    if (isTerminalEmitterStatus(state.status)) {
-      return { currentState, nextState: state, actions };
-    }
-    if (!state.process && !state.inFlight) {
-      return {
-        currentState,
-        nextState: { ...state, status: EMITTER_STATUS.STOPPED, stoppedAt: event?.timestamp ?? null },
-        actions: [
-          { type: LIFECYCLE_ACTION.CLEAR_TIMER },
-          { type: LIFECYCLE_ACTION.LOG_MESSAGE, message: `Emitter '${state.name}' stopped.` },
-          { type: LIFECYCLE_ACTION.APPEND_SYSTEM_MESSAGE, text: `Emitter '${state.name}' stopped.` }
-        ]
-      };
-    }
-    return {
-      currentState,
-      nextState: { ...state, status: EMITTER_STATUS.STOPPING, stopRequested: true },
-      actions: [
-        { type: LIFECYCLE_ACTION.SET_STOP_REQUESTED, value: true },
-        { type: LIFECYCLE_ACTION.CLEAR_TIMER }
-      ]
-    };
+    return computeStopTransition(currentState, state, event);
   }
 
   if (type === LIFECYCLE_EVENT.SESSION_IDLE) {
-    const eligible = !state.stopRequested && !state.inFlight && state.runSchedule === RUN_SCHEDULE.IDLE && !isTerminalEmitterStatus(state.status);
-    if (!eligible) {
-      return { currentState, nextState: state, actions };
-    }
-    return {
-      currentState,
-      nextState: { ...state, status: EMITTER_STATUS.WAITING },
-      actions: [{ type: LIFECYCLE_ACTION.SCHEDULE_TIMER, delayMs: IDLE_PROMPT_DELAY_MS }]
-    };
+    return computeSessionIdleTransition(currentState, state);
   }
 
   if (type === LIFECYCLE_EVENT.SESSION_ACTIVITY) {
-    const eligible = state.runSchedule === RUN_SCHEDULE.IDLE && !isTerminalEmitterStatus(state.status);
-    if (!eligible) {
-      return { currentState, nextState: state, actions };
-    }
-    const nextState = { ...state };
-    if (!state.inFlight) {
-      nextState.status = EMITTER_STATUS.WAITING;
-    }
-    return {
-      currentState,
-      nextState,
-      actions: [{ type: LIFECYCLE_ACTION.CLEAR_TIMER }]
-    };
+    return computeSessionActivityTransition(currentState, state);
   }
 
   if (type === LIFECYCLE_EVENT.ITERATION_RESULT) {
-    const result = event?.result ?? { ok: false };
-    if (state.stopRequested) {
-      return {
-        currentState,
-        nextState: { ...state, status: EMITTER_STATUS.STOPPED, stoppedAt: event?.timestamp ?? null },
-        actions: buildStopCompletionActions(state)
-      };
-    }
-
-    if (result.ok) {
-      const completionMessage = buildCompleteMessage(state);
-      if (completionMessage) {
-        return {
-          currentState,
-          nextState: {
-            ...state,
-            status: EMITTER_STATUS.COMPLETED,
-            stoppedAt: event?.timestamp ?? null,
-            lastRunStatus: RUN_STATUS.SUCCESS
-          },
-          actions: [{ type: LIFECYCLE_ACTION.APPEND_SYSTEM_MESSAGE, text: completionMessage }]
-        };
-      }
-
-      if (state.runSchedule === RUN_SCHEDULE.IDLE) {
-        return {
-          currentState,
-          nextState: { ...state, status: EMITTER_STATUS.WAITING, lastRunStatus: RUN_STATUS.SUCCESS },
-          actions: []
-        };
-      }
-
-      return {
-        currentState,
-        nextState: { ...state, status: EMITTER_STATUS.WAITING, lastRunStatus: RUN_STATUS.SUCCESS },
-        actions: [
-          { type: LIFECYCLE_ACTION.SCHEDULE_TIMER, delayMs: scheduleDelay(state) }
-        ]
-      };
-    }
-
-    if (isRunBudgetExhausted(state)) {
-      const message = buildRunBudgetExhaustedMessage(state, result);
-      return {
-        currentState,
-        nextState: {
-          ...state,
-          status: EMITTER_STATUS.ERROR,
-          lastRunStatus: RUN_STATUS.FAILURE,
-          stoppedAt: event?.timestamp ?? null
-        },
-        actions: [
-          { type: LIFECYCLE_ACTION.APPEND_SYSTEM_MESSAGE, text: message },
-          { type: LIFECYCLE_ACTION.LOG_MESSAGE, message }
-        ]
-      };
-    }
-
-    if (result.deferred) {
-      const actions = [
-        { type: LIFECYCLE_ACTION.SCHEDULE_TIMER, delayMs: state.runSchedule === RUN_SCHEDULE.IDLE ? IDLE_PROMPT_BACKOFF_MS : scheduleDelay(state) }
-      ];
-      if (state.runSchedule !== RUN_SCHEDULE.IDLE) {
-        actions.push({
-          type: LIFECYCLE_ACTION.APPEND_SYSTEM_MESSAGE,
-          text: `Emitter '${state.name}' deferred this prompt run because the session was still busy. Next attempt in ${state.every}.`
-        });
-      }
-      return {
-        currentState,
-        nextState: { ...state, status: EMITTER_STATUS.WAITING },
-        actions
-      };
-    }
-
-    if (state.runSchedule === RUN_SCHEDULE.ONE_TIME) {
-      return {
-        currentState,
-        nextState: { ...state, status: EMITTER_STATUS.ERROR, lastRunStatus: RUN_STATUS.FAILURE, stoppedAt: event?.timestamp ?? null },
-        actions: [{ type: LIFECYCLE_ACTION.APPEND_SYSTEM_MESSAGE, text: `Emitter '${state.name}' iteration failed: ${result.error ?? "unknown error"}.` }]
-      };
-    }
-
-    return {
-      currentState,
-      nextState: { ...state, status: EMITTER_STATUS.WAITING, lastRunStatus: RUN_STATUS.FAILURE },
-      actions: [
-        { type: LIFECYCLE_ACTION.APPEND_SYSTEM_MESSAGE, text: `Emitter '${state.name}' iteration failed: ${result.error ?? "unknown error"}.` },
-        { type: LIFECYCLE_ACTION.LOG_MESSAGE, message: `Emitter '${state.name}' iteration failed: ${result.error ?? "unknown error"}.` },
-        { type: LIFECYCLE_ACTION.SCHEDULE_TIMER, delayMs: state.runSchedule === RUN_SCHEDULE.IDLE ? IDLE_PROMPT_BACKOFF_MS : scheduleDelay(state) }
-      ]
-    };
+    return computeIterationResultTransition(currentState, state, event);
   }
 
-  return { currentState, nextState: state, actions };
+  return buildNoopTransition(currentState, state);
 }
 
 export function identifyActions(transition) {

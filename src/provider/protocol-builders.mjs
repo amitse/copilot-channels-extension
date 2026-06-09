@@ -26,18 +26,25 @@ export function buildSessions(activeSessions) {
 /**
  * Build a `hello.ack` message confirming protocol version and provider id.
  */
-export function buildHelloAck(protocolVersion, providerId) {
+export function buildHelloAck(protocolVersion, providerId, sessionId) {
   if (typeof protocolVersion !== "number") {
     throw new TypeError("protocolVersion must be a number");
   }
   if (!isNonEmptyString(providerId)) {
     throw new TypeError("providerId must be a non-empty string");
   }
-  return {
+  const msg = {
     type: MESSAGE_TYPE.HELLO_ACK,
     protocolVersion,
-    providerId,
+    providerId
   };
+  if (sessionId !== undefined) {
+    if (!isNonEmptyString(sessionId)) {
+      throw new TypeError("sessionId must be a non-empty string");
+    }
+    msg.sessionId = sessionId;
+  }
+  return msg;
 }
 
 /**

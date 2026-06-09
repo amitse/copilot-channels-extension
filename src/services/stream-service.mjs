@@ -1,21 +1,10 @@
 import { DEFAULT_STREAM, DEFAULT_STREAM_DESCRIPTION } from "../consts.mjs";
 import { applySessionInjectorPolicy } from "../streams/injector-policy.mjs";
-import { projectStream } from "../emitter/projection.mjs";
-import { NotFoundError, AppError, toAppError } from "../errors/index.mjs";
-import { clampLimit } from "../util/text.mjs";
-import { normalizeName } from "../util/normalize.mjs";
-
-function rethrowServiceError(error, message, context) {
-  if (error instanceof AppError) {
-    throw error;
-  }
-
-  throw toAppError(error, {
-    message,
-    context,
-    retryable: false
-  });
-}
+import { projectStream } from "../streams/projection.mjs";
+import { NotFoundError, ValidationError } from "../errors/index.mjs";
+import { rethrowServiceError } from "../errors/service-boundary.mjs";
+import { clampLimit, toText } from "../util/text.mjs";
+import { requireNormalizedName } from "../util/normalize.mjs";
 
 /**
  * Create the application service that owns stream and session-injector operations.
@@ -37,6 +26,14 @@ function rethrowServiceError(error, message, context) {
 export function createStreamService(deps) {
   const { streams, configStore, sessionPort, persist } = deps;
 
+  function requireStreamChannel(channel, operation) {
+    return requireNormalizedName(channel, {
+      label: "Stream channel",
+      contextKey: "channel",
+      context: { operation }
+    });
+  }
+
   /**
    * Return the current stream catalog, ensuring the default stream exists.
    */
@@ -49,7 +46,7 @@ export function createStreamService(deps) {
    * Fetch a stream and clamp the requested history window.
    */
   function getStreamHistory(channel, limit) {
-    const name = normalizeName(channel);
+    const name = requireStreamChannel(channel, "getStreamHistory");
     const stream = streams.get(name);
     if (!stream) {
       throw new NotFoundError(`Stream '${name}' does not exist.`, {
@@ -66,12 +63,27 @@ export function createStreamService(deps) {
   /**
    * Append a message to a stream and return the updated stream snapshot.
    */
-  function postToStream({ channel, message, source, description }) {
-    const stream = streams.ensure(channel, description ?? "");
-    streams.append(stream.name, {
+  function postToStream(input = {}) {
+    const { channel, message, source, description } = input ?? {};
+    const name = requireStreamChannel(channel, "postToStream");
+    const text = toText(message).trim();
+    if (!text) {
+      throw new ValidationError("Cannot post an empty message to an event stream.", {
+        context: { channel: name }
+      });
+    }
+
+    const stream = streams.ensure(name, description ?? "");
+    const appended = streams.append(stream.name, {
       source,
-      text: message
+      text
     });
+    if (appended === null) {
+      throw new ValidationError("Cannot post an empty message to an event stream.", {
+        context: { channel: stream.name }
+      });
+    }
+
     void sessionPort.log(`Posted message to stream '${stream.name}'.`);
     return { stream: projectStream(stream) };
   }
@@ -80,7 +92,7 @@ export function createStreamService(deps) {
    * Configure the session injector policy for a stream.
    */
   function setInjectorPolicy(id, policy) {
-    const name = normalizeName(id);
+    const name = requireStreamChannel(id, "setInjectorPolicy");
 
     try {
       const stream = applySessionInjectorPolicy(
@@ -106,7 +118,7 @@ export function createStreamService(deps) {
    * Return a snapshot of the named stream.
    */
   function getStreamState(id) {
-    const name = normalizeName(id, DEFAULT_STREAM);
+    const name = requireStreamChannel(id, "getStreamState");
     const stream = streams.get(name);
     if (!stream) {
       throw new NotFoundError(`Stream '${name}' does not exist.`, {

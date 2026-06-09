@@ -1,6 +1,6 @@
 import { MAX_TOOLS_PER_PROVIDER } from "./consts.mjs";
 import { buildProviderSessionTools } from "./tool-proxy.mjs";
-import { ConflictError } from "../errors/index.mjs";
+import { ConflictError, NotFoundError } from "../errors/index.mjs";
 
 export function createProviderRegistry() {
   // Map<providerId, { id, name, tools[], sessionId }>
@@ -22,6 +22,23 @@ export function createProviderRegistry() {
     const provider = providers.get(providerId);
     providers.delete(providerId);
     return provider || null;
+  }
+
+  function updateTools(providerId, tools) {
+    const provider = providers.get(providerId);
+    if (!provider) {
+      throw new NotFoundError(`Provider '${providerId}' is not registered.`);
+    }
+
+    const toolList = tools || [];
+    if (toolList.length > MAX_TOOLS_PER_PROVIDER) {
+      throw new ConflictError(
+        `Provider '${provider.name}' registers ${toolList.length} tools, exceeding limit of ${MAX_TOOLS_PER_PROVIDER}.`
+      );
+    }
+
+    provider.tools = toolList;
+    return provider;
   }
 
   function getProviderTools() {
@@ -69,9 +86,15 @@ export function createProviderRegistry() {
     return providers.size;
   }
 
-  function getAllToolNames() {
+  function getAllToolNames(options = {}) {
+    const excludedProviderId = typeof options === "string"
+      ? options
+      : options?.excludedProviderId ?? options?.excludeProviderId ?? null;
     const names = new Set();
     for (const provider of providers.values()) {
+      if (provider.id === excludedProviderId) {
+        continue;
+      }
       for (const tool of provider.tools) {
         names.add(tool.name);
       }
@@ -82,6 +105,7 @@ export function createProviderRegistry() {
   return {
     register,
     unregister,
+    updateTools,
     getProviderTools,
     buildSessionTools,
     hasToolConflict,

@@ -1,6 +1,7 @@
 import { createSessionActivityBridge } from "../session/listeners.mjs";
 import { createConfigBootstrapService } from "./config-bootstrap-service.mjs";
 import { createEmitterService } from "./emitter-service.mjs";
+import { createProviderPushService } from "./provider-push-service.mjs";
 import { createRuntimeHooks } from "./runtime-hooks.mjs";
 import { createRuntimeSubsystems } from "./runtime-subsystems.mjs";
 import { createStreamService } from "./stream-service.mjs";
@@ -9,10 +10,12 @@ export function createTapRuntimeService(options = {}) {
   const {
     streams,
     configStore,
+    notifications,
     supervisor,
     sessionPort,
-    getBaseCwd,
-    setBaseCwd,
+    sessionContext,
+    configWorkspace,
+    emitterWorkspace,
     persist
   } = createRuntimeSubsystems(options);
   const streamService = createStreamService({
@@ -25,32 +28,67 @@ export function createTapRuntimeService(options = {}) {
     streams,
     configStore,
     supervisor,
-    getBaseCwd
+    emitterWorkspace
   });
   const configBootstrapService = createConfigBootstrapService({
     streams,
     configStore,
     supervisor,
     sessionPort,
-    setBaseCwd
+    configWorkspace
   });
   const { loadPersistentConfig } = configBootstrapService;
   const sessionActivityBridge = createSessionActivityBridge({ sessionPort, supervisor });
+  const providerPushService = createProviderPushService({
+    streams,
+    notifications,
+    sessionPort
+  });
+  const shutdownSession = options.shutdownSession;
 
   function getSessionInfo() {
     const session = sessionPort.current();
-    if (!session) return null;
-    return { id: session.id ?? "default", label: session.label ?? "Copilot CLI", cwd: getBaseCwd() };
+    return sessionContext.getSessionInfo(session);
   }
 
   function attachSession(session) {
+    sessionContext.attachSession(session);
     sessionPort.attach(session);
+    // Keep bridge attach after port attach: the bridge may synthesize the
+    // initial idle lifecycle nudge for emitters started during hook startup.
     sessionActivityBridge.attach(session);
   }
 
-  async function stopAllEmitters() {
+  function clearNotificationsForLifecycle(options = {}) {
+    if (options.clearNotifications === true && typeof notifications.clear === "function") {
+      notifications.clear({
+        reason: options.clearReason ?? "session-shutdown",
+        generation: true
+      });
+    }
+  }
+
+  async function stopAllEmitters(options = {}) {
     sessionActivityBridge.detach();
-    await supervisor.stopAll();
+    try {
+      await supervisor.stopAll();
+      return [];
+    } finally {
+      clearNotificationsForLifecycle(options);
+    }
+  }
+
+  async function stopAllEmittersAndWait(options = {}) {
+    sessionActivityBridge.detach();
+    try {
+      if (typeof supervisor.stopAllAndWait === "function") {
+        return await supervisor.stopAllAndWait(options);
+      }
+      await supervisor.stopAll();
+      return [];
+    } finally {
+      clearNotificationsForLifecycle(options);
+    }
   }
 
   function appendStreamMessage(name, entry) {
@@ -67,7 +105,7 @@ export function createTapRuntimeService(options = {}) {
 
   const emitterCapabilities = {
     listEmitters: () => emitterService.listEmitters(),
-    startEmitter: (spec, options = {}) => emitterService.startEmitter(spec, { ...options, baseCwd: options.baseCwd ?? getBaseCwd() }),
+    startEmitter: (spec, options = {}) => emitterService.startEmitter(spec, options),
     stopEmitter: (name, options = {}) => emitterService.stopEmitter(name, options),
     updateFilter: (name, filter, options = {}) => emitterService.updateFilter(name, filter, options),
     getEmitterState: (name) => emitterService.getEmitterState(name)
@@ -82,6 +120,8 @@ export function createTapRuntimeService(options = {}) {
     sessionPort,
     loadPersistentConfig,
     stopAllEmitters,
+    stopAllEmittersAndWait,
+    shutdownSession,
     listStreams: streamCapabilities.listStreams,
     listEmitters: emitterCapabilities.listEmitters
   });
@@ -89,9 +129,10 @@ export function createTapRuntimeService(options = {}) {
   const sessionCapabilities = {
     attachSession,
     stopAllEmitters,
+    stopAllEmittersAndWait,
     appendStreamMessage,
     getSessionInfo,
-    getBaseCwd
+    getBaseCwd: sessionContext.getBaseCwd
   };
 
   const providerCapabilities = {
@@ -100,6 +141,7 @@ export function createTapRuntimeService(options = {}) {
       process.stderr.write(`[tap-gateway] ${msg}\n`);
       void sessionPort.log(msg);
     },
+    deliverPush: (provider, push) => providerPushService.deliverPush(provider, push),
     replaceSessionTools: (mergedTools) => {
       sessionPort.registerTools(mergedTools);
       void sessionPort.reloadExtension();
@@ -114,10 +156,11 @@ export function createTapRuntimeService(options = {}) {
     hooks: hookCapabilities,
     session: sessionCapabilities,
     provider: providerCapabilities,
-    getBaseCwd,
+    getBaseCwd: sessionContext.getBaseCwd,
     getSessionInfo,
     attachSession,
     stopAllEmitters,
+    stopAllEmittersAndWait,
     appendStreamMessage,
     getSessionStartContext,
     getPromptContext,

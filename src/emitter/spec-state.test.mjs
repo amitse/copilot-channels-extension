@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { EVENT_OUTCOME, LIFESPAN, OWNERSHIP, RUN_SCHEDULE, EMITTER_TYPE, EMITTER_STATUS, RUN_STATUS } from "../consts.mjs";
 import { EventFilterService } from "../event-filter/service.mjs";
 import { formatConfiguredEmitter } from "../format/emitter.mjs";
+import { ValidationError } from "../errors/index.mjs";
 import { normalizeEmitterSpec } from "./spec.mjs";
 import { buildEmitterState } from "./state.mjs";
 import { projectConfiguredEmitter, projectRunningEmitter } from "./projection.mjs";
@@ -54,6 +55,183 @@ test("normalizeEmitterSpec canonicalizes shared emitter fields", () => {
         lifespan: LIFESPAN.PERSISTENT
       })
     )
+  );
+});
+
+test("normalizeEmitterSpec honors canonical lifespan and ownership aliases", () => {
+  const spec = normalizeEmitterSpec({
+    name: "Canonical Policy Monitor",
+    command: "echo ok",
+    lifespan: LIFESPAN.PERSISTENT,
+    ownership: OWNERSHIP.USER_OWNED,
+    eventFilter: [
+      { match: "ok", outcome: EVENT_OUTCOME.SURFACE }
+    ]
+  });
+
+  assert.equal(spec.scope, LIFESPAN.PERSISTENT);
+  assert.equal(spec.managedBy, OWNERSHIP.USER_OWNED);
+  assert.deepEqual(EventFilterService.serialize(spec.eventFilter), {
+    rules: [{ match: "ok", outcome: EVENT_OUTCOME.SURFACE }],
+    ownership: OWNERSHIP.USER_OWNED,
+    lifespan: LIFESPAN.PERSISTENT
+  });
+});
+
+test("normalizeEmitterSpec accepts documented eventFilter arrays", () => {
+  const spec = normalizeEmitterSpec({
+    name: "Array Filter",
+    command: "node worker.mjs",
+    scope: "persistent",
+    managedBy: "userOwned",
+    eventFilter: [
+      { match: "warning|error", outcome: EVENT_OUTCOME.INJECT },
+      { match: ".*", outcome: EVENT_OUTCOME.KEEP }
+    ]
+  });
+
+  assert.deepEqual(EventFilterService.serialize(spec.eventFilter), {
+    rules: [
+      { match: "warning|error", outcome: EVENT_OUTCOME.INJECT },
+      { match: ".*", outcome: EVENT_OUTCOME.KEEP }
+    ],
+    ownership: OWNERSHIP.USER_OWNED,
+    lifespan: LIFESPAN.PERSISTENT
+  });
+});
+
+test("normalizeEmitterSpec maps runInterval to timed every schedule", () => {
+  const spec = normalizeEmitterSpec({
+    name: "Repo Maintenance",
+    prompt: "check repo health",
+    runInterval: "15m"
+  });
+
+  assert.equal(spec.every, "15m");
+  assert.equal(spec.everyMs, 900_000);
+  assert.equal(spec.runSchedule, RUN_SCHEDULE.TIMED);
+});
+
+test("normalizeEmitterSpec accepts semantically equivalent every and runInterval aliases", () => {
+  const minuteAlias = normalizeEmitterSpec({
+    name: "Equivalent Minutes",
+    prompt: "check repo health",
+    every: "every 15 minutes",
+    runInterval: "15m"
+  });
+  const hourAlias = normalizeEmitterSpec({
+    name: "Equivalent Hours",
+    prompt: "check repo health",
+    every: "1h",
+    runInterval: "60m"
+  });
+
+  assert.equal(minuteAlias.every, "15m");
+  assert.equal(minuteAlias.everyMs, 900_000);
+  assert.equal(hourAlias.every, "1h");
+  assert.equal(hourAlias.everyMs, 3_600_000);
+});
+
+test("normalizeEmitterSpec rejects genuinely conflicting every and runInterval aliases", () => {
+  assert.throws(
+    () => normalizeEmitterSpec({
+      name: "Conflicting Schedule",
+      prompt: "check repo health",
+      every: "15m",
+      runInterval: "20m"
+    }),
+    /every and runInterval must not conflict/
+  );
+  assert.throws(
+    () => normalizeEmitterSpec({
+      name: "Conflicting Idle Schedule",
+      prompt: "check repo health",
+      every: "idle",
+      runInterval: "15m"
+    }),
+    /every and runInterval must not conflict/
+  );
+});
+
+test("normalizeEmitterSpec routes documented stream over stale legacy channel", () => {
+  const conflictSpec = normalizeEmitterSpec({
+    name: "Alias Monitor",
+    command: "echo ok",
+    stream: "Edited Stream",
+    channel: "stale-channel"
+  });
+  const legacySpec = normalizeEmitterSpec({
+    name: "Legacy Channel Monitor",
+    command: "echo ok",
+    channel: "Legacy Channel"
+  });
+
+  assert.equal(conflictSpec.channel, "edited-stream");
+  assert.equal(buildEmitterState(conflictSpec, "/workspace").stream, "edited-stream");
+  assert.equal(legacySpec.channel, "legacy-channel");
+});
+
+test("normalizeEmitterSpec rejects invalid explicit stream and channel names", () => {
+  const base = {
+    name: "Watch",
+    command: "echo ok"
+  };
+
+  assert.throws(
+    () => normalizeEmitterSpec({
+      ...base,
+      stream: "!!!"
+    }),
+    ValidationError
+  );
+  assert.throws(
+    () => normalizeEmitterSpec({
+      ...base,
+      stream: "!!!",
+      channel: "valid"
+    }),
+    ValidationError
+  );
+  assert.throws(
+    () => normalizeEmitterSpec({
+      ...base,
+      channel: "!!!"
+    }),
+    ValidationError
+  );
+  assert.throws(
+    () => normalizeEmitterSpec({
+      ...base,
+      stream: "   ",
+      channel: "!!!"
+    }),
+    ValidationError
+  );
+});
+
+test("normalizeEmitterSpec falls back for blank stream and channel names", () => {
+  const spec = normalizeEmitterSpec({
+    name: "Watch",
+    command: "echo ok",
+    stream: "   ",
+    channel: "\t"
+  });
+
+  assert.equal(spec.channel, "watch");
+});
+
+test("normalizeEmitterSpec rejects non-integer maxRuns", () => {
+  assert.throws(
+    () => normalizeEmitterSpec({
+      name: "Bad Budget",
+      prompt: "check once",
+      maxRuns: 1.9
+    }),
+    (error) => {
+      assert.ok(error instanceof ValidationError);
+      assert.match(error.message, /maxRuns/);
+      return true;
+    }
   );
 });
 
@@ -239,6 +417,37 @@ test("projectConfiguredEmitter preserves configured schedule fields for formatte
   assert.match(formatted, /everyScheduleMs=\[10000, 60000\]/);
   assert.match(formatted, /maxRuns=3/);
   assert.match(formatted, /cwd=services\/worker/);
+});
+
+test("projectConfiguredEmitter displays documented stream over stale legacy channel", () => {
+  const projected = projectConfiguredEmitter({
+    name: "Configured Alias Monitor",
+    command: "echo ok",
+    stream: "Edited Stream",
+    channel: "stale-channel"
+  });
+
+  assert.equal(projected.stream, "edited-stream");
+  assert.equal(projected.channel, "edited-stream");
+});
+
+test("projectConfiguredEmitter treats runInterval as a timed configured schedule", () => {
+  const projected = projectConfiguredEmitter({
+    name: "Repo Maintenance",
+    prompt: "check repo health",
+    runInterval: "15m",
+    eventFilter: [
+      { match: "warning|error", outcome: EVENT_OUTCOME.INJECT }
+    ]
+  });
+
+  assert.equal(projected.every, "15m");
+  assert.equal(projected.runSchedule, RUN_SCHEDULE.TIMED);
+  assert.deepEqual(EventFilterService.serialize(projected.eventFilter), {
+    rules: [{ match: "warning|error", outcome: EVENT_OUTCOME.INJECT }],
+    ownership: OWNERSHIP.USER_OWNED,
+    lifespan: LIFESPAN.PERSISTENT
+  });
 });
 
 test("projectConfiguredEmitter tolerates incomplete configured entries", () => {

@@ -1,6 +1,7 @@
 const EMITTER_RUNTIME_KEYS = Object.freeze([
   "emitterType",
   "runSchedule",
+  "everyMs",
   "requestedCwd",
   "startedAt",
   "stoppedAt",

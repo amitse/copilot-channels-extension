@@ -1,5 +1,11 @@
+import { randomUUID } from "node:crypto";
+
 import { AppError } from "../errors/index.mjs";
 import { normalizeToolError } from "../errors/handler.mjs";
+
+function generateCallId() {
+  return `call-${randomUUID()}`;
+}
 
 export function wrapProviderTool(tool, dispatchToolCall) {
   return {
@@ -7,9 +13,10 @@ export function wrapProviderTool(tool, dispatchToolCall) {
     description: tool.description,
     parameters: tool.parameters || { type: "object", properties: {} },
     handler: async (args, context) => {
-      const callId = context?.callId || `call-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const callId = context?.callId || generateCallId();
+      const normalizedArgs = args ?? {};
       try {
-        const result = await dispatchToolCall(tool.providerId, tool.name, callId, args);
+        const result = await dispatchToolCall(tool.providerId, tool.name, callId, normalizedArgs);
         if (result.error) {
           throw new AppError(result.error, {
             code: result.errorCode ?? "INTERNAL",

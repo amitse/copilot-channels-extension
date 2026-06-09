@@ -1,0 +1,41 @@
+{
+  "framework": [
+    {
+      // Tests are node:test roots, but this repo does not expose them through
+      // an npm test script. Mark them as tests so Fallow can use them for
+      // static coverage reachability instead of treating them as dead files.
+      "name": "repo-node-tests",
+      "detection": { "type": "fileExists", "pattern": "package.json" },
+      "entryPoints": ["src/**/*.test.mjs"],
+      "entryPointRole": "test"
+    },
+    {
+      // Detour provider tests live inside the provider tree rather than the
+      // root src/ tree, and are intentionally run manually by maintainers.
+      "name": "detour-provider-tests",
+      "detection": { "type": "fileExists", "pattern": "providers/detour/package.json" },
+      "entryPoints": ["providers/detour/src/**/*.test.mjs"],
+      "entryPointRole": "test"
+    },
+    {
+      // Documented runnable provider example. It is intentionally invoked
+      // manually, not from package.json scripts.
+      "name": "repo-documented-examples",
+      "detection": { "type": "fileExists", "pattern": "examples/test-provider.mjs" },
+      "entryPoints": ["examples/test-provider.mjs"],
+      "entryPointRole": "support"
+    },
+    {
+      // Detour browser bridge code is executed outside the Node module graph:
+      // - providers/detour/bridge.js is served by index.mjs as the source fallback.
+      // - providers/detour/src/bridge.js is the esbuild browser bundle entrypoint.
+      "name": "detour-browser-bridge",
+      "detection": { "type": "fileExists", "pattern": "providers/detour/package.json" },
+      "entryPoints": [
+        "providers/detour/bridge.js",
+        "providers/detour/src/bridge.js"
+      ],
+      "entryPointRole": "runtime"
+    }
+  ]
+}

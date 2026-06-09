@@ -1,5 +1,11 @@
 import { EVENT_OUTCOME, SOURCE, STREAM } from "../consts.mjs";
 import { EventFilterService } from "../event-filter/service.mjs";
+import {
+  DELIVERY_POLICY,
+  decideStreamEventDelivery,
+  enqueueDeliveredEvent,
+  surfaceDeliveredEvent
+} from "../streams/delivery-policy.mjs";
 import { splitTextLines } from "../util/text.mjs";
 
 /**
@@ -21,33 +27,12 @@ export function createLineRouter({ streams, notifications, surface = null }) {
     return streams.ensure(emitter.stream).sessionInjector ?? {};
   }
 
-  function deliveryMode(sessionInjector) {
-    return String(sessionInjector?.delivery ?? EVENT_OUTCOME.SURFACE).trim().toLowerCase();
-  }
-
-  function canInject(sessionInjector, outcome) {
-    if (sessionInjector?.enabled !== true || outcome !== EVENT_OUTCOME.INJECT) {
-      return false;
-    }
-
-    const delivery = deliveryMode(sessionInjector);
-    return delivery === "important" ||
-      delivery === "all" ||
-      delivery === EVENT_OUTCOME.SURFACE ||
-      delivery === EVENT_OUTCOME.INJECT;
-  }
-
-  function canSurface(sessionInjector, outcome) {
-    if (sessionInjector?.enabled !== true) {
-      return false;
-    }
-
-    const delivery = deliveryMode(sessionInjector);
-    if (delivery === "all") {
-      return outcome === EVENT_OUTCOME.KEEP || outcome === EVENT_OUTCOME.SURFACE;
-    }
-
-    return delivery === EVENT_OUTCOME.SURFACE && outcome === EVENT_OUTCOME.SURFACE;
+  function decideEmitterDelivery(outcome, sessionInjector = null) {
+    return decideStreamEventDelivery({
+      policy: DELIVERY_POLICY.SESSION_INJECTOR,
+      outcome,
+      sessionInjector
+    });
   }
 
   function formatSurfaceMessage(notification) {
@@ -55,18 +40,17 @@ export function createLineRouter({ streams, notifications, surface = null }) {
     return `Surfaced event stream='${notification.channel}' emitter='${notification.monitorName}'${streamLabel}: ${notification.text}`;
   }
 
-  function surfaceEvent(notification, outcome) {
-    if (typeof surface !== "function" || !canSurface(getSessionInjector({ stream: notification.channel }), outcome)) {
-      return;
-    }
-
-    void Promise.resolve(surface(formatSurfaceMessage(notification), { level: "info" })).catch(() => {});
+  function surfaceEvent(decision, notification) {
+    surfaceDeliveredEvent({
+      decision,
+      surface,
+      notification,
+      formatMessage: formatSurfaceMessage
+    });
   }
 
-  function enqueueEvent(emitter, notification, outcome) {
-    if (canInject(getSessionInjector(emitter), outcome)) {
-      notifications.enqueue(notification);
-    }
+  function enqueueEvent(decision, notification) {
+    enqueueDeliveredEvent({ decision, notifications, notification });
   }
 
   function appendSystemMessage(emitter, text, notify = false) {
@@ -77,12 +61,13 @@ export function createLineRouter({ streams, notifications, surface = null }) {
     });
 
     if (notify) {
-      enqueueEvent(emitter, {
+      const decision = decideEmitterDelivery(EVENT_OUTCOME.INJECT, getSessionInjector(emitter));
+      enqueueEvent(decision, {
         channel: emitter.stream,
         monitorName: emitter.name,
         stream: STREAM.SYSTEM,
         text
-      }, EVENT_OUTCOME.INJECT);
+      });
     }
   }
 
@@ -93,12 +78,15 @@ export function createLineRouter({ streams, notifications, surface = null }) {
     }
 
     const outcome = EventFilterService.evaluate(emitter.eventFilter, text);
+    const storageDecision = decideEmitterDelivery(outcome);
 
-    if (outcome === EVENT_OUTCOME.DROP) {
+    if (!storageDecision.shouldStore) {
       emitter.droppedLineCount += 1;
       return;
     }
 
+    const sessionInjector = getSessionInjector(emitter);
+    const deliveryDecision = decideEmitterDelivery(outcome, sessionInjector);
     emitter.lineCount += 1;
     streams.append(emitter.stream, {
       source,
@@ -114,11 +102,8 @@ export function createLineRouter({ streams, notifications, surface = null }) {
       text
     };
 
-    if (outcome === EVENT_OUTCOME.INJECT) {
-      enqueueEvent(emitter, notification, outcome);
-    } else {
-      surfaceEvent(notification, outcome);
-    }
+    enqueueEvent(deliveryDecision, notification);
+    surfaceEvent(deliveryDecision, notification);
   }
 
   function handleTextBlock(emitter, value, stream, source) {

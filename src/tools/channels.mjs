@@ -76,7 +76,7 @@ export function createStreamTools(deps) {
     },
     {
       name: "tap_enable_injector",
-      description: "Attaches a session injector to an event stream for this session or persistently.",
+      description: "Attaches a session injector to an event stream for this session or persistently. Use lifespan/ownership for canonical policy fields; legacy scope/managedBy aliases remain supported.",
       parameters: {
         type: "object",
         properties: {
@@ -100,7 +100,7 @@ export function createStreamTools(deps) {
     },
     {
       name: "tap_disable_injector",
-      description: "Disables the session injector for an event stream.",
+      description: "Disables the session injector for an event stream. Use lifespan/ownership for canonical policy fields; legacy scope/managedBy aliases remain supported.",
       parameters: {
         type: "object",
         properties: {

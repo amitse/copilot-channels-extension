@@ -6,6 +6,7 @@ import { formatEventFilter } from "../format/event-filter.mjs";
 import { compileRegex } from "../util/regex.mjs";
 import { normalizeOwnership, normalizeLifespan, normalizeOutcome } from "../util/normalize.mjs";
 import { EventFilterService } from "../event-filter/service.mjs";
+import { EVENT_FILTER_PARAMETER_SCHEMA } from "../tools/event-filter-schema.mjs";
 
 const SAFE_RULE_OUTCOME = EVENT_OUTCOME.DROP;
 
@@ -111,6 +112,24 @@ test("update preserves ownership and lifespan for wrapper changes", () => {
     ownership: OWNERSHIP.USER_OWNED,
     lifespan: LIFESPAN.PERSISTENT
   });
+});
+
+test("public schema allows empty rules and service treats them as keep-all reset", () => {
+  assert.equal("minItems" in EVENT_FILTER_PARAMETER_SCHEMA.properties.rules, false);
+
+  const current = EventFilterService.normalize({
+    rules: [{ match: "old", outcome: EVENT_OUTCOME.DROP }],
+    ownership: OWNERSHIP.USER_OWNED,
+    lifespan: LIFESPAN.PERSISTENT
+  });
+  const updated = EventFilterService.update(current, { rules: [] });
+
+  assert.deepEqual(EventFilterService.serialize(updated), {
+    rules: [],
+    ownership: OWNERSHIP.USER_OWNED,
+    lifespan: LIFESPAN.PERSISTENT
+  });
+  assert.equal(EventFilterService.evaluate(updated, "old line now keeps"), EVENT_OUTCOME.KEEP);
 });
 
 test("invalid and missing outcomes canonicalize to safe drop", () => {

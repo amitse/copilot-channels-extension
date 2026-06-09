@@ -47,37 +47,38 @@ Installs:
 `);
 }
 
+const OPTION_ACTIONS = new Map([
+  ["--global", (flags) => { flags.scope = "global"; }],
+  ["-g", (flags) => { flags.scope = "global"; }],
+  ["--local", (flags) => { flags.scope = "local"; }],
+  ["-l", (flags) => { flags.scope = "local"; }],
+  ["--force", (flags) => { flags.force = true; }],
+  ["-f", (flags) => { flags.force = true; }],
+  ["--full", (flags) => { flags.force = true; }],
+  // Keep legacy flags working as no-ops.
+  ["--update", () => {}],
+  ["-u", () => {}],
+  ["--help", (flags) => { flags.help = true; }],
+  ["-h", (flags) => { flags.help = true; }]
+]);
+
+function applyOption(flags, arg) {
+  const action = OPTION_ACTIONS.get(arg);
+  if (action) {
+    action(flags);
+    return;
+  }
+
+  console.error(`Unknown option: ${arg}`);
+  usage();
+  process.exit(1);
+}
+
 function parseArgs(argv) {
   const args = argv.slice(2);
   const flags = { scope: "global", force: false, help: false };
   for (const arg of args) {
-    switch (arg) {
-      case "--global":
-      case "-g":
-        flags.scope = "global";
-        break;
-      case "--local":
-      case "-l":
-        flags.scope = "local";
-        break;
-      case "--force":
-      case "-f":
-      case "--full":
-        flags.force = true;
-        break;
-      // Keep legacy flags working
-      case "--update":
-      case "-u":
-        break;
-      case "--help":
-      case "-h":
-        flags.help = true;
-        break;
-      default:
-        console.error(`Unknown option: ${arg}`);
-        usage();
-        process.exit(1);
-    }
+    applyOption(flags, arg);
   }
   return flags;
 }
@@ -131,66 +132,107 @@ function isCopilotCliInstalled() {
 
 function removeDeprecatedSkills(targetRoot) {
   const deprecated = ["loop", "monitor", "create-provider"];
-  let allOk = true;
-  let removedAny = false;
+  const state = { allOk: true, removedAny: false };
 
   for (const name of deprecated) {
-    const oldPath = path.join(targetRoot, "skills", name, "SKILL.md");
-    if (!existsSync(oldPath)) {
-      continue;
-    }
-    try {
-      unlinkSync(oldPath);
-      if (!removedAny) {
-        console.log();
-        removedAny = true;
-      }
-      console.log(`  ✓ Removed deprecated skill: skills/${name}/SKILL.md`);
-    } catch {
-      allOk = false;
-      console.warn(`  ⚠  Could not remove deprecated skill at ${oldPath} — remove it manually`);
-    }
+    applyDeprecatedSkillRemoval(targetRoot, name, state);
   }
 
-  if (removedAny) {
+  if (state.removedAny) {
     console.log(`\n  Use the new namespaced commands: /tap-loop  /tap-monitor  /tap-create-provider`);
   }
 
-  return allOk;
+  return state.allOk;
 }
 
-function install(flags) {
-  const targetRoot = getTargetRoot(flags.scope);
-  const scopeLabel = flags.scope === "global" ? "global (~/.copilot)" : "local (.github)";
-  const packageVersion = getPackageVersion();
+function applyDeprecatedSkillRemoval(targetRoot, name, state) {
+  const result = removeDeprecatedSkill(targetRoot, name);
+  if (result.removed) {
+    logDeprecatedSkillRemoved(name, state);
+  }
+  if (!result.ok) {
+    state.allOk = false;
+  }
+}
 
-  if (flags.scope === "global" && !isCopilotCliInstalled()) {
-    console.log(`\n⚠  Copilot CLI does not appear to be installed.`);
-    console.log(`   Install it first: https://docs.github.com/en/copilot/github-copilot-in-the-cli`);
-    console.log(`   Then re-run: npx copilot-tap-extension\n`);
-    process.exit(1);
+function logDeprecatedSkillRemoved(name, state) {
+  if (!state.removedAny) {
+    console.log();
+    state.removedAny = true;
+  }
+  console.log(`  ✓ Removed deprecated skill: skills/${name}/SKILL.md`);
+}
+
+function removeDeprecatedSkill(targetRoot, name) {
+  const oldPath = path.join(targetRoot, "skills", name, "SKILL.md");
+  if (!existsSync(oldPath)) {
+    return { ok: true, removed: false };
   }
 
+  try {
+    unlinkSync(oldPath);
+    return { ok: true, removed: true };
+  } catch {
+    console.warn(`  ⚠  Could not remove deprecated skill at ${oldPath} — remove it manually`);
+    return { ok: false, removed: false };
+  }
+}
+
+function getScopeLabel(scope) {
+  return scope === "global" ? "global (~/.copilot)" : "local (.github)";
+}
+
+function ensureGlobalInstallSupported(scope) {
+  if (scope !== "global" || isCopilotCliInstalled()) {
+    return;
+  }
+
+  console.log(`\n⚠  Copilot CLI does not appear to be installed.`);
+  console.log(`   Install it first: https://docs.github.com/en/copilot/github-copilot-in-the-cli`);
+  console.log(`   Then re-run: npx copilot-tap-extension\n`);
+  process.exit(1);
+}
+
+function getInstallState(targetRoot, flags) {
   const installed = isAlreadyInstalled(targetRoot);
   const isUpdate = installed && !flags.force;
   const isReinstall = installed && flags.force;
   const installedVersion = installed ? getInstalledVersion(targetRoot) : null;
 
-  if (isUpdate) {
-    if (installedVersion && installedVersion === packageVersion) {
-      console.log(`\n${BRAND} — already up to date (v${installedVersion})\n`);
-      process.exit(0);
-    }
-    const fromLabel = installedVersion ? `v${installedVersion}` : "unknown";
-    console.log(`\n${BRAND} — updating ${fromLabel} → v${packageVersion} (${scopeLabel})\n`);
-  } else if (isReinstall) {
-    const fromLabel = installedVersion ? `v${installedVersion}` : "unknown";
-    console.log(`\n${BRAND} — reinstalling ${fromLabel} → v${packageVersion} (${scopeLabel})\n`);
-  } else {
-    console.log(`\n${BRAND} — installing v${packageVersion} (${scopeLabel})\n`);
+  return { installed, isUpdate, isReinstall, installedVersion };
+}
+
+function exitIfAlreadyCurrent(state, packageVersion) {
+  if (!state.isUpdate || !state.installedVersion || state.installedVersion !== packageVersion) {
+    return;
   }
 
-  const coreArtifacts = [
+  console.log(`\n${BRAND} — already up to date (v${state.installedVersion})\n`);
+  process.exit(0);
+}
+
+function getVersionLabel(version) {
+  return version ? `v${version}` : "unknown";
+}
+
+function announceInstall(state, packageVersion, scopeLabel) {
+  if (state.isUpdate) {
+    const fromLabel = getVersionLabel(state.installedVersion);
+    console.log(`\n${BRAND} — updating ${fromLabel} → v${packageVersion} (${scopeLabel})\n`);
+    return;
+  }
+
+  if (state.isReinstall) {
+    const fromLabel = getVersionLabel(state.installedVersion);
+    console.log(`\n${BRAND} — reinstalling ${fromLabel} → v${packageVersion} (${scopeLabel})\n`);
+    return;
+  }
+
+  console.log(`\n${BRAND} — installing v${packageVersion} (${scopeLabel})\n`);
+}
+
+function buildCoreArtifacts(targetRoot) {
+  return [
     {
       src: path.join(distDir, "extension.mjs"),
       dest: path.join(targetRoot, "extensions", EXT_DIR_NAME, "extension.mjs"),
@@ -202,8 +244,10 @@ function install(flags) {
       label: "extensions/tap/version.json"
     }
   ];
+}
 
-  const ancillaryArtifacts = [
+function buildAncillaryArtifacts(targetRoot) {
+  return [
     {
       src: path.join(distDir, "skills", "tap-loop", "SKILL.md"),
       dest: path.join(targetRoot, "skills", "tap-loop", "SKILL.md"),
@@ -230,35 +274,67 @@ function install(flags) {
       label: "copilot-instructions.md"
     }
   ];
+}
 
+function buildInstallArtifacts(targetRoot, isUpdate) {
+  const coreArtifacts = buildCoreArtifacts(targetRoot);
+  const ancillaryArtifacts = buildAncillaryArtifacts(targetRoot);
   // During updates, also install ancillary artifacts that don't yet exist at the destination
   // (e.g. new skills added in a newer version). Existing ones are preserved to keep user customizations.
   const newAncillaryArtifacts = isUpdate
     ? ancillaryArtifacts.filter(({ dest }) => !existsSync(dest))
     : ancillaryArtifacts;
-  const artifacts = [...coreArtifacts, ...newAncillaryArtifacts];
+  return [...coreArtifacts, ...newAncillaryArtifacts];
+}
 
+function copyArtifacts(artifacts) {
   let allOk = true;
   for (const { src, dest, label } of artifacts) {
     if (!copyArtifact(src, dest, label)) {
       allOk = false;
     }
   }
+  return allOk;
+}
 
-  if (installed && !removeDeprecatedSkills(targetRoot)) {
-    allOk = false;
+function getInstallVerb(state) {
+  if (state.isUpdate) {
+    return "updated";
   }
+  return state.isReinstall ? "reinstalled" : "installed";
+}
 
+function finishInstall(allOk, state, targetRoot) {
   console.log();
+  const verb = getInstallVerb(state);
   if (allOk) {
-    const verb = isUpdate ? "updated" : isReinstall ? "reinstalled" : "installed";
     console.log(`✓ ${BRAND} ${verb} to ${targetRoot}`);
     return;
   }
 
-  const verb = isUpdate ? "updated" : isReinstall ? "reinstalled" : "installed";
   console.error(`⚠  Some artifacts could not be ${verb}.`);
   process.exit(1);
+}
+
+function install(flags) {
+  const targetRoot = getTargetRoot(flags.scope);
+  const scopeLabel = getScopeLabel(flags.scope);
+  const packageVersion = getPackageVersion();
+
+  ensureGlobalInstallSupported(flags.scope);
+
+  const state = getInstallState(targetRoot, flags);
+  exitIfAlreadyCurrent(state, packageVersion);
+  announceInstall(state, packageVersion, scopeLabel);
+
+  const artifacts = buildInstallArtifacts(targetRoot, state.isUpdate);
+  let allOk = copyArtifacts(artifacts);
+
+  if (state.installed && !removeDeprecatedSkills(targetRoot)) {
+    allOk = false;
+  }
+
+  finishInstall(allOk, state, targetRoot);
 }
 
 const flags = parseArgs(process.argv);

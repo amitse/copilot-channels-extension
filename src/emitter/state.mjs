@@ -3,8 +3,11 @@ import { nowIso } from "../util/time.mjs";
 import { resolveRequestedCwd } from "../util/path.mjs";
 import { normalizeEmitterSpec } from "./spec.mjs";
 
-export function buildEmitterState(spec, baseCwd) {
+export function buildEmitterState(spec, baseCwd, options = {}) {
   const canonicalSpec = spec?.__emitterSpec === true ? spec : normalizeEmitterSpec(spec);
+  const resolveEmitterCwd = typeof options.resolveEmitterCwd === "function"
+    ? options.resolveEmitterCwd
+    : (requestedCwd) => resolveRequestedCwd(baseCwd, requestedCwd);
 
   return {
    name: canonicalSpec.name,
@@ -18,10 +21,12 @@ export function buildEmitterState(spec, baseCwd) {
    everySchedule: canonicalSpec.everySchedule ?? null,
    everyScheduleMs: canonicalSpec.everyScheduleMs ?? null,
    requestedCwd: canonicalSpec.cwd ?? null,
-   cwd: resolveRequestedCwd(baseCwd, canonicalSpec.cwd),
+   cwd: resolveEmitterCwd(canonicalSpec.cwd),
    stream: canonicalSpec.channel,
    autoStart: canonicalSpec.autoStart,
    includeStderr: canonicalSpec.includeStderr,
+   subscribe: canonicalSpec.subscribe,
+   delivery: canonicalSpec.delivery,
    lifespan: canonicalSpec.scope,
    ownership: canonicalSpec.managedBy,
    eventFilter: canonicalSpec.eventFilter,

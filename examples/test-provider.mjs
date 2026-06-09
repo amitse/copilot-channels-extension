@@ -12,6 +12,91 @@ if (!TOKEN) {
 
 const PORT = process.env.TAP_GATEWAY_PORT || 9400;
 
+function buildHelloMessage(sessionId) {
+  return JSON.stringify({
+    type: "hello",
+    name: "test-provider",
+    protocolVersion: 2,
+    session: sessionId,
+    tools: [{
+      name: "test_greet",
+      description: "A test tool that greets someone by name",
+      parameters: {
+        type: "object",
+        properties: {
+          name: { type: "string", description: "Name to greet" }
+        },
+        required: ["name"]
+      }
+    }]
+  });
+}
+
+function handleSessions(ws, msg) {
+  if (!msg.active.length) {
+    console.log("No active sessions. Closing.");
+    ws.close();
+    return;
+  }
+
+  console.log(`Binding to session: ${msg.active[0].id}`);
+  ws.send(buildHelloMessage(msg.active[0].id));
+}
+
+function handleHelloAck(_ws, msg) {
+  console.log(`\n✅ Registered as ${msg.providerId}`);
+  console.log("Provider is now BOUND. Waiting for tool calls...\n");
+}
+
+function handleToolCall(ws, msg) {
+  console.log(`\n🔧 Tool call: ${msg.tool}(${JSON.stringify(msg.args)})`);
+  ws.send(JSON.stringify({
+    type: "tool.result",
+    id: msg.id,
+    data: `Hello, ${msg.args.name}! (from test-provider)`
+  }));
+  console.log("   → sent result\n");
+}
+
+function handleToolCancel(ws, msg) {
+  console.log(`⚠️  Tool cancel: ${msg.id}`);
+  ws.send(JSON.stringify({
+    type: "tool.result",
+    id: msg.id,
+    error: "Cancelled",
+    errorCode: "CANCELLED"
+  }));
+}
+
+function handleSessionLifecycle(ws, msg) {
+  console.log(`📋 Lifecycle: ${msg.state}`);
+  if (msg.state === "shutdown.pending") {
+    console.log("Session shutting down. Sending goodbye.");
+    ws.send(JSON.stringify({ type: "goodbye", reason: "session ending" }));
+    ws.close();
+  }
+}
+
+function handleError(ws, msg) {
+  console.error(`❌ Error [${msg.code}]: ${msg.message}`);
+  if (msg.code === "AUTH_FAILED" || msg.code === "UNSUPPORTED_VERSION") {
+    ws.close();
+  }
+}
+
+const MESSAGE_HANDLERS = new Map([
+  ["sessions", handleSessions],
+  ["hello.ack", handleHelloAck],
+  ["tool.call", handleToolCall],
+  ["tool.cancel", handleToolCancel],
+  ["session.lifecycle", handleSessionLifecycle],
+  ["error", handleError]
+]);
+
+function handleMessage(ws, msg) {
+  MESSAGE_HANDLERS.get(msg.type)?.(ws, msg);
+}
+
 function connect() {
   console.log(`Connecting to ws://localhost:${PORT} ...`);
   const ws = new WebSocket(`ws://localhost:${PORT}`);
@@ -24,78 +109,7 @@ function connect() {
   ws.on("message", (raw) => {
     const msg = JSON.parse(raw);
     console.log("←", JSON.stringify(msg, null, 2));
-
-    switch (msg.type) {
-      case "sessions":
-        if (!msg.active.length) {
-          console.log("No active sessions. Closing.");
-          ws.close();
-          return;
-        }
-        console.log(`Binding to session: ${msg.active[0].id}`);
-        ws.send(JSON.stringify({
-          type: "hello",
-          name: "test-provider",
-          protocolVersion: 2,
-          session: msg.active[0].id,
-          tools: [{
-            name: "test_greet",
-            description: "A test tool that greets someone by name",
-            parameters: {
-              type: "object",
-              properties: {
-                name: { type: "string", description: "Name to greet" }
-              },
-              required: ["name"]
-            }
-          }]
-        }));
-        break;
-
-      case "hello.ack":
-        console.log(`\n✅ Registered as ${msg.providerId}`);
-        console.log("Provider is now BOUND. Waiting for tool calls...\n");
-        break;
-
-      case "tool.call":
-        console.log(`\n🔧 Tool call: ${msg.tool}(${JSON.stringify(msg.args)})`);
-        ws.send(JSON.stringify({
-          type: "tool.result",
-          id: msg.id,
-          data: `Hello, ${msg.args.name}! (from test-provider)`
-        }));
-        console.log("   → sent result\n");
-        break;
-
-      case "tool.cancel":
-        console.log(`⚠️  Tool cancel: ${msg.id}`);
-        ws.send(JSON.stringify({
-          type: "tool.result",
-          id: msg.id,
-          error: "Cancelled",
-          errorCode: "CANCELLED"
-        }));
-        break;
-
-      case "session.lifecycle":
-        console.log(`📋 Lifecycle: ${msg.state}`);
-        if (msg.state === "shutdown.pending") {
-          console.log("Session shutting down. Sending goodbye.");
-          ws.send(JSON.stringify({ type: "goodbye", reason: "session ending" }));
-          ws.close();
-        }
-        break;
-
-      case "error":
-        console.error(`❌ Error [${msg.code}]: ${msg.message}`);
-        if (msg.code === "AUTH_FAILED" || msg.code === "UNSUPPORTED_VERSION") {
-          ws.close();
-        }
-        break;
-
-      default:
-        break;
-    }
+    handleMessage(ws, msg);
   });
 
   ws.on("close", () => {

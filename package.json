@@ -1,6 +1,6 @@
 {
   "name": "copilot-tap-extension",
-  "version": "2.0.4",
+  "version": "2.0.5",
   "description": "Copilot CLI extension for background event emitters, event streams, and session injection.",
   "type": "module",
   "license": "MIT",
@@ -19,6 +19,7 @@
   ],
   "scripts": {
     "build": "node scripts/build.mjs",
+    "install:local": "npm run build && node bin/install.mjs --force",
     "prepublishOnly": "npm run build",
     "check": "node --check ./src/tap-runtime.mjs && node --check ./src/extension.mjs && node --check ./evals/run.mjs && node --check ./examples/heartbeat.mjs",
     "demo:heartbeat": "node ./examples/heartbeat.mjs",

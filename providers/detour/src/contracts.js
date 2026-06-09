@@ -25,8 +25,6 @@ export const DETAIL_LEVEL_OPTIONS = Object.freeze([
   { value: DETAIL_LEVELS.FORENSIC, label: "Forensic" },
 ]);
 
-export const DETAIL_LEVEL_VALUES = Object.freeze(DETAIL_LEVEL_OPTIONS.map((level) => level.value));
-
 export const INTENT_TOKENS = Object.freeze({
   FIX: "fix",
   CHANGE: "change",

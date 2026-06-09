@@ -13,10 +13,27 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { MESSAGE_TYPES } from "./src/contracts.js";
+import {
+  AUTH_HEADER,
+  MAX_LOG_BUFFER,
+  applyCorsHeaders,
+  buildMessagesResponse,
+  clientLabelFrom,
+  firstClientIdFrom,
+  isAuthorizedRequest,
+  isLoopbackAddress,
+  isLoopbackHostHeader,
+  listBrowserClients,
+  planBrowserMessage,
+  planToolCall,
+  renderBridgeScript,
+  routeHttpRequest,
+} from "./src/provider-core.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const BROWSER_PORT = parseInt(process.env.DETOUR_PORT || "9401", 10);
-const MAX_LOG_BUFFER = 500;
+const BROWSER_HOST = "127.0.0.1";
+const BRIDGE_TOKEN = process.env.DETOUR_BRIDGE_TOKEN || randomUUID();
 
 // ── Browser client state ────────────────────────────────────────────────
 const clients = new Map();
@@ -26,13 +43,16 @@ const pageMessages = [];
 const pendingPageAsks = new Map();
 
 function firstClientId() {
-  const first = clients.keys().next();
-  return first.done ? null : first.value;
+  return firstClientIdFrom(clients);
 }
 
 function clientLabel(id) {
-  const c = clients.get(id);
-  return c ? `${c.title} (${c.url})` : id;
+  return clientLabelFrom(clients, id);
+}
+
+function appendBounded(buffer, item) {
+  buffer.push(item);
+  if (buffer.length > MAX_LOG_BUFFER) buffer.shift();
 }
 
 function evalOnClient(clientId, code, timeoutMs = 15000) {
@@ -54,81 +74,155 @@ const srcBridge = path.join(__dirname, "bridge.js");
 const bridgeScript = fs.existsSync(distBridge)
   ? fs.readFileSync(distBridge, "utf8")
   : fs.readFileSync(srcBridge, "utf8");
+const renderedBridgeScript = renderBridgeScript(bridgeScript, BROWSER_PORT, BRIDGE_TOKEN);
 
-const httpServer = http.createServer((req, res) => {
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
-  if (req.method === "OPTIONS") { res.writeHead(204); res.end(); return; }
+function writeJson(res, statusCode, value, spacing) {
+  res.writeHead(statusCode, { "Content-Type": "application/json" });
+  res.end(JSON.stringify(value, null, spacing));
+}
 
-  if ((req.url === "/bridge.js" || req.url === "/") && req.method === "GET") {
-    res.writeHead(200, { "Content-Type": "application/javascript; charset=utf-8" });
-    res.end(bridgeScript);
-    return;
+function readRequestBody(req, onBody) {
+  let body = "";
+  req.on("data", (chunk) => body += chunk);
+  req.on("end", () => onBody(body));
+}
+
+function rejectUnauthorized(res) {
+  writeJson(res, 401, { error: "Unauthorized" });
+}
+
+function isSafeHttpRequest(req) {
+  return isLoopbackHostHeader(req.headers.host) && isLoopbackAddress(req.socket.remoteAddress);
+}
+
+function requireHttpAuth(req, res) {
+  if (isSafeHttpRequest(req) && isAuthorizedRequest(req, BRIDGE_TOKEN)) {
+    return true;
   }
+  rejectUnauthorized(res);
+  return false;
+}
 
-  if (req.url === "/eval" && req.method === "POST") {
-    let body = "";
-    req.on("data", (c) => body += c);
-    req.on("end", async () => {
-      try {
-        const { code, client_id, timeout_ms } = JSON.parse(body);
-        const cid = client_id || firstClientId();
-        if (!cid) { res.writeHead(400); res.end(JSON.stringify({ error: "No browser clients connected" })); return; }
-        const result = await evalOnClient(cid, code, timeout_ms || 15000);
-        res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ result }));
-      } catch (err) { res.writeHead(500); res.end(JSON.stringify({ error: err.message })); }
-    });
-    return;
+function handleEvalRequest(req, res) {
+  if (!requireHttpAuth(req, res)) return;
+  readRequestBody(req, async (body) => {
+    try {
+      const { code, client_id, timeout_ms } = JSON.parse(body);
+      const cid = client_id || firstClientId();
+      if (!cid) { res.writeHead(400); res.end(JSON.stringify({ error: "No browser clients connected" })); return; }
+      const result = await evalOnClient(cid, code, timeout_ms || 15000);
+      writeJson(res, 200, { result });
+    } catch (err) { res.writeHead(500); res.end(JSON.stringify({ error: err.message })); }
+  });
+}
+
+function handleReplyRequest(req, res) {
+  if (!requireHttpAuth(req, res)) return;
+  readRequestBody(req, (body) => {
+    try {
+      const { ask_id, reply } = JSON.parse(body);
+      const pending = pendingPageAsks.get(ask_id);
+      if (!pending) { res.writeHead(404); res.end(JSON.stringify({ error: "No pending ask" })); return; }
+      if (pending.ws.readyState === WebSocket.OPEN) pending.ws.send(JSON.stringify({ type: MESSAGE_TYPES.ASK_REPLY, id: ask_id, reply }));
+      pendingPageAsks.delete(ask_id);
+      res.writeHead(200); res.end(JSON.stringify({ ok: true }));
+    } catch (err) { res.writeHead(500); res.end(JSON.stringify({ error: err.message })); }
+  });
+}
+
+function handleHttpRequest(req, res) {
+  applyCorsHeaders(req, res);
+  res.setHeader("Cache-Control", "no-store");
+
+  switch (routeHttpRequest(req.method, req.url)) {
+    case "options":
+      res.writeHead(204); res.end(); return;
+    case "bridge":
+      if (!requireHttpAuth(req, res)) return;
+      res.writeHead(200, { "Content-Type": "application/javascript; charset=utf-8" });
+      res.end(renderedBridgeScript);
+      return;
+    case "eval":
+      handleEvalRequest(req, res);
+      return;
+    case "clients":
+      if (!requireHttpAuth(req, res)) return;
+      writeJson(res, 200, listBrowserClients(clients), 2);
+      return;
+    case "logs":
+      if (!requireHttpAuth(req, res)) return;
+      writeJson(res, 200, consoleLogs.slice(-50), 2);
+      return;
+    case "messages":
+      if (!requireHttpAuth(req, res)) return;
+      writeJson(res, 200, buildMessagesResponse(pageMessages, req.url));
+      return;
+    case "reply":
+      handleReplyRequest(req, res);
+      return;
+    default:
+      res.writeHead(404); res.end("Not found");
   }
+}
 
-  if (req.url === "/clients" && req.method === "GET") {
-    const list = [...clients].map(([id, c]) => ({ id, url: c.url, title: c.title, connectedAt: c.connectedAt }));
-    res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify(list, null, 2));
-    return;
-  }
-
-  if (req.url.startsWith("/logs") && req.method === "GET") {
-    res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify(consoleLogs.slice(-50), null, 2));
-    return;
-  }
-
-  if (req.url.startsWith("/messages") && req.method === "GET") {
-    const url = new URL(req.url, "http://localhost");
-    const ack = parseInt(url.searchParams.get("ack") || "0", 10);
-    res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ total: pageMessages.length, messages: pageMessages.slice(ack) }));
-    return;
-  }
-
-  if (req.url === "/reply" && req.method === "POST") {
-    let body = "";
-    req.on("data", (c) => body += c);
-    req.on("end", () => {
-      try {
-        const { ask_id, reply } = JSON.parse(body);
-        const pending = pendingPageAsks.get(ask_id);
-        if (!pending) { res.writeHead(404); res.end(JSON.stringify({ error: "No pending ask" })); return; }
-        if (pending.ws.readyState === WebSocket.OPEN) pending.ws.send(JSON.stringify({ type: MESSAGE_TYPES.ASK_REPLY, id: ask_id, reply }));
-        pendingPageAsks.delete(ask_id);
-        res.writeHead(200); res.end(JSON.stringify({ ok: true }));
-      } catch (err) { res.writeHead(500); res.end(JSON.stringify({ error: err.message })); }
-    });
-    return;
-  }
-
-  res.writeHead(404); res.end("Not found");
-});
+const httpServer = http.createServer(handleHttpRequest);
 
 // ── Browser WebSocket server ────────────────────────────────────────────
-const browserServer = new WebSocketServer({ server: httpServer });
-httpServer.listen(BROWSER_PORT, () => {
-  console.log(`🌐 Detour listening on http://localhost:${BROWSER_PORT}`);
-  console.log(`   Bridge: http://localhost:${BROWSER_PORT}/bridge.js`);
+const browserServer = new WebSocketServer({
+  server: httpServer,
+  verifyClient: ({ req }, done) => {
+    const ok = isSafeHttpRequest(req) && isAuthorizedRequest(req, BRIDGE_TOKEN);
+    done(ok, ok ? undefined : 401, ok ? undefined : "Unauthorized");
+  },
 });
+httpServer.listen(BROWSER_PORT, BROWSER_HOST, () => {
+  console.log(`🌐 Detour listening on http://${BROWSER_HOST}:${BROWSER_PORT}`);
+  console.log(`   Bridge: http://${BROWSER_HOST}:${BROWSER_PORT}/bridge.js?token=${encodeURIComponent(BRIDGE_TOKEN)}`);
+  console.log(`   HTTP API: pass ?token=... or ${AUTH_HEADER}: ...`);
+});
+
+function applyBrowserMessagePlan(plan, clientId, ws) {
+  switch (plan.kind) {
+    case "identify": {
+      const client = clients.get(clientId);
+      client.url = plan.url;
+      client.title = plan.title;
+      console.log(plan.logText);
+      break;
+    }
+    case "console":
+      appendBounded(consoleLogs, plan.entry);
+      break;
+    case "evalResult": {
+      const pending = pendingEvals.get(plan.id);
+      if (pending) {
+        clearTimeout(pending.timer);
+        pendingEvals.delete(plan.id);
+        plan.error ? pending.reject(new Error(plan.error)) : pending.resolve(plan.value);
+      }
+      break;
+    }
+    case "pageMessage":
+      console.log(plan.logText);
+      appendBounded(pageMessages, plan.pageMessage);
+      provider.surface(plan.pushText);
+      break;
+    case "pageAsk":
+      console.log(plan.logText);
+      pendingPageAsks.set(plan.askId, { ...plan.pendingAsk, ws });
+      appendBounded(pageMessages, plan.pageMessage);
+      provider.surface(plan.pushText);
+      break;
+    case "pageContext":
+      console.log(plan.logText);
+      appendBounded(pageMessages, plan.pageMessage);
+      provider.surface(plan.pushText);
+      break;
+    case "pageAnnotate":
+      console.log(plan.logText);
+      break;
+  }
+}
 
 browserServer.on("connection", (ws) => {
   const clientId = randomUUID().slice(0, 8);
@@ -136,64 +230,12 @@ browserServer.on("connection", (ws) => {
   console.log(`🔗 Browser client connected: ${clientId}`);
 
   ws.on("message", (raw) => {
-    let msg;
-    try { msg = JSON.parse(raw); } catch { return; }
-
-    switch (msg.type) {
-      case MESSAGE_TYPES.IDENTIFY:
-        clients.get(clientId).url = msg.url || "unknown";
-        clients.get(clientId).title = msg.title || "unknown";
-        console.log(`   → ${msg.title} (${msg.url})`);
-        break;
-
-      case MESSAGE_TYPES.CONSOLE:
-        consoleLogs.push({ clientId, level: msg.level || "log", args: msg.args || [], timestamp: msg.timestamp || new Date().toISOString() });
-        if (consoleLogs.length > MAX_LOG_BUFFER) consoleLogs.shift();
-        break;
-
-      case MESSAGE_TYPES.EVAL_RESULT: {
-        const p = pendingEvals.get(msg.id);
-        if (p) { clearTimeout(p.timer); pendingEvals.delete(msg.id); msg.error ? p.reject(new Error(msg.error)) : p.resolve(msg.value); }
-        break;
-      }
-
-      case MESSAGE_TYPES.PAGE_MESSAGE: {
-        const from = clientLabel(clientId);
-        console.log(`📨 [${from}] ${msg.message}`);
-        pageMessages.push({ clientId, from, message: msg.message, timestamp: new Date().toISOString() });
-        if (pageMessages.length > MAX_LOG_BUFFER) pageMessages.shift();
-        provider.push(`[${from}] ${msg.message}`);
-        break;
-      }
-
-      case MESSAGE_TYPES.PAGE_ASK: {
-        const from = clientLabel(clientId);
-        console.log(`❓ [ASK from ${from}] ${msg.message}`);
-        pendingPageAsks.set(msg.id, { clientId, ws, message: msg.message, from, timestamp: new Date().toISOString() });
-        pageMessages.push({ clientId, from, message: msg.message, type: "ask", askId: msg.id, timestamp: new Date().toISOString() });
-        if (pageMessages.length > MAX_LOG_BUFFER) pageMessages.shift();
-        provider.push(`[ASK from ${from}] ${msg.message} (reply with reply_to_page tool, askId: "${msg.id}")`);
-        break;
-      }
-
-      case MESSAGE_TYPES.PAGE_CONTEXT: {
-        const from = clientLabel(clientId);
-        const chatMsg = msg.message ? ` — "${msg.message}"` : "";
-        console.log(`📋 [CONTEXT from ${from}] ${msg.annotations?.length || 0} annotations${chatMsg}`);
-        const text = msg.markdown || `${msg.annotations?.length || 0} annotations from ${from}${chatMsg}`;
-        pageMessages.push({ clientId, from, message: text, type: "context", timestamp: new Date().toISOString() });
-        if (pageMessages.length > MAX_LOG_BUFFER) pageMessages.shift();
-        provider.push(`[CONTEXT from ${from}]${chatMsg}\n${msg.markdown || ""}`);
-        break;
-      }
-
-      case MESSAGE_TYPES.PAGE_ANNOTATE: {
-        const from = clientLabel(clientId);
-        const ann = msg.annotation || {};
-        console.log(`📌 [${from}] ${ann.context?.displayName || "element"}: ${ann.intent} — ${ann.comment || "(no comment)"}`);
-        break;
-      }
-    }
+    const plan = planBrowserMessage(raw, {
+      clientId,
+      from: clientLabel(clientId),
+      nowIso: () => new Date().toISOString(),
+    });
+    applyBrowserMessagePlan(plan, clientId, ws);
   });
 
   ws.on("close", () => { clients.delete(clientId); console.log(`💔 Disconnected: ${clientId}`); });
@@ -242,40 +284,38 @@ const TOOLS = [
 ];
 
 // ── Provider (SDK handles auth, reconnect, protocol) ────────────────────
+async function handleToolCall(toolName, args) {
+  const plan = planToolCall(toolName, args, {
+    firstClientId: firstClientId(),
+    clients,
+    consoleLogs,
+    pageMessages,
+    pendingPageAsks,
+  });
+
+  switch (plan.kind) {
+    case "result":
+      return plan.value;
+    case "eval": {
+      const result = await evalOnClient(plan.clientId, plan.code, plan.timeoutMs);
+      return typeof result === "string" ? result : JSON.stringify(result, null, 2);
+    }
+    case "consoleLogs":
+      if (plan.clear) consoleLogs.length = 0;
+      return plan.logs;
+    case "replyToPage":
+      if (plan.pending.ws.readyState === WebSocket.OPEN) plan.pending.ws.send(JSON.stringify(plan.payload));
+      pendingPageAsks.delete(plan.askId);
+      return plan.result;
+    default:
+      throw new Error(`Unknown tool: ${plan.toolName}`);
+  }
+}
+
 const provider = createProvider("detour", {
   tools: TOOLS,
 
-  async onToolCall(toolName, args) {
-    switch (toolName) {
-      case "inject_js": {
-        const cid = args.client_id || firstClientId();
-        if (!cid) return { error: "No browser clients connected." };
-        const result = await evalOnClient(cid, args.code, args.timeout_ms || 15000);
-        return typeof result === "string" ? result : JSON.stringify(result, null, 2);
-      }
-      case "get_console_logs": {
-        let logs = [...consoleLogs];
-        if (args.client_id) logs = logs.filter((l) => l.clientId === args.client_id);
-        if (args.level) logs = logs.filter((l) => l.level === args.level);
-        logs = logs.slice(-(Math.min(args.limit || 50, MAX_LOG_BUFFER)));
-        if (args.clear) consoleLogs.length = 0;
-        return logs;
-      }
-      case "list_browser_clients":
-        return [...clients].map(([id, c]) => ({ id, url: c.url, title: c.title, connectedAt: c.connectedAt }));
-      case "get_page_messages":
-        return pageMessages.slice(-(args.limit || 20));
-      case "reply_to_page": {
-        const pending = pendingPageAsks.get(args.ask_id);
-        if (!pending) return { error: "No pending ask with that ID" };
-        if (pending.ws.readyState === WebSocket.OPEN) pending.ws.send(JSON.stringify({ type: MESSAGE_TYPES.ASK_REPLY, id: args.ask_id, reply: args.reply }));
-        pendingPageAsks.delete(args.ask_id);
-        return { ok: true, repliedTo: pending.from };
-      }
-      default:
-        throw new Error(`Unknown tool: ${toolName}`);
-    }
-  },
+  onToolCall: handleToolCall,
 
   onConnected: () => console.log(`   Tools: ${TOOLS.map((t) => t.name).join(", ")}`),
   onShutdown: () => console.log("Session ending..."),

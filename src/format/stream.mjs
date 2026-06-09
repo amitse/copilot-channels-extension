@@ -6,13 +6,13 @@ function formatSessionInjectorPolicyFields(sessionInjector, separator = " ") {
   ].join(separator);
 }
 
-export function formatSessionInjector(stream) {
+function formatSessionInjector(stream) {
   const sessionInjector = stream.sessionInjector;
   const state = sessionInjector.enabled ? "on" : "off";
   return `sessionInjector=${state} ${formatSessionInjectorPolicyFields(sessionInjector)}`;
 }
 
-export function formatSessionInjectorDetails(stream) {
+function formatSessionInjectorDetails(stream) {
   return formatSessionInjectorPolicyFields(stream.sessionInjector, "\n");
 }
 

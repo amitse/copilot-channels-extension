@@ -5,14 +5,14 @@ Detour lets the Copilot agent inject JavaScript into any browser page and receiv
 ## How it works
 
 ```
-┌─────────┐  ws://localhost:9401  ┌─────────────┐  ws://localhost:9400  ┌─────────┐
+┌─────────┐  ws://127.0.0.1:9401?token=...  ┌─────────────┐  ws://localhost:9400  ┌─────────┐
 │ Browser  │◄────────────────────►│   Detour     │◄────────────────────►│ ※ tap    │
 │ (page)   │  eval + console logs │  Provider    │  tool calls          │ Gateway  │
 └─────────┘                       └─────────────┘                       └─────────┘
 ```
 
-1. **Detour provider** runs locally — connects to tap gateway and serves a browser WebSocket
-2. **Browser snippet** is pasted into DevTools — connects to Detour, hooks `console.*`, listens for eval commands
+1. **Detour provider** runs locally — connects to tap gateway and serves a token-protected browser WebSocket
+2. **Browser bridge** is injected by Detour — connects to Detour, hooks `console.*`, listens for eval commands
 3. **Agent** calls `inject_js` / `get_console_logs` / `list_browser_clients` through tap
 
 ## Quick start
@@ -28,10 +28,11 @@ $env:TAP_PROVIDER_TOKEN = "<token>"; node index.mjs
 #    Bash:
 TAP_PROVIDER_TOKEN=<token> node index.mjs
 
-# 3. Open any page in your browser, open DevTools console, paste:
+# 3. Copy the printed Bridge URL into Detour's Inject on load rule.
 ```
 
-Then paste the contents of `snippet.js` into the browser console.
+The provider prints a URL like `http://127.0.0.1:9401/bridge.js?token=...`.
+Use that exact URL so the injected bridge can authenticate to the local WebSocket.
 
 You'll see **⚡ Detour connected** in the console. The agent now has 3 new tools:
 
@@ -50,6 +51,7 @@ You'll see **⚡ Detour connected** in the console. The agent now has 3 new tool
 | `TAP_PROVIDER_TOKEN` | (required) | Auth token from Copilot session |
 | `TAP_GATEWAY_URL` | `ws://localhost:9400` | Gateway WebSocket URL |
 | `DETOUR_PORT` | `9401` | Port for browser connections |
+| `DETOUR_BRIDGE_TOKEN` | random per run | Optional fixed token for the browser bridge HTTP and WebSocket endpoints |
 
 ## Example agent usage
 
@@ -79,4 +81,4 @@ You can paste the snippet into multiple browser tabs. Each gets a unique client 
 
 ## Security note
 
-Detour runs on localhost only. It allows arbitrary JS execution on connected pages — use responsibly and only on pages you control.
+Detour binds its browser bridge to loopback and requires the printed bridge token for HTTP and WebSocket access. It still allows arbitrary JS execution on authenticated connected pages — use responsibly and only on pages you control.

@@ -12,7 +12,7 @@
   "use strict";
   if (window.__detourBridge) return;
 
-  var WS_URL = "ws://localhost:9401";
+  var WS_URL = "__DET0UR_WS_URL__";
   var RECONNECT_MS = 3000;
   var ws = null;
 

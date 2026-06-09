@@ -1,7 +1,7 @@
 import { RUN_INTERVAL_PATTERN } from "../consts.mjs";
 import { ValidationError } from "../errors/index.mjs";
 
-export const MAX_TIMER_DELAY_MS = 2_147_483_647;
+const MAX_TIMER_DELAY_MS = 2_147_483_647;
 
 export function nowIso() {
   return new Date().toISOString();

@@ -23,7 +23,6 @@ export const EVENT_FILTER_PARAMETER_SCHEMA = Object.freeze({
   properties: {
     rules: {
       type: "array",
-      minItems: 1,
       items: EVENT_FILTER_RULE_SCHEMA
     }
   }

@@ -1,6 +1,6 @@
 import path from "node:path";
 
-export const GITHUB_DIR = ".github";
+const GITHUB_DIR = ".github";
 export const CONFIG_FILENAME = "tap.config.json";
 export const CONFIG_LOCATIONS = [
   CONFIG_FILENAME,
@@ -90,6 +90,7 @@ export const STREAM = Object.freeze({
 export const SOURCE = Object.freeze({
   SYSTEM: "system",
   TOOL: "tool",
+  PROVIDER: "provider",
   EMITTER: "emitter",
   EMITTER_STDERR: "emitter:stderr",
   EMITTER_PROMPT: "emitter:prompt"

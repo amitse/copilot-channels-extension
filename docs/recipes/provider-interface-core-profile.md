@@ -18,6 +18,8 @@ Read **only this document** to build a working provider.
 │ Dispatches calls │  ◄── hello ────────────     │ Handles calls    │
 │                  │  ── tool.call ─────────►     │                  │
 │                  │  ◄── tool.result ──────     │                  │
+│                  │  ◄── push ─────────────     │ Pushes events    │
+│                  │  ◄── tools.update ─────     │ Updates tools    │
 └─────────────────┘                              └─────────────────┘
 ```
 
@@ -35,13 +37,18 @@ Read **only this document** to build a working provider.
 |---|---|---|
 | **AwaitAuth** | `auth` | `sessions` or `error` |
 | **AwaitHello** | `hello` | `hello.ack` or `error` |
-| **Bound** | `tool.result`, `goodbye` | `tool.call`, `tool.cancel`, `session.lifecycle`, `error` |
+| **Bound** | `tool.result`, `push`, `tools.update`, `goodbye` | `tool.call`, `tool.cancel`, `session.lifecycle`, `error` |
 
 ---
 
 ## Authentication
 
-Gateway passes a unique, short-lived token via `TAP_PROVIDER_TOKEN` env var at spawn time. Provider sends it as the first message:
+The gateway generates a unique token for the running gateway instance. Providers can discover it from:
+
+- `TAP_PROVIDER_TOKEN` when launched with the Copilot environment.
+- `<COPILOT_HOME or ~/.copilot>/extensions/tap/.provider-token` when launched from a sibling terminal or by SDK auto-discovery.
+
+The gateway writes the token file with restrictive permissions and removes it when the gateway stops. Provider sends the token as the first message:
 
 ```json
 { "type": "auth", "token": "ptk-a8f3..." }
@@ -51,7 +58,7 @@ Gateway passes a unique, short-lived token via `TAP_PROVIDER_TOKEN` env var at s
 
 ---
 
-## Messages (10 types)
+## Messages (12 types)
 
 ### `auth` — Provider → Gateway
 
@@ -94,10 +101,10 @@ Register tools, bind to a session.
 Provider is now **Bound**.
 
 ```json
-{ "type": "hello.ack", "protocolVersion": 2, "providerId": "p-8f3a" }
+{ "type": "hello.ack", "protocolVersion": 2, "providerId": "p-8f3a", "sessionId": "abc123" }
 ```
 
-`providerId` is a stable debug ID included in subsequent `error` messages.
+`providerId` is a stable debug ID included in subsequent `error` messages. `sessionId` echoes the session selected by `hello`.
 
 ### `tool.call` — Gateway → Provider
 
@@ -120,6 +127,46 @@ On failure, use `error` + `errorCode` instead of `data`:
 ```
 
 Error codes: `NOT_FOUND`, `TIMEOUT`, `CANCELLED`, `INTERNAL`. Exactly one of `data` or `error` should be present.
+
+### `push` — Provider → Gateway
+
+Bound providers can push events to their selected session:
+
+```json
+{ "type": "push", "level": "inject", "event": "Page asks for help", "stream": "detour" }
+```
+
+| Field | Required | Description |
+|---|---|---|
+| `level` | yes | `keep`, `surface`, or `inject` |
+| `event` | yes | Non-empty event text |
+| `stream` | no | EventStream name. Defaults to the provider name in the SDK. |
+| `sessionId` | no | Must match the session selected in `hello` when supplied. |
+| `metadata` | no | JSON object stored with the stream entry. |
+
+Delivery:
+
+- `keep` stores the event in the stream only.
+- `surface` stores and logs the event to the Copilot timeline.
+- `inject` stores, logs, and sends the event into the session.
+
+### `tools.update` — Provider → Gateway
+
+Replace this provider's complete tool list while Bound:
+
+```json
+{
+  "type": "tools.update",
+  "tools": [{
+    "name": "greet", "description": "Say hello",
+    "parameters": { "type": "object", "properties": { "name": { "type": "string" } } }
+  }]
+}
+```
+
+The `tools` field uses the same validation rules as `hello.tools` and remains capped at 100 tools. If `sessionId` is supplied it must match the session selected in `hello`.
+
+Success is silent and triggers the same debounced `registerTools()` + extension reload path used for provider connect/disconnect. On failure, the gateway sends `error` and keeps the previous tool list active. In-flight calls to tools removed by a successful update are not cancelled; they continue to result, timeout, cancellation, or disconnect.
 
 ### `tool.cancel` — Gateway → Provider
 
@@ -183,6 +230,11 @@ Each `tool.call` has **one** terminal outcome. First terminal message wins:
 1. `tool.result` arrives → complete. Later duplicates silently ignored.
 2. `tool.cancel` sent → provider **must** reply `tool.result { errorCode: "CANCELLED" }`. Non-cancelled results arriving after cancel are ignored.
 3. Provider disconnects with in-flight calls → gateway returns `errorCode: "DISCONNECTED"` to Copilot. **Not** replayed on reconnect.
+4. Malformed JSON, oversized messages, or invalid `tool.result` messages that
+   cannot be correlated while calls are in flight fail fast. With one pending
+   call, the gateway rejects that call with the protocol/validation error. With
+   multiple pending calls, the gateway disconnects the provider and fails all
+   pending calls with `DISCONNECTED`.
 
 ### Disconnect cleanup
 
@@ -201,6 +253,10 @@ Gateway is a detached background process. Crash = **all state lost**. Providers 
 | Max tools per provider | 100 |
 
 Exceeding → `error { code: "PAYLOAD_TOO_LARGE" }`.
+
+If an oversized or malformed bound-provider message arrives while ambiguous
+tool calls are pending, the terminal semantics above also apply so in-flight
+calls cannot remain pending forever.
 
 ---
 
@@ -371,6 +427,8 @@ asyncio.run(connect())
 | Gateway → Provider | `tool.call` | Copilot invokes tool | `tool.result` (**required**) |
 | Provider → Gateway | `tool.result` | After `tool.call`/`tool.cancel` | — |
 | Gateway → Provider | `tool.cancel` | Timeout/interrupt | `tool.result` with `CANCELLED` (**required**) |
+| Provider → Gateway | `push` | Store/surface/inject provider event | — |
+| Provider → Gateway | `tools.update` | Replace provider tool list | — |
 | Gateway → Provider | `session.lifecycle` | State change | `goodbye` on shutdown (recommended) |
 | Gateway → Provider | `error` | Invalid message | — |
 | Provider → Gateway | `goodbye` | Before disconnect | — |
@@ -416,6 +474,13 @@ Provider connects
   → Gateway calls session.registerTools([...tapTools, ...providerTools])
   → Gateway calls session.rpc.extensions.reload()
   → CLI re-joins, sees updated tools, provider tools become available
+
+Provider sends tools.update
+  → Gateway validates replacement tool defs
+  → Gateway replaces that provider's tools in the merged session tool set
+  → Gateway calls session.registerTools([...tapTools, ...providerTools])
+  → Gateway calls session.rpc.extensions.reload()
+  → CLI re-joins, sees updated tools
 
 Provider disconnects
   → Gateway removes provider tools from the session tool set
@@ -485,6 +550,7 @@ This ensures that even 5 providers connecting simultaneously result in a single 
 
 - `session.rpc.extensions.reload()` is marked **`@experimental`** in the SDK (`dist/generated/rpc.js`). Its behavior or availability may change.
 - There is no incremental tool update — each reload sends the full tool list. This is fine for the expected scale (≤100 tools per provider, per spec).
+- `tools.update` replaces the provider's full tool list. The minimal core profile does not implement request acknowledgments, revision numbers, or per-tool deltas.
 
 ---
 
@@ -494,10 +560,9 @@ These are in the [full spec](./provider-interface-v2.md), not here:
 
 - External/browser providers and pairing auth
 - `"all"` session binding, `session.ready`
-- Push events, streams, filters, `stream.query`
 - Hooks, gates, transforms
-- Dynamic updates (`tools.update`, `hooks.update`, `context.update`, `filter.set`)
+- Stream filters and `stream.query`
+- Advanced dynamic updates (`hooks.update`, `context.update`, `filter.set`) and update revisions/acks
 - Multi-instance providers, reconnect tokens
-- Update acknowledgments (`ack`, revisions)
 - Concurrency limits, tool progress (`tool.progress`)
 - Session events (`session.event`, `subscribe`)

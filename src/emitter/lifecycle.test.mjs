@@ -81,6 +81,7 @@ function createCommandEmitter(overrides = {}) {
     emitterType: EMITTER_TYPE.COMMAND,
     runSchedule: RUN_SCHEDULE.CONTINUOUS,
     every: null,
+    everySchedule: null,
     everyMs: null,
     everyScheduleMs: null,
     maxRuns: null,
@@ -152,6 +153,35 @@ test("lifecycle transition defers timed prompt retry with system message", () =>
     {
       type: LIFECYCLE_ACTION.APPEND_SYSTEM_MESSAGE,
       text: "Emitter 'demo' deferred this prompt run because the session was still busy. Next attempt in 5m."
+    }
+  ]);
+});
+
+test("lifecycle transition defers everySchedule prompt retry with active schedule label", () => {
+  const transition = computeTransition(
+    {
+      name: "demo",
+      emitterType: EMITTER_TYPE.PROMPT,
+      runSchedule: RUN_SCHEDULE.TIMED,
+      every: null,
+      everySchedule: ["10s", "1m"],
+      everyMs: null,
+      everyScheduleMs: [10_000, 60_000],
+      runCount: 2,
+      status: EMITTER_STATUS.RUNNING
+    },
+    {
+      type: LIFECYCLE_EVENT.ITERATION_RESULT,
+      result: { ok: false, deferred: true }
+    }
+  );
+
+  assert.equal(transition.nextState.status, EMITTER_STATUS.WAITING);
+  assert.deepEqual(identifyActions(transition), [
+    { type: LIFECYCLE_ACTION.SCHEDULE_TIMER, delayMs: 60_000 },
+    {
+      type: LIFECYCLE_ACTION.APPEND_SYSTEM_MESSAGE,
+      text: "Emitter 'demo' deferred this prompt run because the session was still busy. Next attempt in 1m."
     }
   ]);
 });
@@ -381,6 +411,67 @@ test("mock timer advances scheduled prompt emitter", async () => {
   assert.equal(emitter.lineCount, 1);
 });
 
+test("scheduled prompt waits for session attach without consuming a run", async () => {
+  const timerAdapter = createMockTimerAdapter();
+  const processAdapter = createMockProcessAdapter();
+  const loggerAdapter = createMockLoggerAdapter();
+  const sent = [];
+  let attached = false;
+  const lineRouter = {
+    appendSystemMessage() {},
+    handleLine() {}
+  };
+  const sessionPort = {
+    isIdle: () => false,
+    isAttached: () => attached,
+    log: async () => {},
+    send: async (prompt) => {
+      sent.push(prompt);
+    }
+  };
+  const lifecycle = createLifecycle({ lineRouter, sessionPort, timerAdapter, processAdapter, loggerAdapter });
+  const emitter = {
+    name: "demo",
+    emitterType: EMITTER_TYPE.PROMPT,
+    runSchedule: RUN_SCHEDULE.ONE_TIME,
+    every: null,
+    everyMs: null,
+    everyScheduleMs: null,
+    maxRuns: 1,
+    status: EMITTER_STATUS.QUEUED,
+    stopRequested: false,
+    inFlight: false,
+    command: null,
+    cwd: process.cwd(),
+    prompt: "hello",
+    process: null,
+    stdoutReader: null,
+    stderrReader: null,
+    lineCount: 0,
+    runCount: 0,
+    lastRunAt: null
+  };
+
+  lifecycle.start(emitter);
+  timerAdapter.advance(0);
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.deepEqual(sent, []);
+  assert.equal(emitter.runCount, 0);
+  assert.equal(emitter.lineCount, 0);
+  assert.equal(emitter.status, EMITTER_STATUS.WAITING);
+  assert.equal(timerAdapter.pendingCount, 1);
+
+  attached = true;
+  timerAdapter.advance(10_000);
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.deepEqual(sent, ["hello"]);
+  assert.equal(emitter.runCount, 1);
+  assert.equal(emitter.lineCount, 1);
+  assert.equal(emitter.status, EMITTER_STATUS.COMPLETED);
+});
+
 test("command emitter stderr routing honors includeStderr policy", () => {
   const cases = [
     {
@@ -483,6 +574,20 @@ test("line router applies delivery modes to inject and surface outcomes", () => 
       expectedSurfaced: ["keep line"]
     },
     {
+      label: "all surfaces and injects inject outcomes",
+      delivery: "all",
+      outcome: EVENT_OUTCOME.INJECT,
+      expectedEnqueued: ["inject line"],
+      expectedSurfaced: ["inject line"]
+    },
+    {
+      label: "surface logs and injects inject outcomes",
+      delivery: EVENT_OUTCOME.SURFACE,
+      outcome: EVENT_OUTCOME.INJECT,
+      expectedEnqueued: ["inject line"],
+      expectedSurfaced: ["inject line"]
+    },
+    {
       label: "keep suppresses inject outcomes",
       delivery: EVENT_OUTCOME.KEEP,
       outcome: EVENT_OUTCOME.INJECT,
@@ -499,7 +604,7 @@ test("line router applies delivery modes to inject and surface outcomes", () => 
   ];
 
   for (const { label, delivery, outcome, expectedEnqueued, expectedSurfaced } of cases) {
-    const { enqueued, surfaced, lineRouter } = createLineRouterHarness({
+    const { appended, enqueued, surfaced, lineRouter } = createLineRouterHarness({
       sessionInjector: { enabled: true, delivery }
     });
     const text = `${outcome} line`;
@@ -511,6 +616,7 @@ test("line router applies delivery modes to inject and surface outcomes", () => 
 
     lineRouter.handleLine(emitter, text, STREAM.STDOUT, SOURCE.EMITTER);
 
+    assert.deepEqual(appended.map((entry) => entry.text), [text], `${label}: stored`);
     assert.deepEqual(enqueued.map((entry) => entry.text), expectedEnqueued, `${label}: enqueued`);
     assert.deepEqual(
       surfaced.map((entry) => entry.message.replace(/^.*: /, "")),
@@ -558,6 +664,73 @@ test("scheduled command iteration waits for close before completing", async () =
   assert.ok(appended.some((entry) => entry.text === "trailing stdout"));
 });
 
+test("continuous command waits for close before exit status and system message", async () => {
+  const timerAdapter = createMockTimerAdapter();
+  const loggerAdapter = createMockLoggerAdapter();
+  const { appended, lineRouter } = createLineRouterHarness();
+  const { processAdapter, readers } = createProcessAdapterWithLineReaders();
+  const lifecycle = createLifecycle({
+    lineRouter,
+    sessionPort: { isIdle: () => false, log: async () => {}, send: async () => {} },
+    timerAdapter,
+    processAdapter,
+    loggerAdapter
+  });
+  const emitter = createCommandEmitter();
+
+  lifecycle.start(emitter);
+  const child = processAdapter.children.at(-1);
+  const exitMessage = "Emitter 'demo' exited with code 0.";
+
+  child.emit("exit", 0, null);
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(emitter.status, EMITTER_STATUS.RUNNING);
+  assert.equal(emitter.process, child);
+  assert.equal(readers[0].closed, false);
+  assert.equal(appended.some((entry) => entry.text === exitMessage), false);
+
+  child.stdout.emit("line", "trailing stdout");
+  child.emit("close", 0, null);
+  await new Promise((resolve) => setImmediate(resolve));
+
+  const texts = appended.map((entry) => entry.text);
+  assert.equal(emitter.status, EMITTER_STATUS.EXITED);
+  assert.equal(emitter.process, null);
+  assert.equal(emitter.exitCode, 0);
+  assert.equal(readers[0].closed, true);
+  assert.ok(texts.includes("trailing stdout"));
+  assert.ok(texts.includes(exitMessage));
+  assert.ok(texts.indexOf("trailing stdout") < texts.indexOf(exitMessage));
+});
+
+test("continuous command readLines setup failure terminates child and clears process", () => {
+  const timerAdapter = createMockTimerAdapter();
+  const loggerAdapter = createMockLoggerAdapter();
+  const { appended, lineRouter } = createLineRouterHarness();
+  const processAdapter = createMockProcessAdapter();
+  processAdapter.readLines = () => {
+    throw new Error("reader failed");
+  };
+  const lifecycle = createLifecycle({
+    lineRouter,
+    sessionPort: { isIdle: () => false, log: async () => {}, send: async () => {} },
+    timerAdapter,
+    processAdapter,
+    loggerAdapter
+  });
+  const emitter = createCommandEmitter();
+
+  assert.throws(() => lifecycle.start(emitter), /reader failed/);
+
+  const child = processAdapter.children.at(-1);
+  assert.equal(child.killed, true);
+  assert.equal(emitter.process, null);
+  assert.equal(emitter.status, EMITTER_STATUS.ERROR);
+  assert.ok(appended.some((entry) => /reader failed/.test(entry.text)));
+  assert.ok(loggerAdapter.entries.some((entry) => /reader failed/.test(entry.message)));
+});
+
 test("scheduled command signal termination fails unless stop was requested", async () => {
   const timerAdapter = createMockTimerAdapter();
   const loggerAdapter = createMockLoggerAdapter();
@@ -588,4 +761,107 @@ test("scheduled command signal termination fails unless stop was requested", asy
   assert.equal(emitter.status, EMITTER_STATUS.ERROR);
   assert.equal(emitter.lastRunStatus, RUN_STATUS.FAILURE);
   assert.ok(appended.some((entry) => /SIGTERM/.test(entry.text)));
+});
+
+test("scheduled command iteration rejection records failure and clears in-flight", async () => {
+  const timerAdapter = createMockTimerAdapter();
+  const loggerAdapter = createMockLoggerAdapter();
+  const { appended, lineRouter } = createLineRouterHarness();
+  const processAdapter = createMockProcessAdapter();
+  processAdapter.readLines = () => {
+    throw new Error("reader failed");
+  };
+  const lifecycle = createLifecycle({
+    lineRouter,
+    sessionPort: { isIdle: () => false, log: async () => {}, send: async () => {} },
+    timerAdapter,
+    processAdapter,
+    loggerAdapter
+  });
+  const emitter = createCommandEmitter({
+    runSchedule: RUN_SCHEDULE.TIMED,
+    every: "5m",
+    everyMs: 300_000,
+    maxRuns: 1
+  });
+
+  lifecycle.start(emitter);
+  timerAdapter.advance(0);
+  await new Promise((resolve) => setImmediate(resolve));
+
+  const child = processAdapter.children.at(-1);
+  assert.equal(emitter.inFlight, false);
+  assert.equal(emitter.status, EMITTER_STATUS.ERROR);
+  assert.equal(emitter.process, null);
+  assert.equal(child.killed, true);
+  assert.ok(loggerAdapter.entries.some((entry) => /reader failed/.test(entry.message)));
+  assert.ok(appended.some((entry) => /reader failed/.test(entry.text)));
+});
+
+test("stopAndWait waits for continuous child close before resolving", async () => {
+  const timerAdapter = createMockTimerAdapter();
+  const loggerAdapter = createMockLoggerAdapter();
+  const { lineRouter } = createLineRouterHarness();
+  const { processAdapter } = createProcessAdapterWithLineReaders();
+  const lifecycle = createLifecycle({
+    lineRouter,
+    sessionPort: { isIdle: () => false, log: async () => {}, send: async () => {} },
+    timerAdapter,
+    processAdapter,
+    loggerAdapter
+  });
+  const emitter = createCommandEmitter();
+
+  lifecycle.start(emitter);
+  const child = processAdapter.children.at(-1);
+
+  let settled = false;
+  const wait = lifecycle.stopAndWait(emitter, { timeoutMs: 1_000 }).then((result) => {
+    settled = true;
+    return result;
+  });
+  await Promise.resolve();
+  await Promise.resolve();
+
+  assert.equal(child.killed, true);
+  assert.equal(emitter.status, EMITTER_STATUS.STOPPING);
+  assert.equal(settled, false);
+
+  child.emit("close", null, "SIGTERM");
+  const result = await wait;
+
+  assert.equal(settled, true);
+  assert.equal(result.timedOut, false);
+  assert.equal(emitter.status, EMITTER_STATUS.STOPPED);
+});
+
+test("stopAndWait resolves through timeout when child never closes", async () => {
+  const timerAdapter = createMockTimerAdapter();
+  const loggerAdapter = createMockLoggerAdapter();
+  const { lineRouter } = createLineRouterHarness();
+  const { processAdapter } = createProcessAdapterWithLineReaders();
+  const lifecycle = createLifecycle({
+    lineRouter,
+    sessionPort: { isIdle: () => false, log: async () => {}, send: async () => {} },
+    timerAdapter,
+    processAdapter,
+    loggerAdapter
+  });
+  const emitter = createCommandEmitter();
+
+  lifecycle.start(emitter);
+  const wait = lifecycle.stopAndWait(emitter, { timeoutMs: 50, pollMs: 10 });
+  await Promise.resolve();
+  await Promise.resolve();
+
+  timerAdapter.advance(49);
+  await Promise.resolve();
+  assert.equal(loggerAdapter.entries.some((entry) => /abandoning wait/.test(entry.message)), false);
+
+  timerAdapter.advance(1);
+  const result = await wait;
+
+  assert.equal(result.timedOut, true);
+  assert.equal(emitter.status, EMITTER_STATUS.STOPPING);
+  assert.ok(loggerAdapter.entries.some((entry) => /abandoning wait/.test(entry.message)));
 });

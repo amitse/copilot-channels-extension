@@ -22,6 +22,8 @@ export const MESSAGE_TYPE = Object.freeze({
   // Provider → Gateway
   AUTH: "auth",
   HELLO: "hello",
+  PUSH: "push",
+  TOOLS_UPDATE: "tools.update",
   TOOL_RESULT: "tool.result",
   GOODBYE: "goodbye",
   // Gateway → Provider
@@ -41,6 +43,7 @@ export const ERROR_CODE = Object.freeze({
   PAYLOAD_TOO_LARGE: "PAYLOAD_TOO_LARGE",
   RATE_LIMITED: "RATE_LIMITED",
   INVALID_JSON: "INVALID_JSON",
+  UNKNOWN_CALL_ID: "UNKNOWN_CALL_ID",
   UNKNOWN_TYPE: "UNKNOWN_TYPE"
 });
 

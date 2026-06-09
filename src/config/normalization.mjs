@@ -1,6 +1,8 @@
 import { EVENT_OUTCOME, LIFESPAN, OWNERSHIP } from "../consts.mjs";
+import { normalizeOptionalPositiveInteger, readOptionalText, resolveEmitterStreamInput } from "../contracts/emitter-input.mjs";
 import { ValidationError } from "../errors/index.mjs";
-import { normalizeDelivery, normalizeLifespan, normalizeName, normalizeOwnership } from "../util/normalize.mjs";
+import { normalizeDelivery, normalizeLifespan, normalizeName, normalizeOwnership, requireNormalizedName } from "../util/normalize.mjs";
+import { isStrictPlainObject } from "../util/type-guards.mjs";
 import { EventFilterService } from "../event-filter/service.mjs";
 import { stripEmitterRuntimeFields } from "./emitter-schema.mjs";
 
@@ -39,7 +41,9 @@ const KNOWN_FILTER_KEYS = new Set(["rules", "ownership", "lifespan", "scope"]);
 const KNOWN_SESSION_INJECTOR_KEYS = new Set(["enabled", "delivery", "ownership", "lifespan", "scope"]);
 const LEGACY_EMITTER_KEYS = new Set([
   "managedBy",
+  "scope",
   "classifier",
+  "runInterval",
   "includePattern",
   "excludePattern",
   "notifyPattern"
@@ -53,12 +57,18 @@ const LEGACY_FILTER_KEYS = new Set([
 ]);
 const LEGACY_SESSION_INJECTOR_KEYS = new Set(["managedBy", "scope"]);
 
-function isPlainObject(value) {
-  return Object.prototype.toString.call(value) === "[object Object]";
+function describeInputType(value) {
+  if (value === null) {
+    return "null";
+  }
+  if (Array.isArray(value)) {
+    return "array";
+  }
+  return typeof value;
 }
 
 function cloneObject(value) {
-  return isPlainObject(value) ? { ...value } : {};
+  return isStrictPlainObject(value) ? { ...value } : {};
 }
 
 function pickPreservedFields(source, ignoredKeys) {
@@ -89,25 +99,95 @@ function getUnknownKeys(source, knownKeys) {
   return Object.keys(source).filter((key) => !knownKeys.has(key));
 }
 
-export function normalizeVersion(value, fallback = CONFIG_VERSION.V1) {
-  const candidate = Number.parseInt(String(value ?? fallback), 10);
-  if (!Number.isInteger(candidate) || candidate < 1) {
+function requireConfigRoot(source) {
+  if (!isStrictPlainObject(source)) {
+    throw new ValidationError("Invalid persisted config: root must be a JSON object.", {
+      context: {
+        type: describeInputType(source)
+      }
+    });
+  }
+
+  return cloneObject(source);
+}
+
+function normalizePersistedCollection(config, key, label, normalizer, options) {
+  if (Object.hasOwn(config, key) && !Array.isArray(config[key])) {
+    throw new ValidationError(`Invalid persisted config: ${key} must be an array when present.`, {
+      context: {
+        field: key,
+        type: describeInputType(config[key])
+      }
+    });
+  }
+
+  const entries = Array.isArray(config[key])
+    ? config[key].map((entry) => normalizer(entry, options))
+    : [];
+
+  assertUniqueNormalizedNames(entries, label);
+
+  return entries;
+}
+
+function assertUniqueNormalizedNames(entries, label) {
+  const seen = new Map();
+
+  for (const [index, entry] of entries.entries()) {
+    const normalized = normalizeName(entry?.name);
+    const first = seen.get(normalized);
+
+    if (first) {
+      throw new ValidationError(`Duplicate persisted ${label} name '${normalized}'. Names must be unique after normalization.`, {
+        context: {
+          normalizedName: normalized,
+          firstName: first.name,
+          firstIndex: first.index,
+          duplicateName: entry?.name,
+          duplicateIndex: index
+        }
+      });
+    }
+
+    seen.set(normalized, {
+      name: entry?.name,
+      index
+    });
+  }
+}
+
+function normalizeVersion(value, fallback = CONFIG_VERSION.V1) {
+  const raw = value ?? fallback;
+  let candidate = null;
+
+  if (typeof raw === "number") {
+    candidate = raw;
+  } else if (typeof raw === "string") {
+    const text = raw.trim();
+    if (/^\d+$/.test(text)) {
+      candidate = Number(text);
+    }
+  }
+
+  if (!Number.isSafeInteger(candidate) || candidate < 1) {
     throw new ValidationError(`Invalid configVersion '${value}'. Expected a positive integer.`);
   }
 
   return candidate;
 }
 
-function normalizeSessionInjector(source) {
+function normalizeSessionInjector(source, defaults = {}) {
   const injector = cloneObject(source);
   const preserved = pickPreservedFields(injector, new Set([...KNOWN_SESSION_INJECTOR_KEYS, ...LEGACY_SESSION_INJECTOR_KEYS]));
+  const defaultOwnership = defaults.ownership ?? OWNERSHIP.MODEL_OWNED;
+  const defaultLifespan = defaults.lifespan ?? LIFESPAN.TEMPORARY;
 
   return {
     ...preserved,
     enabled: injector.enabled === true,
     delivery: normalizeDelivery(injector.delivery, EVENT_OUTCOME.SURFACE),
-    ownership: normalizeOwnership(injector.ownership ?? injector.managedBy, OWNERSHIP.MODEL_OWNED),
-    lifespan: normalizeLifespan(injector.lifespan ?? injector.scope, LIFESPAN.TEMPORARY)
+    ownership: normalizeOwnership(injector.ownership ?? injector.managedBy, defaultOwnership),
+    lifespan: normalizeLifespan(injector.lifespan ?? injector.scope, defaultLifespan)
   };
 }
 
@@ -133,7 +213,11 @@ function normalizeLegacyRules(source) {
 }
 
 function normalizePersistedEventFilter(filterSource, ownership, lifespan) {
-  const source = isPlainObject(filterSource) ? filterSource : {};
+  const source = Array.isArray(filterSource)
+    ? { rules: filterSource }
+    : isStrictPlainObject(filterSource)
+      ? filterSource
+      : {};
   const filterOwnership = source.ownership ?? source.managedBy;
   const filterLifespan = source.lifespan ?? source.scope;
   const rules = normalizeLegacyRules(source);
@@ -157,7 +241,11 @@ function normalizePersistedEventFilter(filterSource, ownership, lifespan) {
 
 export function normalizePersistedStream(entry = {}, options = {}) {
   const warn = resolveWarn(options);
-  const source = isPlainObject(entry) ? entry : {};
+  const source = isStrictPlainObject(entry) ? entry : {};
+  requireNormalizedName(source.name, {
+    label: "Invalid persisted stream: name",
+    contextKey: "name"
+  });
   const stream = pickPreservedFields(source, new Set([...KNOWN_STREAM_KEYS, ...LEGACY_STREAM_KEYS]));
 
   if (warn) {
@@ -173,9 +261,9 @@ export function normalizePersistedStream(entry = {}, options = {}) {
     stream.description = source.description;
   }
 
-  const sessionInjectorSource = isPlainObject(source.sessionInjector)
+  const sessionInjectorSource = isStrictPlainObject(source.sessionInjector)
     ? source.sessionInjector
-    : isPlainObject(source.subscription)
+    : isStrictPlainObject(source.subscription)
       ? source.subscription
       : null;
 
@@ -193,7 +281,10 @@ export function normalizePersistedStream(entry = {}, options = {}) {
     }
     stream.sessionInjector = {
       ...preserved,
-      ...normalizeSessionInjector(sessionInjectorSource)
+      ...normalizeSessionInjector(sessionInjectorSource, {
+        ownership: OWNERSHIP.USER_OWNED,
+        lifespan: LIFESPAN.PERSISTENT
+      })
     };
   }
 
@@ -202,7 +293,11 @@ export function normalizePersistedStream(entry = {}, options = {}) {
 
 export function normalizePersistedEmitter(entry = {}, options = {}) {
   const warn = resolveWarn(options);
-  const source = isPlainObject(entry) ? entry : {};
+  const source = isStrictPlainObject(entry) ? entry : {};
+  requireNormalizedName(source.name, {
+    label: "Invalid persisted emitter: name",
+    contextKey: "name"
+  });
   const ownership = normalizeOwnership(
     source.ownership
       ?? source.managedBy
@@ -210,22 +305,25 @@ export function normalizePersistedEmitter(entry = {}, options = {}) {
       ?? source.eventFilter?.managedBy
       ?? source.classifier?.ownership
       ?? source.classifier?.managedBy,
-    OWNERSHIP.MODEL_OWNED
+    OWNERSHIP.USER_OWNED
   );
+  const lifespan = normalizeLifespan(source.lifespan ?? source.scope, LIFESPAN.PERSISTENT);
   const emitter = pickPreservedFields(stripEmitterRuntimeFields(source), LEGACY_EMITTER_KEYS);
-  const filterSource = isPlainObject(source.eventFilter)
+  const filterSource = Array.isArray(source.eventFilter)
     ? source.eventFilter
-    : isPlainObject(source.classifier)
-      ? source.classifier
-      : {
-          rules: normalizeLegacyRules(source),
-          ownership: source.ownership ?? source.managedBy,
-          lifespan: source.lifespan ?? source.scope
-        };
+    : isStrictPlainObject(source.eventFilter)
+      ? source.eventFilter
+      : isStrictPlainObject(source.classifier)
+        ? source.classifier
+        : {
+            rules: normalizeLegacyRules(source),
+            ownership: source.ownership ?? source.managedBy,
+            lifespan: source.lifespan ?? source.scope
+          };
   const eventFilter = normalizePersistedEventFilter(
     filterSource,
     ownership,
-    normalizeLifespan(source.lifespan ?? source.scope, LIFESPAN.TEMPORARY)
+    lifespan
   );
 
   if (warn) {
@@ -236,9 +334,25 @@ export function normalizePersistedEmitter(entry = {}, options = {}) {
     );
   }
 
-  emitter.stream = source.stream ?? source.channel ?? source.name;
-  emitter.channel = source.channel ?? source.stream ?? source.name;
+  // The documented config field is `stream`; `channel` remains accepted only as
+  // a legacy input alias.  When both appear, prefer `stream` so stale channel
+  // aliases cannot override an edited stream at runtime.
+  emitter.stream = resolveEmitterStreamInput(source, source.name);
+  delete emitter.channel;
+  if (emitter.every === undefined) {
+    const runInterval = readOptionalText(source.runInterval);
+    if (runInterval) {
+      emitter.every = runInterval;
+    }
+  }
+  if (source.maxRuns !== undefined) {
+    emitter.maxRuns = normalizeOptionalPositiveInteger(source.maxRuns, {
+      label: "maxRuns",
+      errorPrefix: "Invalid persisted emitter"
+    });
+  }
   emitter.ownership = ownership;
+  emitter.lifespan = lifespan;
   emitter.eventFilter = eventFilter;
 
   return emitter;
@@ -246,7 +360,7 @@ export function normalizePersistedEmitter(entry = {}, options = {}) {
 
 export function normalizePersistedConfig(source, options = {}) {
   const warn = resolveWarn(options);
-  const config = cloneObject(source);
+  const config = requireConfigRoot(source);
   const version = normalizeVersion(config.configVersion ?? CONFIG_VERSION.V1);
 
   if (warn) {
@@ -254,8 +368,8 @@ export function normalizePersistedConfig(source, options = {}) {
   }
 
   config.configVersion = version;
-  config.streams = Array.isArray(config.streams) ? config.streams.map((entry) => normalizePersistedStream(entry, options)) : [];
-  config.emitters = Array.isArray(config.emitters) ? config.emitters.map((entry) => normalizePersistedEmitter(entry, options)) : [];
+  config.streams = normalizePersistedCollection(config, "streams", "stream", normalizePersistedStream, options);
+  config.emitters = normalizePersistedCollection(config, "emitters", "emitter", normalizePersistedEmitter, options);
 
   return config;
 }

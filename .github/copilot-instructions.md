@@ -5,6 +5,7 @@
 ```bash
 npm run check          # Syntax check (fast, run after every change)
 npm run build          # Bundle extension.mjs + copy artifacts to dist/
+npm run install:local  # Build and force reinstall locally
 npm run evals:smoke    # Smoke test — verifies the extension loads and tools are visible
 npm run evals:run      # Full eval suite
 ```
@@ -14,7 +15,7 @@ npm run evals:run      # Full eval suite
 Always rebuild, reinstall, and reload the extension for changes to take effect:
 
 ```bash
-npm run build && node bin/install.mjs --full
+npm run install:local
 ```
 
 Then call `extensions_reload` to pick up the new code in the running session. Note: reloading generates a new `TAP_PROVIDER_TOKEN`, so any running providers will get `AUTH_FAILED` and need restarting.
@@ -45,7 +46,7 @@ Detour is a **Chromium extension** for HTTP redirect and script injection during
 Key facts:
 - MV3 extension with `chrome.scripting.executeScript` for CSP-bypassing script injection
 - Has "Inject on load" script rules that fetch external JS and inject it into matching pages
-- The `providers/detour/` provider in this repo creates a bridge script (`bridge.js`) served at `http://localhost:9401/bridge.js` that Detour injects into pages
+- The `providers/detour/` provider in this repo creates a tokenized bridge script URL (`http://127.0.0.1:9401/bridge.js?token=...`) that Detour injects into pages
 - **Do not modify Detour's source** when building tap integrations — write injectable scripts instead
 
 ### Detour provider dev cycle
@@ -68,7 +69,7 @@ if ($c) { Stop-Process -Id $c.OwningProcess -Force; Start-Sleep 1 }
 node index.mjs
 ```
 
-Then reload the browser page so Detour injects the fresh `bridge.js`.
+Then copy the fresh tokenized bridge URL printed by the provider into Detour and reload the browser page so Detour injects the fresh `bridge.js`.
 
 ### esbuild settings for detour provider
 

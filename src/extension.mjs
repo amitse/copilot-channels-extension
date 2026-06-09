@@ -40,13 +40,3 @@ runtime.appendStreamMessage(runtime.DEFAULT_STREAM, {
   source: "system",
   text: "※ tap loaded."
 });
-
-session.on("session.shutdown", () => {
-  tapLog("session.shutdown received — stopping emitters");
-  // Broadcast shutdown.pending to all connected providers
-  if (runtime.gateway?.isRunning()) {
-    const sessionId = session.id ?? "default";
-    runtime.gateway.broadcastLifecycle(sessionId, "shutdown.pending", 10000);
-  }
-  void runtime.stopAllEmitters();
-});

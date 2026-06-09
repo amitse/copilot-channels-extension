@@ -6,9 +6,41 @@ import {
   ERROR_CODE,
   TOOL_RESULT_ERROR,
 } from "./consts.mjs";
-import { fail, isNonEmptyString, isPlainObject, ok } from "./protocol-shared.mjs";
+import { EVENT_OUTCOME } from "../consts.mjs";
+import { fail, isNonBlankString, isNonEmptyString, isPlainObject, ok } from "./protocol-shared.mjs";
+import { normalizeName } from "../util/normalize.mjs";
 
 const VALID_TOOL_ERROR_CODES = new Set(Object.values(TOOL_RESULT_ERROR));
+const VALID_PUSH_LEVELS = new Set([
+  EVENT_OUTCOME.KEEP,
+  EVENT_OUTCOME.SURFACE,
+  EVENT_OUTCOME.INJECT
+]);
+
+function validateToolDefinitions(tools, fieldName = "tools") {
+  if (!Array.isArray(tools)) {
+    return fail(`${fieldName} must be an array`);
+  }
+  if (tools.length > MAX_TOOLS_PER_PROVIDER) {
+    return fail(
+      `too many tools: ${tools.length} exceeds limit of ${MAX_TOOLS_PER_PROVIDER}`,
+    );
+  }
+
+  const seenNames = new Set();
+  for (let i = 0; i < tools.length; i++) {
+    const toolResult = validateToolDef(tools[i]);
+    if (!toolResult.ok) {
+      return fail(`${fieldName}[${i}]: ${toolResult.error}`);
+    }
+    if (seenNames.has(tools[i].name)) {
+      return fail(`${fieldName}[${i}]: duplicate tool name "${tools[i].name}"`);
+    }
+    seenNames.add(tools[i].name);
+  }
+
+  return ok();
+}
 
 /**
  * Validate an `auth` message from a provider.
@@ -41,7 +73,7 @@ export function validateHello(msg) {
   if (msg.type !== MESSAGE_TYPE.HELLO) {
     return fail(`expected type "${MESSAGE_TYPE.HELLO}", got "${msg.type}"`);
   }
-  if (!isNonEmptyString(msg.name)) {
+  if (!isNonBlankString(msg.name)) {
     return fail("hello message missing required field: name");
   }
   if (msg.protocolVersion !== PROTOCOL_VERSION) {
@@ -50,30 +82,15 @@ export function validateHello(msg) {
       { code: ERROR_CODE.UNSUPPORTED_VERSION },
     );
   }
-  if (!isNonEmptyString(msg.session)) {
+  if (!isNonBlankString(msg.session)) {
     return fail("hello message missing required field: session");
   }
 
   // Validate optional tools array
   if (msg.tools !== undefined) {
-    if (!Array.isArray(msg.tools)) {
-      return fail("hello.tools must be an array");
-    }
-    if (msg.tools.length > MAX_TOOLS_PER_PROVIDER) {
-      return fail(
-        `too many tools: ${msg.tools.length} exceeds limit of ${MAX_TOOLS_PER_PROVIDER}`,
-      );
-    }
-    const seenNames = new Set();
-    for (let i = 0; i < msg.tools.length; i++) {
-      const toolResult = validateToolDef(msg.tools[i]);
-      if (!toolResult.ok) {
-        return fail(`tools[${i}]: ${toolResult.error}`);
-      }
-      if (seenNames.has(msg.tools[i].name)) {
-        return fail(`tools[${i}]: duplicate tool name "${msg.tools[i].name}"`);
-      }
-      seenNames.add(msg.tools[i].name);
+    const toolsResult = validateToolDefinitions(msg.tools, "hello.tools");
+    if (!toolsResult.ok) {
+      return fail(toolsResult.error);
     }
   }
 
@@ -88,6 +105,83 @@ export function validateHello(msg) {
 }
 
 /**
+ * Validate a bound-provider `push` message.
+ * Returns `{ ok, push }` or `{ ok: false, error }`.
+ */
+export function validateProviderPush(msg) {
+  if (!isPlainObject(msg)) {
+    return fail("push message must be an object");
+  }
+  if (msg.type !== MESSAGE_TYPE.PUSH) {
+    return fail(`expected type "${MESSAGE_TYPE.PUSH}", got "${msg.type}"`);
+  }
+
+  const level = String(msg.level ?? "").trim().toLowerCase();
+  if (!VALID_PUSH_LEVELS.has(level)) {
+    return fail(`push level must be one of: ${[...VALID_PUSH_LEVELS].join(", ")}`);
+  }
+  if (!isNonBlankString(msg.event)) {
+    return fail("push message missing required field: event");
+  }
+
+  let stream;
+  if (msg.stream !== undefined) {
+    if (!isNonBlankString(msg.stream)) {
+      return fail("push stream must be a non-empty string when provided");
+    }
+    stream = normalizeName(msg.stream);
+    if (!stream) {
+      return fail("push stream must resolve to a non-empty identifier");
+    }
+  }
+  if (msg.sessionId !== undefined && !isNonBlankString(msg.sessionId)) {
+    return fail("push sessionId must be a non-empty string when provided");
+  }
+  if (msg.metadata !== undefined && !isPlainObject(msg.metadata)) {
+    return fail("push metadata must be an object when provided");
+  }
+
+  return ok({
+    push: {
+      level,
+      event: msg.event,
+      stream,
+      sessionId: msg.sessionId === undefined ? undefined : msg.sessionId.trim(),
+      metadata: msg.metadata
+    }
+  });
+}
+
+/**
+ * Validate a bound-provider `tools.update` message.
+ * Returns `{ ok, update }` or `{ ok: false, error }`.
+ */
+export function validateToolsUpdate(msg) {
+  if (!isPlainObject(msg)) {
+    return fail("tools.update message must be an object");
+  }
+  if (msg.type !== MESSAGE_TYPE.TOOLS_UPDATE) {
+    return fail(`expected type "${MESSAGE_TYPE.TOOLS_UPDATE}", got "${msg.type}"`);
+  }
+
+  const toolsResult = validateToolDefinitions(msg.tools, "tools.update.tools");
+  if (!toolsResult.ok) {
+    return fail(toolsResult.error);
+  }
+
+  if (msg.sessionId !== undefined && !isNonBlankString(msg.sessionId)) {
+    return fail("tools.update sessionId must be a non-empty string when provided");
+  }
+
+  return ok({
+    update: {
+      tools: msg.tools,
+      sessionId: msg.sessionId === undefined ? undefined : msg.sessionId.trim()
+    }
+  });
+}
+
+/**
  * Validate a single tool definition from a hello message.
  * Returns `{ ok }` or `{ ok: false, error }`.
  */
@@ -95,10 +189,10 @@ export function validateToolDef(tool) {
   if (!isPlainObject(tool)) {
     return fail("tool definition must be an object");
   }
-  if (!isNonEmptyString(tool.name)) {
+  if (!isNonBlankString(tool.name)) {
     return fail("tool definition missing required field: name");
   }
-  if (!isNonEmptyString(tool.description)) {
+  if (!isNonBlankString(tool.description)) {
     return fail("tool definition missing required field: description");
   }
   if (!isPlainObject(tool.parameters)) {

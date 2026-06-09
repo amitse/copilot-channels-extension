@@ -12,7 +12,9 @@ import {
   parseMessage,
   validateAuth,
   validateHello,
+  validateProviderPush,
   validateToolResult,
+  validateToolsUpdate,
   validateGoodbye,
   buildToolCall,
   buildToolCancel,
@@ -29,6 +31,7 @@ import {
 } from "../errors/index.mjs";
 import { mapErrorToResponse } from "../errors/handler.mjs";
 import { computeTransition, identifyActions, CONNECTION_ACTION, CONNECTION_EVENT } from "./connection-state.mjs";
+import { createDefaultTimerAdapter } from "../util/timer-adapter.mjs";
 
 function generateProviderId() {
   return "p-" + randomBytes(4).toString("hex");
@@ -55,23 +58,14 @@ function createDefaultWebSocketAdapter() {
   };
 }
 
-function createDefaultTimerAdapter() {
-  return {
-    schedule(callback, delayMs) {
-      return setTimeout(callback, delayMs);
-    },
-    cancel(timerId) {
-      clearTimeout(timerId);
-    }
-  };
-}
-
 export function createProviderConnection(ws, options, adapters = {}) {
   const {
     expectedToken,
     activeSessions,
     onBound,
     onUnbound,
+    onPush,
+    onToolsUpdate,
     onToolResult,
     checkToolConflict,
     log = () => {}
@@ -88,6 +82,9 @@ export function createProviderConnection(ws, options, adapters = {}) {
   let wasBound = false;
 
   const pendingCalls = new Map();
+  let adapterCleanup = null;
+  let adapterCleanupRequested = false;
+  let adapterCleanupInvoked = false;
 
   function send(msg, onFailure) {
     try {
@@ -159,6 +156,34 @@ export function createProviderConnection(ws, options, adapters = {}) {
     return true;
   }
 
+  function rejectSolePendingCall(error) {
+    if (pendingCalls.size !== 1) {
+      return false;
+    }
+
+    const [callId] = pendingCalls.keys();
+    return rejectPendingCall(callId, error);
+  }
+
+  function failUncorrelatablePendingCalls(error, reason) {
+    if (pendingCalls.size === 0) {
+      return;
+    }
+
+    if (rejectSolePendingCall(error)) {
+      return;
+    }
+
+    disconnectConnection(reason ?? error.message, { notifyUnbound: true, closeSocket: true });
+  }
+
+  function createUnknownToolResultError(callId) {
+    return new ValidationError(`tool.result id '${callId}' does not match any pending provider tool call`, {
+      code: ERROR_CODE.UNKNOWN_CALL_ID,
+      context: { providerId, sessionId, replyTo: callId, callId, pendingCalls: pendingCalls.size }
+    });
+  }
+
   function resolvePendingCall(callId, result) {
     const pending = pendingCalls.get(callId);
     if (!pending) {
@@ -174,8 +199,7 @@ export function createProviderConnection(ws, options, adapters = {}) {
     return tools.find((tool) => tool.name === toolName) ?? null;
   }
 
-  function getToolTimeoutMs(toolName) {
-    const tool = findToolDefinition(toolName);
+  function getToolTimeoutMs(tool) {
     if (typeof tool?.timeout === "number" && tool.timeout > 0 && Number.isFinite(tool.timeout)) {
       return tool.timeout;
     }
@@ -191,6 +215,176 @@ export function createProviderConnection(ws, options, adapters = {}) {
       toolName,
       ...extra
     };
+  }
+
+  function createBoundMessageContext(messageType, extra = {}) {
+    return {
+      providerId,
+      providerName,
+      sessionId,
+      receivedType: messageType,
+      ...extra
+    };
+  }
+
+  function sendBoundValidationError(messageType, message, code = ERROR_CODE.UNKNOWN_TYPE, extra = {}) {
+    const error = new ValidationError(message, {
+      code,
+      context: createBoundMessageContext(messageType, extra)
+    });
+    sendError(error, undefined, {
+      replyTo: messageType,
+      providerId,
+      sessionId
+    });
+  }
+
+  function hasInvalidTargetSession(targetSessionId) {
+    return targetSessionId !== undefined && targetSessionId !== sessionId;
+  }
+
+  function errorMessage(err) {
+    try {
+      return err instanceof Error ? err.message : String(err);
+    } catch {
+      return "<unprintable error>";
+    }
+  }
+
+  function safeLog(message) {
+    try {
+      log(message);
+    } catch {
+      // Callback error handling is best-effort and must not create another rejection.
+    }
+  }
+
+  function runAdapterCleanup() {
+    adapterCleanupRequested = true;
+    if (adapterCleanupInvoked || typeof adapterCleanup !== "function") {
+      return;
+    }
+
+    const cleanup = adapterCleanup;
+    adapterCleanup = null;
+    adapterCleanupInvoked = true;
+    try {
+      cleanup();
+    } catch (err) {
+      safeLog(`[connection] websocket cleanup failed: ${errorMessage(err)}`);
+    }
+  }
+
+  function storeAdapterCleanup(cleanup) {
+    adapterCleanup = typeof cleanup === "function" ? cleanup : null;
+    if (adapterCleanupRequested) {
+      runAdapterCleanup();
+    }
+  }
+
+  function handleCallbackError(callbackName, err, onError) {
+    try {
+      onError(err);
+    } catch (handlerErr) {
+      safeLog(`[connection] ${callbackName} callback error handler failed: ${errorMessage(handlerErr)}`);
+    }
+  }
+
+  function logCallbackError(callbackName, err) {
+    safeLog(`[connection] ${callbackName} callback error: ${errorMessage(err)}`);
+  }
+
+  function isThenable(value) {
+    return value !== null &&
+      (typeof value === "object" || typeof value === "function") &&
+      typeof value.then === "function";
+  }
+
+  function invokeProviderCallback(callbackName, callback, args, onError, onAccepted) {
+    const accept = () => {
+      if (typeof onAccepted === "function") {
+        onAccepted();
+      }
+    };
+
+    if (typeof callback !== "function") {
+      accept();
+      return true;
+    }
+
+    try {
+      const result = callback(...args);
+      if (isThenable(result)) {
+        Promise.resolve(result).then(
+          () => {
+            accept();
+          },
+          (err) => {
+            handleCallbackError(callbackName, err, onError);
+          }
+        );
+      } else {
+        accept();
+      }
+      return true;
+    } catch (err) {
+      handleCallbackError(callbackName, err, onError);
+      return false;
+    }
+  }
+
+  function handleProviderPush(msg) {
+    const v = validateProviderPush(msg);
+    if (!v.ok) {
+      sendBoundValidationError(MESSAGE_TYPE.PUSH, v.error);
+      return;
+    }
+
+    if (hasInvalidTargetSession(v.push.sessionId)) {
+      sendBoundValidationError(
+        MESSAGE_TYPE.PUSH,
+        `push sessionId '${v.push.sessionId}' does not match bound session '${sessionId}'`,
+        ERROR_CODE.INVALID_SESSION,
+        { targetSessionId: v.push.sessionId }
+      );
+      return;
+    }
+
+    invokeProviderCallback("onPush", onPush, [connection, v.push], (err) => {
+      sendError(err, undefined, {
+        replyTo: MESSAGE_TYPE.PUSH,
+        providerId,
+        sessionId
+      });
+    });
+  }
+
+  function handleToolsUpdate(msg) {
+    const v = validateToolsUpdate(msg);
+    if (!v.ok) {
+      sendBoundValidationError(MESSAGE_TYPE.TOOLS_UPDATE, v.error);
+      return;
+    }
+
+    if (hasInvalidTargetSession(v.update.sessionId)) {
+      sendBoundValidationError(
+        MESSAGE_TYPE.TOOLS_UPDATE,
+        `tools.update sessionId '${v.update.sessionId}' does not match bound session '${sessionId}'`,
+        ERROR_CODE.INVALID_SESSION,
+        { targetSessionId: v.update.sessionId }
+      );
+      return;
+    }
+
+    invokeProviderCallback("onToolsUpdate", onToolsUpdate, [connection, v.update], (err) => {
+      sendError(err, undefined, {
+        replyTo: MESSAGE_TYPE.TOOLS_UPDATE,
+        providerId,
+        sessionId
+      });
+    }, () => {
+      tools = v.update.tools;
+    });
   }
 
   function handleToolCallTimeout(callId, targetSessionId, toolName, timeoutMs) {
@@ -209,13 +403,16 @@ export function createProviderConnection(ws, options, adapters = {}) {
   }
 
   function disconnectConnection(reason, { notifyUnbound, closeSocket } = {}) {
+    runAdapterCleanup();
     if (state === CONNECTION_STATE.DISCONNECTED) return;
 
     transition(CONNECTION_STATE.DISCONNECTED);
     rejectAllPending(reason);
 
-    if (notifyUnbound && onUnbound) {
-      try { onUnbound(connection); } catch (err) { log(`[connection] onUnbound callback error: ${err.message}`); }
+    if (notifyUnbound) {
+      invokeProviderCallback("onUnbound", onUnbound, [connection], (err) => {
+        logCallbackError("onUnbound", err);
+      });
     }
 
     if (closeSocket) {
@@ -240,21 +437,25 @@ export function createProviderConnection(ws, options, adapters = {}) {
           tools = transitionResult.nextState.tools ?? tools;
           wasBound = transitionResult.nextState.wasBound ?? wasBound;
         }
+        if (action.state === CONNECTION_STATE.DISCONNECTED) {
+          runAdapterCleanup();
+        }
         return;
       case CONNECTION_ACTION.REJECT_ALL_PENDING:
         rejectAllPending(action.reason);
         return;
       case CONNECTION_ACTION.NOTIFY_BOUND:
-        if (onBound) {
-          try { onBound(connection); } catch (err) { log(`[connection] onBound callback error: ${err.message}`); }
-        }
+        invokeProviderCallback("onBound", onBound, [connection], (err) => {
+          logCallbackError("onBound", err);
+        });
         return;
       case CONNECTION_ACTION.NOTIFY_UNBOUND:
-        if (onUnbound) {
-          try { onUnbound(connection); } catch (err) { log(`[connection] onUnbound callback error: ${err.message}`); }
-        }
+        invokeProviderCallback("onUnbound", onUnbound, [connection], (err) => {
+          logCallbackError("onUnbound", err);
+        });
         return;
       case CONNECTION_ACTION.CLOSE:
+        runAdapterCleanup();
         try { websocketAdapter.close(ws); } catch { /* ignore */ }
         return;
       default:
@@ -298,40 +499,60 @@ export function createProviderConnection(ws, options, adapters = {}) {
     if (msg.type === MESSAGE_TYPE.TOOL_RESULT) {
       const v = validateToolResult(msg);
       if (!v.ok) {
-        sendError(new ValidationError(v.error, {
+        const callId = typeof msg.id === "string" ? msg.id : undefined;
+        const validationError = new ValidationError(v.error, {
           code: ERROR_CODE.UNKNOWN_TYPE,
-          context: { providerId, sessionId, replyTo: msg.id }
-        }), undefined, {
-          replyTo: msg.id,
+          context: { providerId, sessionId, replyTo: callId, callId, pendingCalls: pendingCalls.size }
+        });
+
+        sendError(validationError, undefined, {
+          replyTo: callId,
           providerId,
           sessionId
         });
+        if (callId && pendingCalls.has(callId)) {
+          rejectPendingCall(callId, validationError);
+        } else {
+          failUncorrelatablePendingCalls(validationError, `provider sent uncorrelatable tool.result: ${v.error}`);
+        }
         return;
       }
 
       const result = v.result;
       const pending = pendingCalls.get(result.id);
 
-      if (pending) {
-        if (result.error) {
-          const errorContext = { providerId, providerName, sessionId, callId: result.id };
-          if (result.errorCode === TOOL_RESULT_ERROR.NOT_FOUND) {
-            rejectPendingCall(result.id, new NotFoundError(result.error, { code: result.errorCode, context: errorContext }));
-          } else if (result.errorCode === TOOL_RESULT_ERROR.TIMEOUT) {
-            rejectPendingCall(result.id, new TimeoutError(result.error, { code: result.errorCode, context: errorContext, retryable: true }));
-          } else if (result.errorCode === TOOL_RESULT_ERROR.DISCONNECTED || result.errorCode === TOOL_RESULT_ERROR.CANCELLED) {
-            rejectPendingCall(result.id, new LifecycleError(result.error, { code: result.errorCode, context: errorContext }));
-          } else {
-            rejectPendingCall(result.id, new AppError(result.error, { code: result.errorCode ?? TOOL_RESULT_ERROR.INTERNAL, context: errorContext }));
-          }
-        } else {
-          resolvePendingCall(result.id, result);
-        }
+      if (!pending) {
+        const validationError = createUnknownToolResultError(result.id);
+        sendError(validationError, undefined, {
+          replyTo: result.id,
+          providerId,
+          sessionId
+        });
+        failUncorrelatablePendingCalls(
+          validationError,
+          `provider sent uncorrelatable tool.result with unknown tool.result id '${result.id}'`
+        );
+        return;
       }
 
-      if (onToolResult) {
-        try { onToolResult(connection, result); } catch (err) { log(`[connection] onToolResult callback error: ${err.message}`); }
+      if (result.error) {
+        const errorContext = { providerId, providerName, sessionId, callId: result.id };
+        if (result.errorCode === TOOL_RESULT_ERROR.NOT_FOUND) {
+          rejectPendingCall(result.id, new NotFoundError(result.error, { code: result.errorCode, context: errorContext }));
+        } else if (result.errorCode === TOOL_RESULT_ERROR.TIMEOUT) {
+          rejectPendingCall(result.id, new TimeoutError(result.error, { code: result.errorCode, context: errorContext, retryable: true }));
+        } else if (result.errorCode === TOOL_RESULT_ERROR.DISCONNECTED || result.errorCode === TOOL_RESULT_ERROR.CANCELLED) {
+          rejectPendingCall(result.id, new LifecycleError(result.error, { code: result.errorCode, context: errorContext }));
+        } else {
+          rejectPendingCall(result.id, new AppError(result.error, { code: result.errorCode ?? TOOL_RESULT_ERROR.INTERNAL, context: errorContext }));
+        }
+      } else {
+        resolvePendingCall(result.id, result);
       }
+
+      invokeProviderCallback("onToolResult", onToolResult, [connection, result], (err) => {
+        logCallbackError("onToolResult", err);
+      });
       return;
     }
 
@@ -344,6 +565,16 @@ export function createProviderConnection(ws, options, adapters = {}) {
       return;
     }
 
+    if (msg.type === MESSAGE_TYPE.PUSH) {
+      handleProviderPush(msg);
+      return;
+    }
+
+    if (msg.type === MESSAGE_TYPE.TOOLS_UPDATE) {
+      handleToolsUpdate(msg);
+      return;
+    }
+
     sendError(new ValidationError(`unknown message type: "${msg.type}"`, {
       code: ERROR_CODE.UNKNOWN_TYPE,
       context: { state, receivedType: msg.type }
@@ -353,16 +584,21 @@ export function createProviderConnection(ws, options, adapters = {}) {
   function onMessage(raw) {
     if (state === CONNECTION_STATE.DISCONNECTED) return;
 
-    const limit = state === CONNECTION_STATE.BOUND
-      ? PAYLOAD_LIMIT.TOOL_RESULT
-      : PAYLOAD_LIMIT.DEFAULT;
-
-    const parsed = parseMessage(raw, limit);
+    const parsed = state === CONNECTION_STATE.BOUND
+      ? parseMessage(raw)
+      : parseMessage(raw, PAYLOAD_LIMIT.DEFAULT);
     if (!parsed.ok) {
       const code = parsed.code === "PAYLOAD_TOO_LARGE"
         ? ERROR_CODE.PAYLOAD_TOO_LARGE
         : ERROR_CODE.INVALID_JSON;
-      sendError(new ValidationError(parsed.error, { code, context: { state } }));
+      const validationError = new ValidationError(parsed.error, {
+        code,
+        context: { state, providerId, sessionId, pendingCalls: pendingCalls.size }
+      });
+      sendError(validationError);
+      if (state === CONNECTION_STATE.BOUND) {
+        failUncorrelatablePendingCalls(validationError, `provider sent uncorrelatable message: ${parsed.error}`);
+      }
       return;
     }
 
@@ -398,13 +634,29 @@ export function createProviderConnection(ws, options, adapters = {}) {
     disconnectConnection(`WebSocket error: ${err.message}`, { notifyUnbound: wasBound, closeSocket: false });
   }
 
-  websocketAdapter.connect(ws, { message: onMessage, close: onClose, error: onError });
+  storeAdapterCleanup(websocketAdapter.connect(ws, { message: onMessage, close: onClose, error: onError }));
 
   function sendToolCallMsg(callId, targetSessionId, toolName, args) {
     if (state !== CONNECTION_STATE.BOUND) {
       return Promise.reject(new LifecycleError("connection not in Bound state", {
         code: TOOL_RESULT_ERROR.DISCONNECTED,
         context: { state },
+        retryable: false
+      }));
+    }
+
+    if (pendingCalls.has(callId)) {
+      return Promise.reject(new ConflictError(`Provider tool call id already pending: ${callId}`, {
+        context: createToolCallContext(callId, toolName, { targetSessionId }),
+        retryable: false
+      }));
+    }
+
+    const tool = findToolDefinition(toolName);
+    if (!tool) {
+      return Promise.reject(new NotFoundError(`Provider tool '${toolName}' is not available`, {
+        code: TOOL_RESULT_ERROR.NOT_FOUND,
+        context: createToolCallContext(callId, toolName, { targetSessionId }),
         retryable: false
       }));
     }
@@ -416,10 +668,10 @@ export function createProviderConnection(ws, options, adapters = {}) {
       return Promise.reject(err);
     }
 
-    const timeoutMs = getToolTimeoutMs(toolName);
+    const timeoutMs = getToolTimeoutMs(tool);
 
     return new Promise((resolve, reject) => {
-      const entry = { resolve, reject, timer: null };
+      const entry = { resolve, reject, timer: null, toolName, targetSessionId };
       pendingCalls.set(callId, entry);
 
       if (timeoutMs !== null) {

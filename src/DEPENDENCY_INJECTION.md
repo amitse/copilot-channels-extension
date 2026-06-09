@@ -8,6 +8,37 @@ This document describes the minimal dependency injection contracts across the em
 2. **Explicit contracts**: JSDoc typedef documents what each function needs
 3. **No unused parameters**: If a module is passed a dependency, it must use it
 4. **Capability-first**: Pass behavior (functions/callbacks) rather than objects when possible
+5. **Scoped context boundaries**: When mutable runtime state needs one owner, pass
+   a narrow capability view from that context (for example config cwd mutation or
+   emitter cwd resolution), not the full runtime object.
+
+## Runtime Session/Workspace Context
+
+`session/runtime-context.mjs` owns the mutable session/workspace boundary for:
+
+- active session identity metadata
+- current session/base cwd
+- current config cwd
+- emitter cwd resolution through the shared path validation helpers
+
+Consumers should receive the smallest capability view:
+
+```typescript
+configWorkspace: {
+  resolveBaseCwd(inputCwd): string,
+  commitConfigCwd(resolvedCwd): string
+}
+
+emitterWorkspace: {
+  createEmitterWorkspace(options?): {
+    baseCwd: string,
+    resolveEmitterCwd(requestedCwd): string
+  }
+}
+```
+
+This keeps cwd ownership centralized without turning dependencies into a broad
+runtime bag.
 
 ## Dependency Contracts by Module
 
@@ -20,19 +51,19 @@ This document describes the minimal dependency injection contracts across the em
   configStore: Object,       // Persistent emitter config (get/upsert/remove)
   notifications: Object,     // Notification dispatcher (enqueue)
   sessionPort: Object,       // Session logger (log)
-  getBaseCwd: Function,      // Returns base working directory
+  emitterWorkspace: Object,  // Creates emitter-specific cwd resolver
   persist: Function          // Saves config to disk
 }
 ```
 
 **Usage:**
-- `start()`: Uses all 6 (builds state, persists, notifies, logs)
+- `start()`: Uses all 6 (resolves cwd, builds state, persists, notifies, logs)
 - `stop()`: Uses configStore, sessionPort, persist (removes from config)
 - `updateEventFilter()`: Uses configStore, sessionPort, persist
 - `stopAll()`: Delegates to lifecycle (no direct deps used)
 - `list()`, `has()`, `get()`: Use internal state only
 
-**Why:** Supervisor orchestrates the full lifecycle. It needs all capabilities to build emitters, persist state, and handle creation/destruction.
+**Why:** Supervisor orchestrates the full lifecycle. It needs all capabilities to build emitters, persist state, and handle creation/destruction. Cwd resolution stays behind the runtime session/workspace boundary.
 
 ---
 
@@ -107,21 +138,18 @@ This document describes the minimal dependency injection contracts across the em
 **Receives:** `EmitterToolsDeps`
 ```typescript
 {
-  streams: Object,        // Event stream manager
-  configStore: Object,    // Persistent config (for list only)
-  supervisor: Object,     // Emitter supervisor
-  getBaseCwd: Function    // Returns base working directory
+  emitters: Object        // Emitter management service capabilities
 }
 ```
 
 **Usage:**
-- `renderEmitterList()`: streams, configStore, supervisor
-- `tap_list_emitters`: streams, configStore, supervisor (via helper)
-- `tap_start_emitter`: supervisor, getBaseCwd, streams (logs to streams)
-- `tap_set_event_filter`: supervisor only
-- `tap_stop_emitter`: supervisor only
+- `renderEmitterList()`: emitter service list capability
+- `tap_list_emitters`: emitter service list capability
+- `tap_start_emitter`: emitter service start capability
+- `tap_set_event_filter`: emitter service update capability
+- `tap_stop_emitter`: emitter service stop capability
 
-**Why:** Tool handlers are mostly wrappers. Most only need supervisor. The list handler is the only one that needs configStore. This is acceptable because it's internal to a single tool factory.
+**Why:** Tool handlers are wrappers over service capabilities. Workspace/cwd details remain below the service boundary.
 
 ---
 
@@ -154,8 +182,8 @@ This document describes the minimal dependency injection contracts across the em
 ```javascript
 // Supervisor received everything, lineRouter received everything
 const lineRouter = createLineRouter({ streams, notifications, sessionPort });
-const supervisor = createEmitterSupervisor({ 
-  streams, configStore, notifications, sessionPort, getBaseCwd, persist 
+const supervisor = createEmitterSupervisor({
+  streams, configStore, notifications, sessionPort, runtimeState, persist
 });
 ```
 
@@ -164,8 +192,8 @@ const supervisor = createEmitterSupervisor({
 // LineRouter receives only what it uses
 const lineRouter = createLineRouter({ streams, notifications });
 // Supervisor passes only needed deps to lineRouter
-const supervisor = createEmitterSupervisor({ 
-  streams, configStore, notifications, sessionPort, getBaseCwd, persist 
+const supervisor = createEmitterSupervisor({
+  streams, configStore, notifications, sessionPort, emitterWorkspace, persist
 });
   // Inside supervisor:
   const lineRouter = createLineRouter({ streams, notifications });

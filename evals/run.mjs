@@ -49,9 +49,8 @@ function usage() {
   ].join("\n");
 }
 
-function parseArgs(argv) {
-  const [command, ...rest] = argv;
-  const options = {
+function createDefaultOptions(command) {
+  return {
     command: command ?? "list",
     caseId: null,
     runAll: false,
@@ -65,86 +64,108 @@ function parseArgs(argv) {
     judgeTimeoutMs: 120000,
     concurrency: 1
   };
+}
 
-  for (let index = 0; index < rest.length; index += 1) {
-    const token = rest[index];
+const OPTION_HANDLERS = new Map([
+  ["--case", (options, rest, index) => {
+    options.caseId = rest[index + 1] ?? null;
+    return index + 1;
+  }],
+  ["--all", (options, _rest, index) => {
+    options.runAll = true;
+    return index;
+  }],
+  ["--exec-model", (options, rest, index) => {
+    options.execModel = rest[index + 1] ?? null;
+    return index + 1;
+  }],
+  ["--judge-model", (options, rest, index) => {
+    options.judgeModel = rest[index + 1] ?? null;
+    return index + 1;
+  }],
+  ["--run-dir", (options, rest, index) => {
+    options.runDir = path.resolve(rest[index + 1] ?? "");
+    return index + 1;
+  }],
+  ["--results-dir", (options, rest, index) => {
+    options.resultsDir = path.resolve(rest[index + 1] ?? defaultResultsRoot);
+    return index + 1;
+  }],
+  ["--acp-port", (options, rest, index) => {
+    options.acpPort = Number.parseInt(rest[index + 1] ?? "0", 10);
+    return index + 1;
+  }],
+  ["--dry-run", (options, _rest, index) => {
+    options.dryRun = true;
+    return index;
+  }],
+  ["--exec-timeout-ms", (options, rest, index) => {
+    options.execTimeoutMs = Number.parseInt(rest[index + 1] ?? "300000", 10);
+    return index + 1;
+  }],
+  ["--judge-timeout-ms", (options, rest, index) => {
+    options.judgeTimeoutMs = Number.parseInt(rest[index + 1] ?? "120000", 10);
+    return index + 1;
+  }],
+  ["--concurrency", (options, rest, index) => {
+    options.concurrency = Number.parseInt(rest[index + 1] ?? "1", 10);
+    return index + 1;
+  }]
+]);
 
-    if (token === "--case") {
-      options.caseId = rest[index + 1] ?? null;
-      index += 1;
-      continue;
-    }
-    if (token === "--all") {
-      options.runAll = true;
-      continue;
-    }
-    if (token === "--exec-model") {
-      options.execModel = rest[index + 1] ?? null;
-      index += 1;
-      continue;
-    }
-    if (token === "--judge-model") {
-      options.judgeModel = rest[index + 1] ?? null;
-      index += 1;
-      continue;
-    }
-    if (token === "--run-dir") {
-      options.runDir = path.resolve(rest[index + 1] ?? "");
-      index += 1;
-      continue;
-    }
-    if (token === "--results-dir") {
-      options.resultsDir = path.resolve(rest[index + 1] ?? defaultResultsRoot);
-      index += 1;
-      continue;
-    }
-    if (token === "--acp-port") {
-      options.acpPort = Number.parseInt(rest[index + 1] ?? "0", 10);
-      index += 1;
-      continue;
-    }
-    if (token === "--dry-run") {
-      options.dryRun = true;
-      continue;
-    }
-    if (token === "--exec-timeout-ms") {
-      options.execTimeoutMs = Number.parseInt(rest[index + 1] ?? "300000", 10);
-      index += 1;
-      continue;
-    }
-    if (token === "--judge-timeout-ms") {
-      options.judgeTimeoutMs = Number.parseInt(rest[index + 1] ?? "120000", 10);
-      index += 1;
-      continue;
-    }
-    if (token === "--concurrency") {
-      options.concurrency = Number.parseInt(rest[index + 1] ?? "1", 10);
-      index += 1;
-      continue;
-    }
-
+function applyOptionToken(options, rest, index) {
+  const token = rest[index];
+  const handler = OPTION_HANDLERS.get(token);
+  if (!handler) {
     throw new Error(`Unknown argument: ${token}`);
   }
 
-  if (Number.isNaN(options.acpPort) || options.acpPort < 0) {
-    throw new Error("Use a non-negative integer with --acp-port.");
+  return handler(options, rest, index);
+}
+
+const OPTION_VALIDATIONS = [
+  {
+    invalid: (options) => Number.isNaN(options.acpPort) || options.acpPort < 0,
+    message: "Use a non-negative integer with --acp-port."
+  },
+  {
+    invalid: (options) => !Number.isInteger(options.concurrency) || options.concurrency < 1,
+    message: "Use a positive integer with --concurrency."
+  },
+  {
+    invalid: (options) => options.command === "run" && !options.runAll && !options.caseId,
+    message: "Use --case <id> or --all with the run command."
+  },
+  {
+    invalid: (options) => options.command === "prepare-interactive" && !options.caseId,
+    message: "Use --case <id> with the prepare-interactive command."
+  },
+  {
+    invalid: (options) => options.command === "judge-interactive" && !options.runDir,
+    message: "Use --run-dir <path> with the judge-interactive command."
+  },
+  {
+    invalid: (options) => options.command === "validate-modes-inspect" && !options.runDir,
+    message: "Use --run-dir <path> with the validate-modes-inspect command."
   }
-  if (!Number.isInteger(options.concurrency) || options.concurrency < 1) {
-    throw new Error("Use a positive integer with --concurrency.");
+];
+
+function validateParsedOptions(options) {
+  const failed = OPTION_VALIDATIONS.find(({ invalid }) => invalid(options));
+  if (failed) {
+    throw new Error(failed.message);
   }
-  if (options.command === "run" && !options.runAll && !options.caseId) {
-    throw new Error("Use --case <id> or --all with the run command.");
-  }
-  if (options.command === "prepare-interactive" && !options.caseId) {
-    throw new Error("Use --case <id> with the prepare-interactive command.");
-  }
-  if (options.command === "judge-interactive" && !options.runDir) {
-    throw new Error("Use --run-dir <path> with the judge-interactive command.");
-  }
-  if (options.command === "validate-modes-inspect" && !options.runDir) {
-    throw new Error("Use --run-dir <path> with the validate-modes-inspect command.");
+}
+
+function parseArgs(argv) {
+  const [command, ...rest] = argv;
+  const options = createDefaultOptions(command);
+
+  for (let index = 0; index < rest.length; index += 1) {
+    index = applyOptionToken(options, rest, index);
   }
 
+  validateParsedOptions(options);
   return options;
 }
 
@@ -164,6 +185,10 @@ function formatCaseSummary(caseDef) {
 }
 
 function ensureArray(value) {
+  return Array.isArray(value) ? value : [];
+}
+
+function arrayOrEmpty(value) {
   return Array.isArray(value) ? value : [];
 }
 
@@ -318,8 +343,8 @@ async function resolveActiveConfigPath() {
 function ensureConfigShape(doc) {
   const config = doc && typeof doc === "object" ? doc : {};
   return {
-    channels: Array.isArray(config.channels) ? config.channels : [],
-    monitors: Array.isArray(config.monitors) ? config.monitors : []
+    channels: arrayOrEmpty(config.channels),
+    monitors: arrayOrEmpty(config.monitors)
   };
 }
 
@@ -505,65 +530,141 @@ function extractAssistantText(events) {
     .join("\n\n");
 }
 
+function requestedToolName(toolRequest) {
+  if (!toolRequest) {
+    return null;
+  }
+  if (toolRequest.toolName != null) {
+    return toolRequest.toolName;
+  }
+  if (toolRequest.name != null) {
+    return toolRequest.name;
+  }
+  return null;
+}
+
+function requestedToolNamesFromEvent(event) {
+  if (event?.type !== "assistant.message") {
+    return [];
+  }
+
+  return ensureArray(event?.data?.toolRequests)
+    .map(requestedToolName)
+    .filter(Boolean);
+}
+
 function extractRequestedTools(events) {
   const requestedTools = new Set();
 
   for (const event of ensureArray(events)) {
-    if (event?.type !== "assistant.message") {
-      continue;
-    }
-
-    for (const toolRequest of ensureArray(event?.data?.toolRequests)) {
-      const toolName = toolRequest?.toolName ?? toolRequest?.name ?? null;
-      if (toolName) {
-        requestedTools.add(toolName);
-      }
+    for (const toolName of requestedToolNamesFromEvent(event)) {
+      requestedTools.add(toolName);
     }
   }
 
   return [...requestedTools];
 }
 
+function renderAssistantEventTranscript(event) {
+  const requestedTools = requestedToolNamesFromEvent(event);
+  const header = requestedTools.length > 0
+    ? `ASSISTANT | toolRequests=${requestedTools.join(", ")}`
+    : "ASSISTANT";
+  return `${header}\n${normalizeEventContent(messageEventContent(event))}`;
+}
+
+function messageEventContent(event) {
+  const data = event.data;
+  if (data != null && data.content != null) {
+    return data.content;
+  }
+  return data;
+}
+
+function eventTypeLabel(event) {
+  if (event.type != null) {
+    return event.type;
+  }
+  return "unknown";
+}
+
+function eventData(event) {
+  if (event.data != null) {
+    return event.data;
+  }
+  return event;
+}
+
+function renderUserEventTranscript(event) {
+  return `USER\n${normalizeEventContent(messageEventContent(event))}`;
+}
+
+function renderUnknownEventTranscript(event) {
+  return `${eventTypeLabel(event)}\n${normalizeEventContent(eventData(event))}`;
+}
+
+const EVENT_TRANSCRIPT_RENDERERS = new Map([
+  ["user.message", renderUserEventTranscript],
+  ["assistant.message", renderAssistantEventTranscript]
+]);
+
+function renderEventTranscriptEntry(event) {
+  if (!event || typeof event !== "object") {
+    return normalizeEventContent(event);
+  }
+
+  const renderer = EVENT_TRANSCRIPT_RENDERERS.get(event.type);
+  if (renderer) {
+    return renderer(event);
+  }
+  return renderUnknownEventTranscript(event);
+}
+
 function renderEventTranscript(events) {
   return ensureArray(events)
-    .map((event) => {
-      if (!event || typeof event !== "object") {
-        return normalizeEventContent(event);
-      }
-
-      if (event.type === "user.message") {
-        return `USER\n${normalizeEventContent(event.data?.content ?? event.data)}`;
-      }
-
-      if (event.type === "assistant.message") {
-        const requestedTools = ensureArray(event.data?.toolRequests)
-          .map((toolRequest) => toolRequest?.toolName ?? toolRequest?.name ?? null)
-          .filter(Boolean);
-        const header = requestedTools.length > 0
-          ? `ASSISTANT | toolRequests=${requestedTools.join(", ")}`
-          : "ASSISTANT";
-        return `${header}\n${normalizeEventContent(event.data?.content ?? event.data)}`;
-      }
-
-      return `${event.type ?? "unknown"}\n${normalizeEventContent(event.data ?? event)}`;
-    })
+    .map(renderEventTranscriptEntry)
     .join("\n\n---\n\n");
+}
+
+function nonEmptyString(value) {
+  return typeof value === "string" && value ? value : null;
+}
+
+function finiteNumber(value) {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function addPresentProperty(target, key, value) {
+  if (value !== null) {
+    target[key] = value;
+  }
+}
+
+function readProperty(source, key) {
+  if (source == null) {
+    return undefined;
+  }
+  return source[key];
+}
+
+function nullableProperty(source, key) {
+  const value = readProperty(source, key);
+  if (value == null) {
+    return null;
+  }
+  return value;
 }
 
 function buildAcpServerInfo(client, status) {
   const serverInfo = {
     transport: "acp-tcp",
     cliArgs: [...acpCliArgs],
-    version: status?.version ?? null,
-    protocolVersion: status?.protocolVersion ?? null
+    version: nullableProperty(status, "version"),
+    protocolVersion: nullableProperty(status, "protocolVersion")
   };
 
-  if (typeof client?.actualHost === "string" && client.actualHost) {
-    serverInfo.host = client.actualHost;
-  }
-  if (typeof client?.actualPort === "number" && Number.isFinite(client.actualPort)) {
-    serverInfo.port = client.actualPort;
-  }
+  addPresentProperty(serverInfo, "host", nonEmptyString(readProperty(client, "actualHost")));
+  addPresentProperty(serverInfo, "port", finiteNumber(readProperty(client, "actualPort")));
 
   return serverInfo;
 }
@@ -1337,18 +1438,27 @@ async function runSmokeTest(options) {
 
 const CONFIG_ISOLATED_CATEGORIES = new Set(["persistence", "ownership", "startup"]);
 
+function lowerText(value) {
+  return String(value ?? "").toLowerCase();
+}
+
+function includesPersistent(value) {
+  return lowerText(value).includes("persistent");
+}
+
+function caseTextRequiresConfigIsolation(caseDef) {
+  return includesPersistent(caseDef.title) || includesPersistent(caseDef.user_prompt);
+}
+
+function passConditionsRequireConfigIsolation(caseDef) {
+  return lowerText(ensureArray(caseDef.pass_conditions).join(" ")).includes("from config");
+}
+
 function requiresConfigIsolation(caseDef) {
-  const category = String(caseDef.category ?? "").toLowerCase();
-  if (CONFIG_ISOLATED_CATEGORIES.has(category)) {
-    return true;
-  }
-  const title = String(caseDef.title ?? "").toLowerCase();
-  const prompt = String(caseDef.user_prompt ?? "").toLowerCase();
-  if (title.includes("persistent") || prompt.includes("persistent")) {
-    return true;
-  }
-  const conditions = ensureArray(caseDef.pass_conditions).join(" ").toLowerCase();
-  return conditions.includes("from config");
+  const category = lowerText(caseDef.category);
+  return CONFIG_ISOLATED_CATEGORIES.has(category) ||
+    caseTextRequiresConfigIsolation(caseDef) ||
+    passConditionsRequireConfigIsolation(caseDef);
 }
 
 async function runCasesWithConcurrency(cases, concurrency, runner) {

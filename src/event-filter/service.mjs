@@ -1,6 +1,7 @@
 import { EVENT_OUTCOME, LIFESPAN, OWNERSHIP } from "../consts.mjs";
 import { normalizeOwnership, normalizeLifespan, normalizeOutcome } from "../util/normalize.mjs";
 import { compileRegex } from "../util/regex.mjs";
+import { isStrictPlainObject } from "../util/type-guards.mjs";
 
 /**
  * Canonical EventFilter schema.
@@ -19,10 +20,6 @@ import { compileRegex } from "../util/regex.mjs";
 const ALLOWED_OUTCOMES = new Set(Object.values(EVENT_OUTCOME));
 const INVALID_RULE_OUTCOME_FALLBACK = EVENT_OUTCOME.DROP;
 
-function isPlainObject(value) {
-  return Object.prototype.toString.call(value) === "[object Object]";
-}
-
 function normalizeRuleOutcome(value) {
   return normalizeOutcome(value, INVALID_RULE_OUTCOME_FALLBACK);
 }
@@ -31,16 +28,16 @@ function hasCanonicalRules(filter) {
   return Boolean(filter)
     && Array.isArray(filter.rules)
     && filter.rules.every((rule) =>
-      isPlainObject(rule)
+      isStrictPlainObject(rule)
       && ALLOWED_OUTCOMES.has(rule.outcome)
       && (rule.regex === null || rule.regex instanceof RegExp)
     );
 }
 
 function resolveInput(source) {
-  const normalized = isPlainObject(source) ? source : {};
+  const normalized = isStrictPlainObject(source) ? source : {};
 
-  return isPlainObject(normalized.eventFilter) ? normalized.eventFilter : normalized;
+  return isStrictPlainObject(normalized.eventFilter) ? normalized.eventFilter : normalized;
 }
 
 function compileRules(rules) {
@@ -70,7 +67,7 @@ function canonicalize(source, fallbackOwnership = OWNERSHIP.MODEL_OWNED, fallbac
  * @param {Object} spec
  * @returns {Object}
  */
-export function create(spec = {}, fallbackOwnership = OWNERSHIP.MODEL_OWNED, fallbackLifespan = LIFESPAN.TEMPORARY) {
+function create(spec = {}, fallbackOwnership = OWNERSHIP.MODEL_OWNED, fallbackLifespan = LIFESPAN.TEMPORARY) {
   return canonicalize(spec, fallbackOwnership, fallbackLifespan);
 }
 
@@ -80,7 +77,7 @@ export function create(spec = {}, fallbackOwnership = OWNERSHIP.MODEL_OWNED, fal
  * @param {Object} source
  * @returns {Object}
  */
-export function getInput(source = {}) {
+function getInput(source = {}) {
   return resolveInput(source);
 }
 
@@ -91,9 +88,9 @@ export function getInput(source = {}) {
  * @param {Object} changes
  * @returns {Object}
  */
-export function update(existing, changes = {}) {
+function update(existing, changes = {}) {
   const current = canonicalize(existing);
-  const source = isPlainObject(changes) ? changes : {};
+  const source = isStrictPlainObject(changes) ? changes : {};
   const changeInput = resolveInput(source);
   const ownership = changeInput.ownership
     ?? changeInput.managedBy
@@ -121,7 +118,7 @@ export function update(existing, changes = {}) {
  * @param {string} event
  * @returns {string}
  */
-export function evaluate(filter, event) {
+function evaluate(filter, event) {
   const text = String(event ?? "");
   const resolved = hasCanonicalRules(filter) ? filter : canonicalize(filter);
 
@@ -140,7 +137,7 @@ export function evaluate(filter, event) {
  * @param {Object} filter
  * @returns {{ rules: Array, ownership: string, lifespan: string }}
  */
-export function serialize(filter) {
+function serialize(filter) {
   const resolved = canonicalize(filter);
 
   return {
@@ -159,7 +156,7 @@ export function serialize(filter) {
  * @param {Object} data
  * @returns {Object}
  */
-export function deserialize(data) {
+function deserialize(data) {
   return canonicalize(data);
 }
 
@@ -169,7 +166,7 @@ export function deserialize(data) {
  * @param {Object} legacy
  * @returns {Object}
  */
-export function normalize(legacy, fallbackOwnership = OWNERSHIP.MODEL_OWNED, fallbackLifespan = LIFESPAN.TEMPORARY) {
+function normalize(legacy, fallbackOwnership = OWNERSHIP.MODEL_OWNED, fallbackLifespan = LIFESPAN.TEMPORARY) {
   return canonicalize(legacy, fallbackOwnership, fallbackLifespan);
 }
 
@@ -179,7 +176,7 @@ export function normalize(legacy, fallbackOwnership = OWNERSHIP.MODEL_OWNED, fal
  * @param {Object} filter
  * @returns {string}
  */
-export function format(filter) {
+function format(filter) {
   const source = resolveInput(filter);
 
   if (!Array.isArray(source.rules) || source.rules.length === 0) {

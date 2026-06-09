@@ -1,19 +1,8 @@
 import { normalizeName } from "../util/normalize.mjs";
 import { EmitterSpec } from "../emitter/spec.mjs";
 import { projectConfiguredEmitter, projectRunningEmitter } from "../emitter/projection.mjs";
-import { AppError, NotFoundError, toAppError } from "../errors/index.mjs";
-
-function rethrowServiceError(error, message, context) {
-  if (error instanceof AppError) {
-    throw error;
-  }
-
-  throw toAppError(error, {
-    message,
-    context,
-    retryable: false
-  });
-}
+import { NotFoundError } from "../errors/index.mjs";
+import { rethrowServiceError } from "../errors/service-boundary.mjs";
 
 /**
  * Create the application service that mediates tool requests and emitter internals.
@@ -22,7 +11,7 @@ function rethrowServiceError(error, message, context) {
  *   streams: Object,
  *   configStore: Object,
  *   supervisor: Object,
- *   getBaseCwd: Function
+ *   emitterWorkspace: Object
  * }} deps
  * @returns {{
  *   listEmitters: Function,
@@ -33,7 +22,7 @@ function rethrowServiceError(error, message, context) {
  * }}
  */
 export function createEmitterService(deps) {
-  const { streams, configStore, supervisor, getBaseCwd } = deps;
+  const { streams, configStore, supervisor, emitterWorkspace } = deps;
 
   /**
    * Return a combined view of running and configured emitters.
@@ -58,11 +47,13 @@ export function createEmitterService(deps) {
    */
   function startEmitter(spec, options = {}) {
     const canonicalSpec = spec?.__emitterSpec === true ? spec : EmitterSpec.normalize(spec);
+    const startOptions = {
+      ...options,
+      baseCwd: options.baseCwd ?? emitterWorkspace.createEmitterWorkspace().baseCwd
+    };
 
     return supervisor
-      .start(canonicalSpec, {
-        baseCwd: options.baseCwd ?? getBaseCwd()
-      })
+      .start(canonicalSpec, startOptions)
       .then((emitter) => ({
         emitter,
         state: projectRunningEmitter(emitter, streams.get(emitter.stream) ?? streams.ensure(emitter.stream, emitter.description || ""))

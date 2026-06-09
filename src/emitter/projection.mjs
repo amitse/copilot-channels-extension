@@ -1,9 +1,10 @@
 import { EMITTER_TYPE, LIFESPAN, OWNERSHIP } from "../consts.mjs";
+import { normalizeEmitterStreamInputTolerant as normalizeEmitterStreamInput } from "../contracts/emitter-input.mjs";
 import { EventFilterService } from "../event-filter/service.mjs";
 import { normalizeLifespan, normalizeName, normalizeOwnership } from "../util/normalize.mjs";
 import { deriveRunSchedule } from "./schedule.mjs";
 
-function readOptionalText(value) {
+function readConfiguredText(value) {
   return value ? String(value) : null;
 }
 
@@ -57,6 +58,18 @@ function cloneOptionalArray(value) {
   return Array.isArray(value) ? [...value] : null;
 }
 
+function normalizeEventFilterInput(entry, ownership, lifespan) {
+  if (Array.isArray(entry.eventFilter)) {
+    return EventFilterService.normalize({
+      rules: entry.eventFilter,
+      ownership: entry.ownership ?? entry.managedBy,
+      lifespan: entry.lifespan ?? entry.scope
+    }, ownership, lifespan);
+  }
+
+  return EventFilterService.normalize(entry, ownership, lifespan);
+}
+
 /**
  * Project a persisted/configured emitter entry into the display snapshot shape
  * used by tap_list_emitters and formatter code. This intentionally stays more
@@ -65,15 +78,15 @@ function cloneOptionalArray(value) {
  */
 export function projectConfiguredEmitter(entry = {}, options = {}) {
   const name = normalizeName(entry.name);
-  const channel = normalizeName(entry.channel ?? entry.stream ?? name, name);
+  const channel = normalizeEmitterStreamInput(entry, name);
   const stream = typeof options.getStream === "function"
     ? options.getStream(channel)
     : options.stream;
   const ownership = normalizeOwnership(entry.ownership, OWNERSHIP.USER_OWNED);
   const lifespan = normalizeLifespan(entry.lifespan ?? entry.scope, LIFESPAN.PERSISTENT);
-  const prompt = readOptionalText(entry.prompt);
-  const command = readOptionalText(entry.command);
-  const every = readOptionalText(entry.every);
+  const prompt = readConfiguredText(entry.prompt);
+  const command = readConfiguredText(entry.command);
+  const every = readConfiguredText(entry.every ?? entry.runInterval);
   const everySchedule = readOptionalArray(entry.everySchedule);
   const everyScheduleMs = readOptionalMsArray(entry.everyScheduleMs);
   const configuredType = normalizeEmitterType(entry.type ?? entry.emitterType);
@@ -84,7 +97,7 @@ export function projectConfiguredEmitter(entry = {}, options = {}) {
       : configuredType ?? EMITTER_TYPE.COMMAND;
   const idle = (entry.idle === true || every === "idle") && emitterType === EMITTER_TYPE.PROMPT;
   const enabled = entry.enabled === undefined ? undefined : entry.enabled !== false;
-  const eventFilter = EventFilterService.normalize(entry, ownership, lifespan);
+  const eventFilter = normalizeEventFilterInput(entry, ownership, lifespan);
 
   return {
     name,
@@ -154,20 +167,5 @@ export function projectRunningEmitter(emitter, stream) {
     eventFilter: cloneEventFilter(emitter.eventFilter),
     sessionInjector: cloneStreamSessionInjector(stream),
     source: "running"
-  };
-}
-
-/**
- * Project a stream state object into the public snapshot shape.
- */
-export function projectStream(stream) {
-  if (!stream) {
-    return null;
-  }
-
-  return {
-    ...stream,
-    entries: Array.isArray(stream.entries) ? stream.entries.map((entry) => ({ ...entry })) : [],
-    sessionInjector: cloneStreamSessionInjector(stream)
   };
 }

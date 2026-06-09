@@ -5,17 +5,7 @@ import { describeEmitterWork } from "../format/emitter.mjs";
 import { readLines, spawnEmitterProcess } from "./spawn.mjs";
 import { LifecycleError } from "../errors/index.mjs";
 import { computeTransition, identifyActions, LIFECYCLE_ACTION, LIFECYCLE_EVENT } from "./lifecycle-state.mjs";
-
-function createDefaultTimerAdapter() {
-  return {
-    schedule(callback, delayMs) {
-      return setTimeout(callback, delayMs);
-    },
-    cancel(timerId) {
-      clearTimeout(timerId);
-    }
-  };
-}
+import { createDefaultTimerAdapter } from "../util/timer-adapter.mjs";
 
 function createDefaultProcessAdapter() {
   return {
@@ -29,6 +19,14 @@ function createDefaultProcessAdapter() {
   };
 }
 
+const SESSION_ATTACH_RETRY_MS = 100;
+const DEFAULT_STOP_WAIT_TIMEOUT_MS = 10_000;
+const STOP_WAIT_POLL_MS = 50;
+
+function errorMessage(error) {
+  return error?.message ?? String(error ?? "unknown error");
+}
+
 function createDefaultLoggerAdapter(sessionPort) {
   return {
     log(message, options) {
@@ -37,12 +35,21 @@ function createDefaultLoggerAdapter(sessionPort) {
   };
 }
 
+function safeAdapterLog(loggerAdapter, message, options = {}) {
+  try {
+    void Promise.resolve(loggerAdapter?.log?.(message, options)).catch(() => {});
+  } catch {
+    // Logging must never interrupt lifecycle transitions.
+  }
+}
+
 function snapshotEmitter(emitter) {
   return {
     name: emitter.name,
     emitterType: emitter.emitterType,
     runSchedule: emitter.runSchedule,
     every: emitter.every,
+    everySchedule: emitter.everySchedule,
     everyMs: emitter.everyMs,
     everyScheduleMs: emitter.everyScheduleMs,
     maxRuns: emitter.maxRuns,
@@ -69,6 +76,31 @@ function shouldRouteCommandOutput(emitter, stream) {
   return true;
 }
 
+function isSessionAttached(sessionPort) {
+  if (typeof sessionPort?.isAttached === "function") {
+    return sessionPort.isAttached() === true;
+  }
+  if (typeof sessionPort?.current === "function") {
+    return Boolean(sessionPort.current());
+  }
+
+  return true;
+}
+
+function isSessionNotAttachedMessage(message) {
+  return /session is not attached|session[^.]*not attached/i.test(String(message ?? ""));
+}
+
+function shouldWaitForSessionAttach(emitter, context) {
+  return emitter.emitterType === EMITTER_TYPE.PROMPT &&
+    emitter.runSchedule !== RUN_SCHEDULE.IDLE &&
+    !isSessionAttached(context.sessionPort);
+}
+
+function scheduleSessionAttachRetry(emitter, context) {
+  scheduleIteration(emitter, context, SESSION_ATTACH_RETRY_MS);
+}
+
 function runAction(emitter, action, context) {
   switch (action.type) {
     case LIFECYCLE_ACTION.CLEAR_TIMER:
@@ -81,7 +113,7 @@ function runAction(emitter, action, context) {
       scheduleIteration(emitter, context, action.delayMs ?? 0);
       return;
     case LIFECYCLE_ACTION.LOG_MESSAGE:
-      void context.loggerAdapter.log(action.message, action.options);
+      safeAdapterLog(context.loggerAdapter, action.message, action.options);
       return;
     case LIFECYCLE_ACTION.APPEND_SYSTEM_MESSAGE:
       context.lineRouter.appendSystemMessage(emitter, action.text, action.notify === true);
@@ -115,7 +147,10 @@ function scheduleIteration(emitter, context, delayMs = 0) {
   emitter.status = delayMs > 0 ? EMITTER_STATUS.WAITING : EMITTER_STATUS.QUEUED;
   emitter.timer = context.timerAdapter.schedule(() => {
     emitter.timer = null;
-    void runScheduledIteration(emitter, context);
+    void runScheduledIteration(emitter, context).catch((error) => {
+      emitter.inFlight = false;
+      recordEscapedScheduledIterationFailure(emitter, error, context);
+    });
   }, delayMs);
 }
 
@@ -160,34 +195,89 @@ function startContinuousProcess(emitter, context) {
 
   emitter.process = child;
   emitter.status = EMITTER_STATUS.RUNNING;
-  wireStreams(emitter, context);
+  let exitResult = null;
+  let finalized = false;
 
-  child.on("error", (error) => {
-    emitter.status = EMITTER_STATUS.ERROR;
-    emitter.process = null;
-    context.lineRouter.appendSystemMessage(emitter, `Emitter '${emitter.name}' failed: ${error.message}`, true);
-    void context.loggerAdapter.log(`Emitter '${emitter.name}' failed: ${error.message}`, { level: "warning" });
-  });
+  const finalizeExit = (code, signal) => {
+    if (finalized) {
+      return;
+    }
+    finalized = true;
 
-  child.on("exit", (code, signal) => {
+    closeStreams(emitter);
     emitter.status = emitter.stopRequested ? EMITTER_STATUS.STOPPED : EMITTER_STATUS.EXITED;
     emitter.exitCode = code;
     emitter.stoppedAt = nowIso();
     emitter.process = null;
-    emitter.stdoutReader = null;
-    emitter.stderrReader = null;
 
     const exitMessage = emitter.stopRequested
       ? `Emitter '${emitter.name}' stopped.`
       : `Emitter '${emitter.name}' exited with code ${code ?? "null"}${signal ? ` (${signal})` : ""}.`;
     context.lineRouter.appendSystemMessage(emitter, exitMessage, !emitter.stopRequested);
-    void context.loggerAdapter.log(exitMessage);
+    safeAdapterLog(context.loggerAdapter, exitMessage);
+  };
+
+  child.on("error", (error) => {
+    if (finalized) {
+      return;
+    }
+    finalized = true;
+    closeStreams(emitter);
+    emitter.status = EMITTER_STATUS.ERROR;
+    emitter.process = null;
+    emitter.stoppedAt = nowIso();
+    context.lineRouter.appendSystemMessage(emitter, `Emitter '${emitter.name}' failed: ${error.message}`, true);
+    safeAdapterLog(context.loggerAdapter, `Emitter '${emitter.name}' failed: ${error.message}`, { level: "warning" });
   });
 
-  context.lineRouter.appendSystemMessage(
-    emitter,
-    `Emitter '${emitter.name}' started with ${describeEmitterWork(emitter)}.`
-  );
+  child.on("exit", (code, signal) => {
+    exitResult = { code, signal };
+  });
+
+  child.on("close", (code, signal) => {
+    finalizeExit(
+      code === undefined ? exitResult?.code : code,
+      signal === undefined ? exitResult?.signal : signal
+    );
+  });
+
+  try {
+    wireStreams(emitter, context);
+    context.lineRouter.appendSystemMessage(
+      emitter,
+      `Emitter '${emitter.name}' started with ${describeEmitterWork(emitter)}.`
+    );
+  } catch (error) {
+    finalized = true;
+    closeStreams(emitter);
+    emitter.status = EMITTER_STATUS.ERROR;
+    emitter.process = null;
+    emitter.stoppedAt = nowIso();
+
+    try {
+      context.processAdapter.terminate(child);
+    } catch (terminateError) {
+      safeAdapterLog(
+        context.loggerAdapter,
+        `Failed to clean up emitter '${emitter.name}' after start failure: ${errorMessage(terminateError)}`,
+        { level: "warning" }
+      );
+    }
+
+    const message = errorMessage(error);
+    const failureMessage = `Emitter '${emitter.name}' failed to start: ${message}`;
+    try {
+      context.lineRouter.appendSystemMessage(emitter, `${failureMessage}.`, true);
+    } catch {
+      // Setup failures must still unwind even if reporting the failure fails.
+    }
+    safeAdapterLog(context.loggerAdapter, failureMessage, { level: "warning" });
+    throw new LifecycleError(`Failed to start emitter '${emitter.name}': ${message}`, {
+      cause: error,
+      context: { emitter: emitter.name, command: emitter.command, cwd: emitter.cwd },
+      retryable: true
+    });
+  }
 }
 
 async function runCommandLoopIteration(emitter, context) {
@@ -252,14 +342,63 @@ async function runPromptIteration(emitter, context) {
     emitter.lineCount += 1;
     return { ok: true };
   } catch (error) {
+    const message = error?.message ?? String(error ?? "unknown error");
+    const sessionNotAttached = isSessionNotAttachedMessage(message);
     return {
       ok: false,
-      error: error.message,
+      error: message,
       deferred:
+        sessionNotAttached ||
         (emitter.runSchedule === RUN_SCHEDULE.TIMED || emitter.runSchedule === RUN_SCHEDULE.IDLE) &&
-        /\bsession\.idle\b/i.test(String(error?.message ?? ""))
+        /\bsession\.idle\b/i.test(message),
+      consumeRun: sessionNotAttached ? false : true,
+      deferredReason: sessionNotAttached ? "session-not-attached" : null
     };
   }
+}
+
+function cleanupFailedScheduledProcess(emitter, context) {
+  closeStreams(emitter);
+  if (!emitter.process) {
+    return;
+  }
+
+  const child = emitter.process;
+  emitter.process = null;
+  try {
+    context.processAdapter.terminate(child);
+  } catch {
+    // Best-effort cleanup for unexpected scheduled iteration failures.
+  }
+}
+
+function recordEscapedScheduledIterationFailure(emitter, error, context) {
+  const message = errorMessage(error);
+  cleanupFailedScheduledProcess(emitter, context);
+  if (!isTerminalEmitterStatus(emitter.status)) {
+    emitter.status = EMITTER_STATUS.ERROR;
+    emitter.stoppedAt = nowIso();
+  }
+  const logMessage = `Emitter '${emitter.name}' scheduled iteration failed unexpectedly: ${message}`;
+  try {
+    context.lineRouter.appendSystemMessage(emitter, `${logMessage}.`);
+  } catch {
+    // Keep the escaped rejection handler non-throwing.
+  }
+  safeAdapterLog(context.loggerAdapter, logMessage, { level: "warning" });
+}
+
+function recordScheduledTransitionFailure(emitter, error, context) {
+  const message = errorMessage(error);
+  if (!isTerminalEmitterStatus(emitter.status)) {
+    emitter.status = EMITTER_STATUS.ERROR;
+    emitter.stoppedAt = nowIso();
+  }
+  safeAdapterLog(
+    context.loggerAdapter,
+    `Emitter '${emitter.name}' failed to record scheduled iteration result: ${message}`,
+    { level: "warning" }
+  );
 }
 
 async function runScheduledIteration(emitter, context) {
@@ -272,22 +411,66 @@ async function runScheduledIteration(emitter, context) {
     return;
   }
 
+  if (shouldWaitForSessionAttach(emitter, context)) {
+    scheduleSessionAttachRetry(emitter, context);
+    return;
+  }
+
+  const previousRunCount = emitter.runCount;
+  const previousLastRunAt = emitter.lastRunAt;
   emitter.inFlight = true;
   emitter.status = EMITTER_STATUS.RUNNING;
   emitter.runCount += 1;
   emitter.lastRunAt = nowIso();
 
-  const result = emitter.emitterType === EMITTER_TYPE.PROMPT
-    ? await runPromptIteration(emitter, context)
-    : await runCommandLoopIteration(emitter, context);
+  let result;
+  try {
+    result = emitter.emitterType === EMITTER_TYPE.PROMPT
+      ? await runPromptIteration(emitter, context)
+      : await runCommandLoopIteration(emitter, context);
+  } catch (error) {
+    const message = errorMessage(error);
+    cleanupFailedScheduledProcess(emitter, context);
+    safeAdapterLog(
+      context.loggerAdapter,
+      `Emitter '${emitter.name}' scheduled iteration failed unexpectedly: ${message}`,
+      { level: "warning" }
+    );
+    result = { ok: false, error: message, consumeRun: true };
+  }
 
-  emitter.inFlight = false;
+  try {
+    if (result?.consumeRun === false) {
+      emitter.runCount = previousRunCount;
+      emitter.lastRunAt = previousLastRunAt;
+      if (emitter.stopRequested) {
+        applyLifecycleTransition(emitter, {
+          type: LIFECYCLE_EVENT.ITERATION_RESULT,
+          result: { ok: true },
+          timestamp: nowIso()
+        }, context);
+        return;
+      }
+      if (result.deferredReason === "session-not-attached") {
+        scheduleSessionAttachRetry(emitter, context);
+        return;
+      }
+    }
 
-  applyLifecycleTransition(emitter, {
-    type: LIFECYCLE_EVENT.ITERATION_RESULT,
-    result,
-    timestamp: nowIso()
-  }, context);
+    applyLifecycleTransition(emitter, {
+      type: LIFECYCLE_EVENT.ITERATION_RESULT,
+      result,
+      timestamp: nowIso()
+    }, context);
+  } catch (error) {
+    recordScheduledTransitionFailure(emitter, error, context);
+  } finally {
+    emitter.inFlight = false;
+  }
+}
+
+function isEmitterStopSettled(emitter) {
+  return isTerminalEmitterStatus(emitter.status) || (!emitter.process && !emitter.inFlight);
 }
 
 export function createLifecycle({
@@ -363,6 +546,107 @@ export function createLifecycle({
     }
   }
 
+  async function stopAndWait(emitter, options = {}) {
+    await stop(emitter);
+
+    if (isEmitterStopSettled(emitter)) {
+      return { name: emitter.name, status: emitter.status, timedOut: false, outcome: "stopped" };
+    }
+
+    const timeoutMs = Number.isFinite(options.timeoutMs)
+      ? Math.max(0, options.timeoutMs)
+      : DEFAULT_STOP_WAIT_TIMEOUT_MS;
+    const pollMs = Number.isFinite(options.pollMs)
+      ? Math.max(1, options.pollMs)
+      : STOP_WAIT_POLL_MS;
+
+    return await new Promise((resolve) => {
+      let settled = false;
+      let timeoutTimer = null;
+      let pollTimer = null;
+      let observedProcess = null;
+
+      const finish = (result) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        cleanup();
+        resolve(result);
+      };
+
+      const onProcessClosed = () => {
+        queueMicrotask(checkSettled);
+      };
+
+      const detachObservedProcess = () => {
+        if (!observedProcess) {
+          return;
+        }
+        if (typeof observedProcess.off === "function") {
+          observedProcess.off("close", onProcessClosed);
+          observedProcess.off("error", onProcessClosed);
+        } else if (typeof observedProcess.removeListener === "function") {
+          observedProcess.removeListener("close", onProcessClosed);
+          observedProcess.removeListener("error", onProcessClosed);
+        }
+        observedProcess = null;
+      };
+
+      const attachObservedProcess = () => {
+        const child = emitter.process;
+        if (!child || child === observedProcess || typeof child.once !== "function") {
+          return;
+        }
+        detachObservedProcess();
+        observedProcess = child;
+        child.once("close", onProcessClosed);
+        child.once("error", onProcessClosed);
+      };
+
+      const clearPollTimer = () => {
+        if (pollTimer) {
+          timerAdapter.cancel(pollTimer);
+          pollTimer = null;
+        }
+      };
+
+      const cleanup = () => {
+        if (timeoutTimer) {
+          timerAdapter.cancel(timeoutTimer);
+          timeoutTimer = null;
+        }
+        clearPollTimer();
+        detachObservedProcess();
+      };
+
+      const schedulePoll = () => {
+        clearPollTimer();
+        pollTimer = timerAdapter.schedule(checkSettled, pollMs);
+      };
+
+      function checkSettled() {
+        if (settled) {
+          return;
+        }
+        if (isEmitterStopSettled(emitter)) {
+          finish({ name: emitter.name, status: emitter.status, timedOut: false, outcome: "stopped" });
+          return;
+        }
+        attachObservedProcess();
+        schedulePoll();
+      }
+
+      timeoutTimer = timerAdapter.schedule(() => {
+        const message = `Emitter '${emitter.name}' did not finish stopping within ${timeoutMs}ms during shutdown; abandoning wait.`;
+        safeAdapterLog(loggerAdapter, message, { level: "warning" });
+        finish({ name: emitter.name, status: emitter.status, timedOut: true, outcome: "timedOut" });
+      }, timeoutMs);
+
+      checkSettled();
+    });
+  }
+
   function onSessionIdle(emitter) {
     applyLifecycleTransition(
       emitter,
@@ -379,5 +663,5 @@ export function createLifecycle({
     );
   }
 
-  return { start, stop, onSessionIdle, onSessionActivity };
+  return { start, stop, stopAndWait, onSessionIdle, onSessionActivity };
 }

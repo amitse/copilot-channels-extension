@@ -16,6 +16,11 @@ export function createSessionActivityBridge({ sessionPort, supervisor }) {
     cleanupSessionListeners = () => {};
   };
 
+  const notifyInitialIdle = () => {
+    sessionPort.setIdle(true);
+    supervisor.onSessionIdle();
+  };
+
   const attach = (session) => {
     detach();
     if (!session || typeof session.on !== "function") {
@@ -45,6 +50,12 @@ export function createSessionActivityBridge({ sessionPort, supervisor }) {
         }
       }
     };
+
+    // Persistent idle emitters can be auto-started by onSessionStart before
+    // this bridge is attached. The SDK does not replay a prior session.idle
+    // event to late listeners, so synthesize one initial idle nudge after
+    // listeners are installed; later activity events will clear the timer.
+    notifyInitialIdle();
   };
 
   return {

@@ -1,6 +1,6 @@
 import path from "node:path";
 
-import { CONFIG_FILENAME } from "../consts.mjs";
+import { CONFIG_FILENAME, EVENT_OUTCOME } from "../consts.mjs";
 import { ValidationError } from "../errors/index.mjs";
 import { normalizeName } from "../util/normalize.mjs";
 import { isValidBaseCwd } from "../util/path.mjs";
@@ -35,15 +35,21 @@ export function serializeStream(stream) {
 export function serializeEmitter(emitter) {
   const requestedCwd = emitter?.requestedCwd;
   const persisted = stripEmitterRuntimeFields(emitter);
+  const stream = emitter?.stream ?? emitter?.channel;
   const entry = {
     ...persisted,
     name: emitter?.name,
-    stream: emitter?.stream ?? emitter?.channel,
-    channel: emitter?.channel ?? emitter?.stream,
+    stream,
     autoStart: emitter?.autoStart,
     includeStderr: emitter?.includeStderr,
     ownership: emitter?.ownership
   };
+  delete entry.channel;
+  delete entry.subscribe;
+  delete entry.delivery;
+  // `scope` is a legacy top-level alias accepted on input only; v2 persists the
+  // canonical `lifespan` field instead.
+  delete entry.scope;
 
   if (requestedCwd !== undefined) {
     entry.cwd = requestedCwd;
@@ -62,6 +68,12 @@ export function serializeEmitter(emitter) {
   }
   if (emitter?.description !== undefined) {
     entry.description = emitter.description;
+  }
+  if (emitter?.subscribe === false) {
+    entry.subscribe = false;
+  }
+  if (emitter?.delivery !== undefined && emitter.delivery !== null && emitter.delivery !== EVENT_OUTCOME.SURFACE) {
+    entry.delivery = emitter.delivery;
   }
 
   const serializedEventFilter = serializeEventFilter(emitter?.eventFilter);
@@ -102,6 +114,8 @@ export function mergeEmitterEntries(existing, next) {
     ...existing,
     ...next
   };
+  merged.stream = merged.stream ?? merged.channel;
+  delete merged.channel;
 
   if (existing?.eventFilter || next?.eventFilter) {
     merged.eventFilter = {
@@ -113,7 +127,7 @@ export function mergeEmitterEntries(existing, next) {
   return merged;
 }
 
-export function sortByName(entries) {
+function sortByName(entries) {
   return [...entries].sort((left, right) =>
     normalizeName(left?.name).localeCompare(normalizeName(right?.name))
   );

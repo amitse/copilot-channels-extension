@@ -160,119 +160,169 @@ export function createProvider(name, options = {}) {
 
   // ── Message handling ──────────────────────────────────────────────────
 
+  function handlePairingMessage(msg) {
+    log("⚠️  Pairing requested:", msg.prompt || "Enter code in Copilot session");
+  }
+
+  function sendHelloForSession(session) {
+    const hello = {
+      type: "hello",
+      name,
+      protocolVersion: PROTOCOL_VERSION,
+      session: session.id,
+      tools,
+    };
+    if (instance) hello.instance = instance;
+    if (metadata) hello.metadata = metadata;
+    ws.send(JSON.stringify(hello));
+  }
+
+  function handleSessionsMessage(msg) {
+    if (!msg.active || !msg.active.length) {
+      log("No active sessions, waiting...");
+      return;
+    }
+    sendHelloForSession(msg.active[0]);
+  }
+
+  function handleHelloAckMessage(msg) {
+    providerId = msg.providerId;
+    sessionId = truthyOrNull(msg.sessionId);
+    reconnectToken = truthyOrNull(msg.reconnectToken);
+    connected = true;
+    reconnectMs = DEFAULT_RECONNECT_MS; // reset backoff
+    log(`✅ Registered (providerId: ${providerId})`);
+    if (tools.length > 0) log(`   Tools: ${tools.map((t) => t.name).join(", ")}`);
+    notifyConnected();
+  }
+
+  function truthyOrNull(value) {
+    if (value) {
+      return value;
+    }
+    return null;
+  }
+
+  function notifyConnected() {
+    if (onConnected) {
+      onConnected({ providerId, sessionId });
+    }
+  }
+
+  function sendToolResult(result) {
+    ws.send(JSON.stringify(result));
+  }
+
+  function serializeToolResultData(data) {
+    if (typeof data === "string") {
+      return data;
+    }
+    return JSON.stringify(data, null, 2);
+  }
+
+  async function handleToolCallMessage(msg) {
+    if (!onToolCall) {
+      sendToolResult({
+        type: "tool.result", id: msg.id,
+        error: "No tool handler registered", errorCode: "INTERNAL",
+      });
+      return;
+    }
+
+    let result;
+    try {
+      const context = { callId: msg.id, sessionId: msg.sessionId, providerId };
+      const data = await onToolCall(msg.tool, msg.args || {}, context);
+      result = { type: "tool.result", id: msg.id, data: serializeToolResultData(data) };
+    } catch (err) {
+      result = { type: "tool.result", id: msg.id, error: err.message, errorCode: "INTERNAL" };
+    }
+    sendToolResult(result);
+  }
+
+  function handleToolCancelMessage(msg) {
+    sendToolResult({
+      type: "tool.result", id: msg.id,
+      error: "Cancelled", errorCode: "CANCELLED",
+    });
+  }
+
+  function handleIdleLifecycle() {
+    if (onSessionIdle) {
+      onSessionIdle();
+    }
+  }
+
+  function handleShutdownLifecycle() {
+    if (onShutdown) {
+      onShutdown();
+    }
+    ws.send(JSON.stringify({ type: "goodbye", reason: "session ending" }));
+    ws.close();
+  }
+
+  const LIFECYCLE_HANDLERS = new Map([
+    ["idle", handleIdleLifecycle],
+    ["shutdown.pending", handleShutdownLifecycle]
+  ]);
+
+  function handleSessionLifecycleMessage(msg) {
+    const handler = LIFECYCLE_HANDLERS.get(msg.state);
+    if (handler) {
+      handler();
+    }
+  }
+
+  function handleErrorMessage(msg) {
+    logError(`❌ [${msg.code}]: ${msg.message}`);
+    onError?.(msg.code, msg.message);
+    if (FATAL_ERRORS.has(msg.code)) {
+      reconnectToken = null; // invalidate
+      ws.close();
+    }
+  }
+
+  const MESSAGE_HANDLERS = new Map([
+    ["auth.pairing", handlePairingMessage],
+    ["sessions", handleSessionsMessage],
+    ["hello.ack", handleHelloAckMessage],
+    ["tool.call", handleToolCallMessage],
+    ["tool.cancel", handleToolCancelMessage],
+    ["session.lifecycle", handleSessionLifecycleMessage],
+    ["error", handleErrorMessage]
+  ]);
+
   async function handleMessage(raw) {
     let msg;
     try { msg = JSON.parse(raw); } catch { return; }
 
-    switch (msg.type) {
-      case "auth.pairing":
-        log("⚠️  Pairing requested:", msg.prompt || "Enter code in Copilot session");
-        break;
-
-      case "sessions": {
-        if (!msg.active || !msg.active.length) {
-          log("No active sessions, waiting...");
-          return;
-        }
-        const hello = {
-          type: "hello",
-          name,
-          protocolVersion: PROTOCOL_VERSION,
-          session: msg.active[0].id,
-          tools,
-        };
-        if (instance) hello.instance = instance;
-        if (metadata) hello.metadata = metadata;
-        ws.send(JSON.stringify(hello));
-        break;
-      }
-
-      case "hello.ack":
-        providerId = msg.providerId;
-        sessionId = msg.sessionId || null;
-        reconnectToken = msg.reconnectToken || null;
-        connected = true;
-        reconnectMs = DEFAULT_RECONNECT_MS; // reset backoff
-        log(`✅ Registered (providerId: ${providerId})`);
-        if (tools.length > 0) log(`   Tools: ${tools.map((t) => t.name).join(", ")}`);
-        onConnected?.({ providerId, sessionId });
-        break;
-
-      case "tool.call": {
-        if (!onToolCall) {
-          ws.send(JSON.stringify({
-            type: "tool.result", id: msg.id,
-            error: "No tool handler registered", errorCode: "INTERNAL",
-          }));
-          return;
-        }
-        let result;
-        try {
-          const context = { callId: msg.id, sessionId: msg.sessionId, providerId };
-          const data = await onToolCall(msg.tool, msg.args || {}, context);
-          // Allow returning string or object
-          const serialized = typeof data === "string" ? data : JSON.stringify(data, null, 2);
-          result = { type: "tool.result", id: msg.id, data: serialized };
-        } catch (err) {
-          result = { type: "tool.result", id: msg.id, error: err.message, errorCode: "INTERNAL" };
-        }
-        ws.send(JSON.stringify(result));
-        break;
-      }
-
-      case "tool.cancel":
-        ws.send(JSON.stringify({
-          type: "tool.result", id: msg.id,
-          error: "Cancelled", errorCode: "CANCELLED",
-        }));
-        break;
-
-      case "session.lifecycle":
-        if (msg.state === "idle") onSessionIdle?.();
-        if (msg.state === "shutdown.pending") {
-          onShutdown?.();
-          ws.send(JSON.stringify({ type: "goodbye", reason: "session ending" }));
-          ws.close();
-        }
-        break;
-
-      case "session.event":
-        // Forward compatibility — session events (user messages, etc.)
-        break;
-
-      case "error":
-        logError(`❌ [${msg.code}]: ${msg.message}`);
-        onError?.(msg.code, msg.message);
-        if (FATAL_ERRORS.has(msg.code)) {
-          reconnectToken = null; // invalidate
-          ws.close();
-        }
-        break;
-
-      case "ack":
-      case "sessions.updated":
-      case "stream.history":
-        // Handled silently
-        break;
-
-      default:
-        // Forward compatibility — ignore unknown types
-        break;
+    // Unregistered message types are intentionally ignored for forward compatibility.
+    const handler = MESSAGE_HANDLERS.get(msg.type);
+    if (handler) {
+      await handler(msg);
     }
   }
 
   // ── Push API ──────────────────────────────────────────────────────────
 
-  function pushEvent(level, event, opts = {}) {
-    if (!ws || ws.readyState !== WebSocket.OPEN || !connected) {
-      log(`Push dropped (not connected): ${event.slice(0, 80)}`);
-      return false;
-    }
+  function canPushEvent() {
+    return Boolean(ws && ws.readyState === WebSocket.OPEN && connected);
+  }
+
+  function buildPushMessage(level, event, opts = {}) {
     const msg = { type: "push", level, event };
     if (opts.stream) msg.stream = opts.stream;
     else msg.stream = name; // default stream = provider name
     if (opts.metadata) msg.metadata = opts.metadata;
-    ws.send(JSON.stringify(msg));
+    return msg;
+  }
+
+  function pushEvent(level, event, opts = {}) {
+    if (!canPushEvent()) {
+      log(`Push dropped (not connected): ${event.slice(0, 80)}`);
+      return false;
+    }
+    ws.send(JSON.stringify(buildPushMessage(level, event, opts)));
     return true;
   }
 

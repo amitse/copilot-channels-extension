@@ -5,6 +5,7 @@
 ```bash
 npm run check          # Syntax check (fast, run after every change)
 npm run build          # Bundle extension.mjs + copy artifacts to dist/
+npm run install:local  # Build and force reinstall locally
 npm run evals:smoke    # Smoke test — verifies the extension loads and tools are visible
 npm run evals:run      # Full eval suite
 ```
@@ -12,7 +13,7 @@ npm run evals:run      # Full eval suite
 After making code changes, always rebuild and reinstall locally for the changes to take effect in your Copilot session:
 
 ```bash
-npm run build && node bin/install.mjs
+npm run install:local
 ```
 
 The installed extension at `~/.copilot/extensions/tap/` is a built artifact — editing source files alone does not update it.

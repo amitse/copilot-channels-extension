@@ -56,7 +56,7 @@ export function buildSelector(el) {
 /**
  * Build a human-readable tag path: article > section > div > button
  */
-export function buildTagPath(el) {
+function buildTagPath(el) {
   const parts = [];
   let current = el;
   let depth = 0;
@@ -205,8 +205,7 @@ export function extractElementContext(element, detailLevel = DETAIL_LEVELS.STAND
 /**
  * Generate structured markdown from annotations for AI consumption.
  */
-export function generateAnnotationMarkdown(annotations, detailLevel = DETAIL_LEVELS.STANDARD) {
-  const lines = [];
+function appendPageMarkdownHeader(lines) {
   const url = location.href;
   const title = document.title;
 
@@ -215,29 +214,46 @@ export function generateAnnotationMarkdown(annotations, detailLevel = DETAIL_LEV
   lines.push(`**Viewport:** ${window.innerWidth}×${window.innerHeight}`);
   if (isReactDetected()) lines.push(`**Framework:** React detected`);
   lines.push("");
+}
+
+function formatAnnotationSource(context) {
+  if (!context?.sourceFile) return "";
+  return ` (${context.sourceFile}${context.sourceLine ? ":" + context.sourceLine : ""})`;
+}
+
+function annotationHeading(ann, num) {
+  const header = ann.context?.selector || ann.context?.displayName || `Annotation ${num}`;
+  return `${header}${formatAnnotationSource(ann.context)}`;
+}
+
+function appendAnnotationContextMarkdown(lines, ctx) {
+  if (ctx.tagPath) lines.push(`**Path:** ${ctx.tagPath}`);
+  if (ctx.classes) lines.push(`**Classes:** ${ctx.classes}`);
+  if (ctx.boundingBox) lines.push(`**Position:** ${ctx.boundingBox.x},${ctx.boundingBox.y} (${ctx.boundingBox.width}×${ctx.boundingBox.height}px)`);
+  if (ctx.reactComponent) lines.push(`**React:** ${ctx.reactHierarchy ? ctx.reactHierarchy.join(" > ") : ctx.reactComponent}`);
+  if (ctx.styles) lines.push(`**Styles:** ${JSON.stringify(ctx.styles)}`);
+  if (ctx.accessibility) lines.push(`**A11y:** ${JSON.stringify(ctx.accessibility)}`);
+  if (ctx.text) lines.push(`**Text:** "${ctx.text}"`);
+}
+
+function appendAnnotationMarkdown(lines, ann, num) {
+  lines.push(`### ${num}. ${annotationHeading(ann, num)}`);
+
+  if (ann.context) {
+    appendAnnotationContextMarkdown(lines, ann.context);
+  }
+
+  if (ann.intent) lines.push(`**Intent:** ${ann.intent}`);
+  if (ann.comment) lines.push(`**Feedback:** ${ann.comment}`);
+  lines.push("");
+}
+
+export function generateAnnotationMarkdown(annotations, detailLevel = DETAIL_LEVELS.STANDARD) {
+  const lines = [];
+  appendPageMarkdownHeader(lines);
 
   for (let i = 0; i < annotations.length; i++) {
-    const ann = annotations[i];
-    const num = i + 1;
-    const header = ann.context?.selector || ann.context?.displayName || `Annotation ${num}`;
-    const src = ann.context?.sourceFile ? ` (${ann.context.sourceFile}${ann.context.sourceLine ? ":" + ann.context.sourceLine : ""})` : "";
-
-    lines.push(`### ${num}. ${header}${src}`);
-
-    if (ann.context) {
-      const ctx = ann.context;
-      if (ctx.tagPath) lines.push(`**Path:** ${ctx.tagPath}`);
-      if (ctx.classes) lines.push(`**Classes:** ${ctx.classes}`);
-      if (ctx.boundingBox) lines.push(`**Position:** ${ctx.boundingBox.x},${ctx.boundingBox.y} (${ctx.boundingBox.width}×${ctx.boundingBox.height}px)`);
-      if (ctx.reactComponent) lines.push(`**React:** ${ctx.reactHierarchy ? ctx.reactHierarchy.join(" > ") : ctx.reactComponent}`);
-      if (ctx.styles) lines.push(`**Styles:** ${JSON.stringify(ctx.styles)}`);
-      if (ctx.accessibility) lines.push(`**A11y:** ${JSON.stringify(ctx.accessibility)}`);
-      if (ctx.text) lines.push(`**Text:** "${ctx.text}"`);
-    }
-
-    if (ann.intent) lines.push(`**Intent:** ${ann.intent}`);
-    if (ann.comment) lines.push(`**Feedback:** ${ann.comment}`);
-    lines.push("");
+    appendAnnotationMarkdown(lines, annotations[i], i + 1);
   }
 
   return lines.join("\n");
