@@ -275,7 +275,7 @@ function createHtml() {
       overflow: auto;
     }
 
-    .stream-grid, .emitter-grid, .provider-grid, .trace-grid {
+    .stream-grid, .emitter-grid, .provider-grid, .trace-grid, .session-grid {
       display: grid;
       gap: 12px;
     }
@@ -457,6 +457,26 @@ function createHtml() {
         </div>
       </section>
 
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Session control</h2>
+          <small id="session-state">unknown</small>
+        </div>
+        <div class="panel-body">
+          <div class="session-grid" id="session-control"></div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Eval gate</h2>
+          <small id="eval-count">0 summaries</small>
+        </div>
+        <div class="panel-body">
+          <div class="session-grid" id="evals"></div>
+        </div>
+      </section>
+
       <section class="panel timeline-panel">
         <div class="panel-head">
           <h2>Evidence timeline</h2>
@@ -494,6 +514,8 @@ function createHtml() {
       const providers = snapshot.gateway?.providers?.length ?? 0;
       const queue = snapshot.notifications?.queueSize ?? 0;
       const traces = snapshot.diagnostics?.stats?.traces?.retained ?? 0;
+      const tasks = snapshot.sessionRuntime?.tasks?.ok ? (snapshot.sessionRuntime.tasks.value?.tasks?.length ?? 0) : 0;
+      const evals = snapshot.evals?.length ?? 0;
       const sessionEvents = snapshot.diagnostics?.stats?.sessionEvents?.retained ?? 0;
       el("metrics").innerHTML = [
         metric("streams", streams),
@@ -501,6 +523,8 @@ function createHtml() {
         metric("providers", providers),
         metric("queued injections", queue),
         metric("traces", traces),
+        metric("tasks", tasks),
+        metric("eval summaries", evals),
         metric("configured emitters", configured),
         metric("session events", sessionEvents)
       ].join("");
@@ -540,6 +564,28 @@ function createHtml() {
       el("providers").innerHTML = gatewayRecord + rows;
     }
 
+    function extractMarkedJson(text, marker) {
+      const raw = String(text ?? "");
+      const start = "=== BEGIN_" + marker + " ===";
+      const end = "=== END_" + marker + " ===";
+      const startIndex = raw.indexOf(start);
+      const endIndex = raw.indexOf(end);
+      if (startIndex < 0 || endIndex < 0 || endIndex <= startIndex) return null;
+      const body = raw.slice(startIndex + start.length, endIndex).trim();
+      try { return JSON.parse(body); } catch { return null; }
+    }
+
+    function collectReviewRecords(snapshot) {
+      const records = [];
+      for (const stream of snapshot.streams ?? []) {
+        for (const entry of stream.entries ?? []) {
+          const parsed = extractMarkedJson(entry.text, "REVIEW_RECORD");
+          if (parsed) records.push({ stream: stream.name, timestamp: entry.timestamp, ...parsed });
+        }
+      }
+      return records.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+    }
+
     function renderTraces(snapshot) {
       const traces = snapshot.diagnostics?.traces ?? [];
       const goalStreams = (snapshot.streams ?? []).filter((stream) => String(stream.name ?? "").startsWith("goal-"));
@@ -552,7 +598,36 @@ function createHtml() {
         const latest = (stream.entries ?? []).slice(-2).reverse().map((entry) => '<div class="entry"><span class="meta">' + escapeHtml(timeOnly(entry.timestamp)) + '</span>\\n' + escapeHtml(entry.text) + '</div>').join("");
         return '<div class="record"><strong>' + escapeHtml(stream.name) + ' <span class="badge info">goal stream</span></strong><div class="meta">' + escapeHtml(stream.entries?.length ?? 0) + ' retained entries</div>' + (latest || '<div class="entry">No goal ledger entries retained.</div>') + '</div>';
       }).join("");
-      el("traces").innerHTML = (traceRows || '<div class="empty">No emitter-run traces retained yet.</div>') + (goalRows ? '<div class="panel-head" style="margin:14px -14px 12px"><h2>Goal ledgers</h2><small>' + goalStreams.length + ' streams</small></div>' + goalRows : "");
+      const reviewRecords = collectReviewRecords(snapshot).slice(0, 8).map((record) => '<div class="record"><strong>' + escapeHtml(record.stream) + ' <span class="badge info">' + escapeHtml(record.issue_type ?? "review") + '</span></strong><div class="meta">entries=' + escapeHtml(record.entries_examined ?? "?") + ' | reviewed=' + escapeHtml(timeOnly(record.reviewed_at ?? record.timestamp)) + '</div><div class="details">' + escapeHtml(compactJson({ patterns_changed: record.patterns_changed ?? [], remaining_noise_delta: record.remaining_noise_delta ?? [] })) + '</div></div>').join("");
+      el("traces").innerHTML = (traceRows || '<div class="empty">No emitter-run traces retained yet.</div>') + (goalRows ? '<div class="panel-head" style="margin:14px -14px 12px"><h2>Goal ledgers</h2><small>' + goalStreams.length + ' streams</small></div>' + goalRows : "") + (reviewRecords ? '<div class="panel-head" style="margin:14px -14px 12px"><h2>Monitor reviews</h2><small>' + collectReviewRecords(snapshot).length + ' records</small></div>' + reviewRecords : "");
+    }
+
+    function renderSessionControl(snapshot) {
+      const runtime = snapshot.sessionRuntime ?? {};
+      const mode = runtime.mode?.ok ? runtime.mode.value : "unknown";
+      const model = runtime.model?.ok ? runtime.model.value : null;
+      const tasks = runtime.tasks?.ok ? (runtime.tasks.value?.tasks ?? []) : [];
+      const schedules = runtime.schedules?.ok ? (runtime.schedules.value?.entries ?? []) : [];
+      el("session-state").textContent = String(mode);
+      const stateRecord = '<div class="record"><strong>session <span class="badge info">' + escapeHtml(mode) + '</span></strong><div class="meta">model=' + escapeHtml(model?.modelId ?? "unknown") + ' | reasoning=' + escapeHtml(model?.reasoningEffort ?? "default") + ' | schedules=' + escapeHtml(schedules.length) + '</div></div>';
+      const taskRows = tasks.slice(0, 10).map((task) => '<div class="record"><strong>' + escapeHtml(task.description ?? task.id ?? "task") + ' <span class="badge ' + escapeHtml(task.status ?? "info") + '">' + escapeHtml(task.status ?? "?") + '</span></strong><div class="meta">' + escapeHtml(task.type ?? "task") + ' | id=' + escapeHtml(task.id ?? "?") + ' | mode=' + escapeHtml(task.executionMode ?? "?") + '</div></div>').join("");
+      el("session-control").innerHTML = stateRecord + (taskRows || '<div class="empty">No native Copilot tasks are currently tracked.</div>');
+    }
+
+    function renderEvals(snapshot) {
+      const evals = snapshot.evals ?? [];
+      el("eval-count").textContent = evals.length + " summaries";
+      if (evals.length === 0) {
+        el("evals").innerHTML = '<div class="empty">No eval summaries found under evals/results.</div>';
+        return;
+      }
+      el("evals").innerHTML = evals.slice(0, 12).map((item) => {
+        const summary = item.summary ?? {};
+        const caseId = summary.caseId ?? summary.mode ?? "run";
+        const verdict = summary.verdict?.verdict ?? (Array.isArray(summary) ? "batch" : "unknown");
+        const tone = verdict === "pass" || summary.extensionToolAvailable === true ? "ready" : verdict === "fail" ? "error" : "info";
+        return '<div class="record"><strong>' + escapeHtml(caseId) + ' <span class="badge ' + tone + '">' + escapeHtml(verdict) + '</span></strong><div class="meta">' + escapeHtml(item.path) + ' | ' + escapeHtml(timeOnly(item.modifiedAt)) + '</div><div class="details">' + escapeHtml(summary.verdict?.summary ?? summary.detail ?? "") + '</div></div>';
+      }).join("");
     }
 
     function collectTimeline(snapshot) {
@@ -598,6 +673,8 @@ function createHtml() {
       renderStreams(snapshot);
       renderProviders(snapshot);
       renderTraces(snapshot);
+      renderSessionControl(snapshot);
+      renderEvals(snapshot);
       renderTimeline(snapshot);
     }
 
@@ -648,7 +725,7 @@ function createHtml() {
 export function createTapDiagnosticsCanvas({ getSnapshot, diagnostics } = {}) {
   const instances = new Map();
 
-  function snapshot(options = {}) {
+  async function snapshot(options = {}) {
     return typeof getSnapshot === "function"
       ? getSnapshot(sanitizeSnapshotOptions(options))
       : { generatedAt: new Date().toISOString(), error: "No diagnostics snapshot provider configured." };
@@ -666,7 +743,7 @@ export function createTapDiagnosticsCanvas({ getSnapshot, diagnostics } = {}) {
         return;
       }
       if (url.pathname === "/api/snapshot") {
-        jsonResponse(res, 200, snapshot({ limit: url.searchParams.get("limit") }));
+        void snapshot({ limit: url.searchParams.get("limit") }).then((data) => jsonResponse(res, 200, data));
         return;
       }
       if (url.pathname === "/events") {
@@ -677,7 +754,11 @@ export function createTapDiagnosticsCanvas({ getSnapshot, diagnostics } = {}) {
           "X-Accel-Buffering": "no"
         });
         const send = () => {
-          res.write(`event: snapshot\ndata: ${JSON.stringify(snapshot())}\n\n`);
+          void snapshot().then((data) => {
+            res.write(`event: snapshot\ndata: ${JSON.stringify(data)}\n\n`);
+          }).catch((error) => {
+            res.write(`event: snapshot\ndata: ${JSON.stringify({ error: error?.message ?? String(error) })}\n\n`);
+          });
         };
         send();
         const interval = setInterval(send, DEFAULT_REFRESH_MS);
@@ -731,7 +812,7 @@ export function createTapDiagnosticsCanvas({ getSnapshot, diagnostics } = {}) {
         },
         handler: async ({ input }) => ({
           ok: true,
-          summary: summarizeSnapshot(snapshot(input))
+         summary: summarizeSnapshot(await snapshot(input))
         })
       },
       {

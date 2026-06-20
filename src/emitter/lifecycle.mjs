@@ -21,21 +21,46 @@ function createDefaultProcessAdapter() {
 
 function recordScheduledTrace(emitter, context, { startedAt, endedAt = nowIso(), runIndex, result = null, error = null, consumedRun = true } = {}) {
   try {
+    const start = startedAt ?? endedAt;
+    const status = result?.deferred ? "deferred" : result?.ok ? "success" : "failure";
     context.diagnostics?.trace?.({
-      traceId: `${stableTraceComponent(emitter.name)}-${Number(runIndex ?? emitter.runCount) || 0}-${Date.parse(startedAt ?? endedAt) || Date.now()}`,
+      traceId: `${stableTraceComponent(emitter.name)}-${Number(runIndex ?? emitter.runCount) || 0}-${Date.parse(start) || Date.now()}`,
       emitterId: emitter.name,
       emitterName: emitter.name,
       runIndex: Number(runIndex ?? emitter.runCount) || null,
       emitterType: emitter.emitterType,
       runSchedule: emitter.runSchedule,
-      startedAt: startedAt ?? endedAt,
+      startedAt: start,
       endedAt,
-      status: result?.deferred ? "deferred" : result?.ok ? "success" : "failure",
+      status,
       ok: result?.ok === true,
       consumedRun,
       lineCount: emitter.lineCount,
       droppedLineCount: emitter.droppedLineCount,
       error: error ?? result?.error ?? null,
+      spans: [
+        {
+          spanId: "emitter-run",
+          kind: "emitter.run",
+          name: emitter.name,
+          startedAt: start,
+          endedAt,
+          status
+        },
+        {
+          spanId: emitter.emitterType === EMITTER_TYPE.PROMPT ? "prompt-dispatch" : "command-process",
+          parentSpanId: "emitter-run",
+          kind: emitter.emitterType === EMITTER_TYPE.PROMPT ? "prompt.dispatch" : "command.process",
+          name: emitter.emitterType,
+          startedAt: start,
+          endedAt,
+          status,
+          metadata: {
+            stream: emitter.stream,
+            cwd: emitter.cwd ?? null
+          }
+        }
+      ],
       metadata: {
         every: emitter.every ?? null,
         everySchedule: emitter.everySchedule ?? null,

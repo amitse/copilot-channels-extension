@@ -171,6 +171,11 @@ goal step.
 Use `tap_get_session_state` before mode-sensitive work. It reads the current
 Copilot mode, model/reasoning effort, tasks, schedules, open canvases, and UI
 capabilities without mutating the session.
+Use `tap_set_session_mode` only when the user has explicitly requested a mode
+change or the goal contract requires it; it requires confirmation text and
+should be treated as a user-visible safety-sensitive action.
+Use `tap_query_records` to inspect structured session-workspace records such as
+`traces` and `stream-posts` when EventStream prose is not precise enough.
 
 For genuinely multi-role work, prefer `/tap-orchestrate`: create one coordinator
 PromptEmitter that gates role-specific sub-emitters using EventStream handoffs.

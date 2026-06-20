@@ -1,3 +1,6 @@
+import fs from "node:fs";
+import path from "node:path";
+
 import { createSessionActivityBridge } from "../session/listeners.mjs";
 import { createConfigBootstrapService } from "./config-bootstrap-service.mjs";
 import { createEmitterService } from "./emitter-service.mjs";
@@ -6,6 +9,7 @@ import { createRuntimeHooks } from "./runtime-hooks.mjs";
 import { createRuntimeSubsystems } from "./runtime-subsystems.mjs";
 import { createStreamService } from "./stream-service.mjs";
 import { createGoalVerificationService } from "./goal-verification-service.mjs";
+import { createStructuredRecordStore } from "./structured-record-store.mjs";
 import { createDiagnosticsStore } from "../diagnostics/store.mjs";
 import { nowIso } from "../util/time.mjs";
 import { TAP_DIAGNOSTICS_CANVAS_ID } from "../canvas/consts.mjs";
@@ -31,6 +35,37 @@ function projectToolForDiagnostics(tool) {
   };
 }
 
+function collectEvalSummaries(baseCwd, limit = 20) {
+  const root = path.join(baseCwd, "evals", "results");
+  const summaries = [];
+  function walk(dir) {
+    let entries = [];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const fullPath = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        walk(fullPath);
+      } else if (entry.name === "summary.json") {
+        try {
+          const stat = fs.statSync(fullPath);
+          const parsed = JSON.parse(fs.readFileSync(fullPath, "utf8"));
+          summaries.push({ path: path.relative(baseCwd, fullPath), modifiedAt: stat.mtime.toISOString(), summary: parsed });
+        } catch {
+          // Ignore malformed historical eval files.
+        }
+      }
+    }
+  }
+  walk(root);
+  return summaries
+    .sort((left, right) => new Date(right.modifiedAt) - new Date(left.modifiedAt))
+    .slice(0, limit);
+}
+
 export function createTapRuntimeService(options = {}) {
   const diagnosticsStore = options.diagnostics ?? createDiagnosticsStore();
   const {
@@ -47,11 +82,14 @@ export function createTapRuntimeService(options = {}) {
     ...options,
     diagnostics: diagnosticsStore
   });
+  const recordStore = createStructuredRecordStore({ sessionPort });
+  diagnosticsStore.setRecordSink?.((collection, record) => recordStore.appendRecord(collection, record));
   const streamService = createStreamService({
     streams,
     configStore,
     sessionPort,
-    persist
+    persist,
+    recordStore
   });
   const emitterService = createEmitterService({
     streams,
@@ -204,8 +242,16 @@ export function createTapRuntimeService(options = {}) {
     }
   };
 
-  function getDiagnosticsSnapshot(options = {}, extra = {}) {
+  async function getDiagnosticsSnapshot(options = {}, extra = {}) {
     const allTools = Array.isArray(extra.tools) ? extra.tools.map(projectToolForDiagnostics) : [];
+    let sessionRuntime = null;
+    try {
+      sessionRuntime = await sessionPort.getRuntimeState();
+    } catch (error) {
+      sessionRuntime = {
+        error: error?.message ?? String(error ?? "unknown error")
+      };
+    }
     return {
       generatedAt: nowIso(),
       session: getSessionInfo(),
@@ -219,9 +265,11 @@ export function createTapRuntimeService(options = {}) {
       emitters: emitterCapabilities.listEmitters(),
       gateway: extra.gateway ?? null,
       tools: allTools,
+      evals: collectEvalSummaries(sessionContext.getBaseCwd(), options.evalLimit ?? 20),
       notifications: typeof notifications.snapshot === "function"
         ? notifications.snapshot({ limit: options.notificationLimit ?? 20 })
         : null,
+      sessionRuntime,
       diagnostics: diagnosticsStore.snapshot(options)
     };
   }
@@ -244,6 +292,9 @@ export function createTapRuntimeService(options = {}) {
       });
     },
     getSessionRuntimeState: () => sessionPort.getRuntimeState(),
+    setSessionMode: (mode) => sessionPort.setMode(mode),
+    queryRecords: (collection, options = {}) => recordStore.listRecords(collection, options),
+    getRecordRoot: () => recordStore.getRoot(),
     attachSession: diagnosticsStore.attachSession,
     detachSession: diagnosticsStore.detachSession
   };

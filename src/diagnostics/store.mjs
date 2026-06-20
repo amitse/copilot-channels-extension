@@ -164,6 +164,7 @@ export function createDiagnosticsStore(options = {}) {
   let sessionEventCount = 0;
   let traceCount = 0;
   let cleanupSessionListener = () => {};
+  let recordSink = typeof options.recordSink === "function" ? options.recordSink : null;
 
   function recordLog(source, message, options = {}) {
     logCount += 1;
@@ -206,7 +207,7 @@ export function createDiagnosticsStore(options = {}) {
       ? Math.max(0, endMs - startMs)
       : null;
 
-    return traces.append({
+    const entry = {
       id: createId("trace", traceCount),
       traceId: String(trace.traceId ?? `trace-${traceCount.toString(36)}`),
       timestamp: endedAt,
@@ -228,8 +229,20 @@ export function createDiagnosticsStore(options = {}) {
         maxDepth: 3,
         maxStringLength: 700,
         maxCollectionItems: 20
+      }),
+      spans: safeClone(Array.isArray(trace.spans) ? trace.spans : [], {
+        maxDepth: 4,
+        maxStringLength: 700,
+        maxCollectionItems: 30
       })
-    });
+    };
+    const appended = traces.append(entry);
+    try {
+      recordSink?.("traces", entry);
+    } catch {
+      // Persistent diagnostics export must never interrupt runtime behavior.
+    }
+    return appended;
   }
 
   function recordSessionEvent(event) {
@@ -293,6 +306,9 @@ export function createDiagnosticsStore(options = {}) {
     log: recordLog,
     event: recordRuntimeEvent,
     trace: recordTrace,
+    setRecordSink: (nextSink) => {
+      recordSink = typeof nextSink === "function" ? nextSink : null;
+    },
     attachSession,
     detachSession,
     snapshot

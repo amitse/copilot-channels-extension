@@ -55,7 +55,7 @@ export function createCopilotChannelsRuntime(options = {}) {
   });
   logRuntime("gateway created");
 
-  function getDiagnosticSnapshot(options = {}) {
+  async function getDiagnosticSnapshot(options = {}) {
     return runtimeService.diagnostics.snapshot(options, {
       gateway: typeof gateway.getDiagnosticState === "function" ? gateway.getDiagnosticState() : null,
       tools: gateway.isRunning() ? gateway.getAllTools(tools) : tools

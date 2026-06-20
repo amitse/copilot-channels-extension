@@ -13,10 +13,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   diagnostics canvas.
 - Added read-only `tap_get_session_state` for mode/model/tasks/schedules/canvas
   awareness.
+- Added guarded `tap_set_session_mode` and `tap_query_records` for structured
+  session-workspace records.
 - Added `tap_verify_goal_output` and `tap_audit_claims` evidence tools.
 - Added `/tap-orchestrate` as a foundation for coordinator and role-emitter
   workflows.
-- Added provider integration and control-plane roadmap recipes.
+- Added provider integration and control-plane roadmap recipes plus provider
+  templates for CI review, Jira/GitHub, SAST triage, and Detour workflows.
 
 ### Changed
 
@@ -33,6 +36,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   entries.
 - Evals can include rubrics, required/prohibited observations, deterministic
   assertions, and pass/fail examples in judge prompts.
+- Evals now record harness metadata, run deterministic assertion prechecks, and
+  can generate an optimization handoff with `node evals/run.mjs optimize`.
 
 ## [2.0.1] — 2026-05-06
 

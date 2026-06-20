@@ -197,15 +197,32 @@ test("diagnostics tools include read-only session state when available", async (
         model: { ok: true, value: { modelId: "gpt-5.5", reasoningEffort: "high", contextTier: "long_context" } },
         tasks: { ok: true, value: { tasks: [1, 2] } },
         schedules: { ok: true, value: { entries: [] } },
+        permissions: { ok: true, value: { items: [1] } },
         openCanvases: { ok: true, value: { openCanvases: [] } }
-      })
+      }),
+      queryRecords: () => ({ collection: "traces", records: [{ id: "trace-1" }] }),
+      setSessionMode: async (mode) => mode
     }
   });
   const getState = tools.find((tool) => tool.name === "tap_get_session_state");
+  const queryRecords = tools.find((tool) => tool.name === "tap_query_records");
+  const setMode = tools.find((tool) => tool.name === "tap_set_session_mode");
 
   assert.ok(getState);
+  assert.ok(queryRecords);
+  assert.ok(setMode);
   const output = await getState.handler({});
   assert.match(output, /mode=interactive/);
   assert.match(output, /tasks=2/);
+  assert.match(output, /pendingPermissions=1/);
   assert.match(output, /elicitation=available/);
+  assert.match(await queryRecords.handler({ collection: "traces" }), /trace-1/);
+  await assert.rejects(
+    () => setMode.handler({ mode: "autopilot", reason: "test", confirm: "wrong" }),
+    /Refusing to change session mode/
+  );
+  assert.match(
+    await setMode.handler({ mode: "interactive", reason: "test", confirm: "set-session-mode" }),
+    /Session mode set to interactive/
+  );
 });

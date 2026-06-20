@@ -13,7 +13,8 @@ import { requireNormalizedName } from "../util/normalize.mjs";
  *   streams: Object,
  *   configStore: Object,
  *   sessionPort: Object,
- *   persist: Function
+ *   persist: Function,
+ *   recordStore?: Object
  * }} deps
  * @returns {{
  *   listStreams: Function,
@@ -24,7 +25,7 @@ import { requireNormalizedName } from "../util/normalize.mjs";
  * }}
  */
 export function createStreamService(deps) {
-  const { streams, configStore, sessionPort, persist } = deps;
+  const { streams, configStore, sessionPort, persist, recordStore = null } = deps;
 
   function requireStreamChannel(channel, operation) {
     return requireNormalizedName(channel, {
@@ -82,6 +83,18 @@ export function createStreamService(deps) {
       throw new ValidationError("Cannot post an empty message to an event stream.", {
         context: { channel: stream.name }
       });
+    }
+    try {
+      recordStore?.appendRecord?.("stream-posts", {
+        channel: stream.name,
+        source,
+        text,
+        timestamp: appended.timestamp,
+        monitorName: appended.monitorName ?? null,
+        metadata: appended.metadata ?? null
+      });
+    } catch {
+      // Structured record persistence must not interrupt posting to streams.
     }
 
     void sessionPort.log(`Posted message to stream '${stream.name}'.`);

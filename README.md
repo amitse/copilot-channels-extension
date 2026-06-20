@@ -63,7 +63,7 @@ npx copilot-tap-extension
 npx copilot-tap-extension --local
 ```
 
-This installs the bundled extension, the `/tap-loop` skill, the `/tap-monitor` skill, the `/tap-goal` skill, and the agent instructions to the appropriate Copilot directory. Run `npx copilot-tap-extension --help` for all options.
+This installs the bundled extension, `/tap-loop`, `/tap-monitor`, `/tap-goal`, `/tap-orchestrate`, and the agent instructions to the appropriate Copilot directory. Run `npx copilot-tap-extension --help` for all options.
 
 To update to the latest version, re-run the same command with `--force`:
 
@@ -258,6 +258,7 @@ The canvas is bounded and redacted: it keeps recent diagnostic evidence without 
   skills/tap-loop/                  # /tap-loop skill for scheduled and idle prompts
   skills/tap-monitor/               # /tap-monitor skill for self-tuning command monitors
   skills/tap-goal/                  # /tap-goal skill for autonomous goal loops
+  skills/tap-orchestrate/           # /tap-orchestrate skill for coordinator/role workflows
   skills/tap-create-provider/       # /tap-create-provider skill for scaffolding external tool providers
   copilot-instructions.md       # agent guidance for using this extension
 src/

@@ -14,7 +14,10 @@
   "files": [
     "bin/",
     "dist/",
+    "docs/",
+    "providers/",
     "README.md",
+    "SOUL.md",
     "LICENSE"
   ],
   "scripts": {

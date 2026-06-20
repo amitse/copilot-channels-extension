@@ -52,6 +52,7 @@ function usage() {
     "  node evals/run.mjs run --all",
     "  node evals/run.mjs prepare-interactive --case E001",
     "  node evals/run.mjs judge-interactive --run-dir <path>",
+    "  node evals/run.mjs optimize --run-dir <path>",
     "  node evals/run.mjs validate-modes",
     "  node evals/run.mjs validate-modes-inspect --run-dir <path>",
     "",
@@ -166,6 +167,10 @@ const OPTION_VALIDATIONS = [
     message: "Use --run-dir <path> with the judge-interactive command."
   },
   {
+    invalid: (options) => options.command === "optimize" && !options.runDir,
+    message: "Use --run-dir <path> with the optimize command."
+  },
+  {
     invalid: (options) => options.command === "validate-modes-inspect" && !options.runDir,
     message: "Use --run-dir <path> with the validate-modes-inspect command."
   }
@@ -260,7 +265,9 @@ function buildJudgePrompt(caseDef, artifacts) {
   const passConditions = ensureArray(caseDef.pass_conditions)
     .map((condition) => `- ${condition}`)
     .join("\n");
-  const requiredObservations = ensureArray(caseDef.required_observations)
+  const requiredObservations = ensureArray(
+    caseDef.required_observations?.length ? caseDef.required_observations : caseDef.pass_conditions
+  )
     .map((condition) => `- ${condition}`)
     .join("\n");
   const prohibitedClaims = ensureArray(caseDef.prohibited_claims)
@@ -281,6 +288,9 @@ function buildJudgePrompt(caseDef, artifacts) {
     requiredObservations ? `Required observations:\n${requiredObservations}` : null,
     prohibitedClaims ? `Prohibited claims:\n${prohibitedClaims}` : null,
     deterministicAssertions ? `Deterministic assertions to consider:\n${deterministicAssertions}` : null,
+    artifacts.deterministicAssertionSummary?.total
+      ? `Deterministic assertion precheck:\n${JSON.stringify(artifacts.deterministicAssertionSummary, null, 2)}`
+      : null,
     caseDef.suggested_pass_example ? `Suggested pass example:\n${truncateText(caseDef.suggested_pass_example, 800)}` : null,
     caseDef.suggested_fail_example ? `Suggested fail example:\n${truncateText(caseDef.suggested_fail_example, 800)}` : null,
     `Executor status: ${artifacts.executorStatus}`,
@@ -596,6 +606,51 @@ function extractRequestedTools(events) {
   for (const event of ensureArray(events)) {
     for (const toolName of requestedToolNamesFromEvent(event)) {
       requestedTools.add(toolName);
+    }
+
+    function normalizeAssertionSource(artifacts = {}) {
+      return [
+        artifacts.executorTranscript,
+        artifacts.executorEventTranscript,
+        artifacts.configBefore,
+        artifacts.configAfter,
+        ensureArray(artifacts.executorRequestedTools).join("\n")
+      ]
+        .filter(Boolean)
+        .join("\n")
+        .toLowerCase();
+    }
+
+    function evaluateDeterministicAssertions(caseDef, artifacts) {
+      const assertions = ensureArray(caseDef.deterministic_assertions);
+      if (assertions.length === 0) {
+        return { total: 0, passed: 0, failed: 0, results: [] };
+      }
+      const source = normalizeAssertionSource(artifacts);
+      const results = assertions.map((assertion, index) => {
+        const item = typeof assertion === "string" ? { contains: assertion } : assertion ?? {};
+        const contains = item.contains ?? item.icontains;
+        const notContains = item.not_contains ?? item["not-contains"] ?? item.notContains;
+        let passed = true;
+        let description = "";
+        if (contains !== undefined) {
+          description = `contains ${contains}`;
+          passed = source.includes(String(contains).toLowerCase());
+        } else if (notContains !== undefined) {
+          description = `not_contains ${notContains}`;
+          passed = !source.includes(String(notContains).toLowerCase());
+        } else {
+          description = JSON.stringify(item);
+          passed = false;
+        }
+        return { index, assertion: item, description, passed };
+      });
+      return {
+        total: results.length,
+        passed: results.filter((result) => result.passed).length,
+        failed: results.filter((result) => !result.passed).length,
+        results
+      };
     }
   }
 
@@ -1347,7 +1402,7 @@ async function runCase(client, serverInfo, caseDef, options, sessionRoot, prefli
   const configAfterDoc = await readConfigDocument(activeConfig.filePath);
   await writeJsonFile(configAfterPath, configAfterDoc);
 
-  const judgePrompt = buildJudgePrompt(caseDef, {
+  const judgeArtifactsInput = {
     executorStatus: classifyRunStatus(execution),
     executorTimedOut: execution.timedOut,
     executorError: execution.errorMessage,
@@ -1356,6 +1411,11 @@ async function runCase(client, serverInfo, caseDef, options, sessionRoot, prefli
     executorEventTranscript: execution.eventTranscript,
     configBefore: JSON.stringify(configBeforeDoc, null, 2),
     configAfter: JSON.stringify(configAfterDoc, null, 2)
+  };
+  const deterministicAssertions = evaluateDeterministicAssertions(caseDef, judgeArtifactsInput);
+  const judgePrompt = buildJudgePrompt(caseDef, {
+    ...judgeArtifactsInput,
+    deterministicAssertionSummary: deterministicAssertions
   });
 
   const validation = await runAcpPrompt(client, judgePrompt, {
@@ -1385,6 +1445,13 @@ async function runCase(client, serverInfo, caseDef, options, sessionRoot, prefli
   const summary = {
     caseId: caseDef.id,
     title: caseDef.title,
+    harness: {
+      packageVersion: JSON.parse(await readFile(path.join(repoRoot, "package.json"), "utf8")).version,
+      scoringMethod: caseDef.scoring_method ?? "llm_judge",
+      requiredObservations: ensureArray(caseDef.required_observations),
+      prohibitedClaims: ensureArray(caseDef.prohibited_claims),
+      rubric: caseDef.rubric ?? null
+    },
     server: serverInfo,
     preflight: preflightSummary,
     configBeforePath,
@@ -1405,6 +1472,7 @@ async function runCase(client, serverInfo, caseDef, options, sessionRoot, prefli
       requestedTools: validation.requestedTools,
       artifacts: judgeArtifacts
     },
+    deterministicAssertions,
     verdict
   };
 
@@ -1522,6 +1590,87 @@ async function runCasesWithConcurrency(cases, concurrency, runner) {
   return results;
 }
 
+async function collectEvalSummaries(root) {
+  const summaries = [];
+  async function walk(dir) {
+    let entries = [];
+    try {
+      entries = await readdir(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const fullPath = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        await walk(fullPath);
+      } else if (entry.name === "summary.json") {
+        try {
+          const parsed = JSON.parse(await readFile(fullPath, "utf8"));
+          summaries.push({ path: fullPath, summary: parsed });
+        } catch {
+          // Ignore malformed historical summaries.
+        }
+      }
+    }
+  }
+  await walk(root);
+  return summaries;
+}
+
+function buildOptimizationHandoff(runDir, summaries) {
+  const caseSummaries = summaries
+    .filter((item) => item.summary?.caseId)
+    .map((item) => item.summary);
+  const failed = caseSummaries.filter((summary) => !/^pass$/i.test(summary.verdict?.verdict ?? ""));
+  const deterministicFailures = caseSummaries.filter((summary) => summary.deterministicAssertions?.failed > 0);
+  const recommendations = [
+    failed.length > 0
+      ? `Investigate ${failed.length} non-passing eval case(s): ${failed.map((summary) => summary.caseId).join(", ")}.`
+      : "Maintain current eval behavior; no failing case summaries were found.",
+    deterministicFailures.length > 0
+      ? `Prioritize deterministic assertion gaps in ${deterministicFailures.map((summary) => summary.caseId).join(", ")}.`
+      : "Expand deterministic assertions to more cases so regressions are cheaper to detect.",
+    "Use rubrics, required observations, and prohibited claims as the first-class harness contract for future eval changes."
+  ];
+
+  return [
+    "# Tap eval optimization handoff",
+    "",
+    `Run directory: ${runDir}`,
+    `Generated: ${new Date().toISOString()}`,
+    "",
+    "## Summary",
+    "",
+    `- Case summaries inspected: ${caseSummaries.length}`,
+    `- Non-passing cases: ${failed.length}`,
+    `- Deterministic assertion failures: ${deterministicFailures.length}`,
+    "",
+    "## Top recommendations",
+    "",
+    ...recommendations.map((item, index) => `${index + 1}. ${item}`),
+    "",
+    "## Case table",
+    "",
+    "| Case | Verdict | Deterministic failed | Summary |",
+    "| --- | --- | ---: | --- |",
+    ...caseSummaries.map((summary) => {
+      const verdict = summary.verdict?.verdict ?? "unknown";
+      const deterministicFailed = summary.deterministicAssertions?.failed ?? 0;
+      const text = String(summary.verdict?.summary ?? "").replace(/\|/g, "\\|");
+      return `| ${summary.caseId} | ${verdict} | ${deterministicFailed} | ${text} |`;
+    })
+  ].join("\n");
+}
+
+async function optimizeEvalRun(options) {
+  const summaries = await collectEvalSummaries(options.runDir);
+  const handoffDir = path.join(options.runDir, "handoff");
+  await mkdir(handoffDir, { recursive: true });
+  const handoffPath = path.join(handoffDir, `codex_handoff_${timestampToken()}.md`);
+  await writeFile(handoffPath, `${buildOptimizationHandoff(options.runDir, summaries)}\n`, "utf8");
+  console.log(`Eval optimization handoff: ${handoffPath}`);
+}
+
 async function runCases(options) {
   await ensureRepoScopedExtensionExists();
   const cases = await loadCaseCatalog();
@@ -1635,6 +1784,11 @@ async function main() {
 
     if (options.command === "judge-interactive") {
       await judgeInteractiveRun(options);
+      return;
+    }
+
+    if (options.command === "optimize") {
+      await optimizeEvalRun(options);
       return;
     }
 

@@ -16,6 +16,7 @@ function summarizeRuntimeState(state) {
   const model = state?.model?.ok ? state.model.value : null;
   const taskCount = state?.tasks?.ok ? state.tasks.value?.tasks?.length ?? 0 : null;
   const scheduleCount = state?.schedules?.ok ? state.schedules.value?.entries?.length ?? 0 : null;
+  const permissionCount = state?.permissions?.ok ? state.permissions.value?.items?.length ?? 0 : null;
   const canvasCount = state?.openCanvases?.ok ? state.openCanvases.value?.openCanvases?.length ?? 0 : null;
   return [
     `sessionId=${state?.sessionId ?? "(none)"}`,
@@ -23,6 +24,7 @@ function summarizeRuntimeState(state) {
     model ? `model=${model.modelId ?? "unknown"} reasoning=${model.reasoningEffort ?? "default"} context=${model.contextTier ?? "default"}` : null,
     taskCount !== null ? `tasks=${taskCount}` : null,
     scheduleCount !== null ? `schedules=${scheduleCount}` : null,
+    permissionCount !== null ? `pendingPermissions=${permissionCount}` : null,
     canvasCount !== null ? `openCanvases=${canvasCount}` : null,
     `elicitation=${state?.capabilities?.ui?.elicitation === true ? "available" : "unavailable"}`,
     `canvases=${state?.capabilities?.ui?.canvases === true ? "available" : "host-gated"}`
@@ -71,6 +73,64 @@ export function createDiagnosticsTools(deps) {
       handler: wrapToolHandler("tap_get_session_state", {}, async () => {
         const state = await diagnostics.getSessionRuntimeState();
         return summarizeRuntimeState(state);
+      })
+    });
+    if (typeof diagnostics.setSessionMode === "function") {
+      tools.push({
+        name: "tap_set_session_mode",
+        description: "Guarded Copilot mode switch for tap workflows. Requires explicit confirmation text and is intended for interactive/plan/autopilot transitions only.",
+        parameters: {
+          type: "object",
+          properties: {
+            mode: {
+              type: "string",
+              enum: ["interactive", "plan", "autopilot"],
+              description: "Target Copilot session mode."
+            },
+            reason: {
+              type: "string",
+              description: "Why this mode switch is needed."
+            },
+            confirm: {
+              type: "string",
+              description: "Must be exactly 'set-session-mode' to confirm this user-visible mode change."
+            }
+          },
+          required: ["mode", "reason", "confirm"]
+        },
+        handler: wrapToolHandler("tap_set_session_mode", (args) => ({ mode: args.mode }), async (args) => {
+          if (args.confirm !== "set-session-mode") {
+            throw new Error("Refusing to change session mode without confirm='set-session-mode'.");
+          }
+          const nextMode = await diagnostics.setSessionMode(args.mode);
+          return `Session mode set to ${nextMode}. reason=${args.reason}`;
+        })
+      });
+    }
+  }
+  if (typeof diagnostics.queryRecords === "function") {
+    tools.push({
+      name: "tap_query_records",
+      description: "Reads structured tap records persisted in the session workspace, such as traces and stream-posts.",
+      parameters: {
+        type: "object",
+        properties: {
+          collection: {
+            type: "string",
+            description: "Record collection name, for example 'traces' or 'stream-posts'."
+          },
+          limit: {
+            type: "integer",
+            minimum: 1,
+            maximum: 500,
+            description: "Maximum recent records to return."
+          }
+        },
+        required: ["collection"]
+      },
+      handler: wrapToolHandler("tap_query_records", (args) => ({ collection: args.collection }), async (args) => {
+        const result = diagnostics.queryRecords(args.collection, { limit: args.limit });
+        return JSON.stringify(result, null, 2);
       })
     });
   }

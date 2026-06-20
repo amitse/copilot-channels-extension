@@ -16,6 +16,11 @@ extensibility audit to concrete tap capabilities.
 - **Mode-aware session state**: `tap_get_session_state` reads current mode,
   model, tasks, schedules, canvases, and UI capabilities without mutating the
   session.
+- **Guarded mode switching**: `tap_set_session_mode` can change
+  interactive/plan/autopilot mode only with explicit confirmation.
+- **Structured session records**: traces and stream posts are mirrored into
+  session-workspace JSONL collections and can be inspected with
+  `tap_query_records`.
 - **Eval metadata hooks**: eval cases can now declare required observations,
   prohibited claims, rubrics, deterministic assertions, and pass/fail examples;
   the judge prompt consumes those fields when present.
@@ -31,13 +36,14 @@ extensibility audit to concrete tap capabilities.
 - **Full trace span hierarchy**: current traces are run-level records. A future
   slice should add child spans for line routing, provider calls, tool calls, and
   prompt dispatch using W3C `traceparent` where available.
-- **Session FS/SQLite ledgers**: current goal/eval ledgers remain EventStream and
-  JSON-tool based. A future slice should persist structured ledgers in Session
-  FS/SQLite for queryable long-horizon work.
+- **SQLite ledgers**: current records are session-workspace JSONL artifacts. A
+  future slice can move those collections into the SDK Session FS SQLite
+  provider for richer querying.
 - **HALO-style optimizer**: eval metadata is now accepted, but the ranked
   recommendation handoff still needs an `evals/optimize` command.
-- **Mode mutation policy**: mode state is read-only in this release. Future work
-  can add guarded mode-setting tools backed by elicitation and ownership policy.
+- **Elicitation-backed mode policy**: mode switching is guarded by explicit tool
+  confirmation. A future slice can add host elicitation prompts and ownership
+  policy before permitting mode mutation.
 - **Goal timeline graph**: the canvas has trace and goal panels, but not a
   timeline graph or per-span drilldown yet.
 - **Production provider examples**: recipes are documented; full provider

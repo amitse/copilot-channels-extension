@@ -143,8 +143,21 @@ export function createSessionPort(initialSession = null) {
       tasks: await read("tasks", () => rpc.tasks?.list?.()),
       schedules: await read("schedules", () => rpc.schedule?.list?.()),
       skills: await read("skills", () => rpc.skills?.list?.()),
+      permissions: await read("permissions", () => rpc.permissions?.pendingRequests?.()),
       openCanvases: await read("openCanvases", () => rpc.canvas?.listOpen?.())
     };
+  }
+
+  async function setMode(mode) {
+    if (!session) {
+      throw new LifecycleError("Session is not attached; cannot set mode.");
+    }
+    const modeApi = session.rpc?.mode;
+    if (!modeApi || typeof modeApi.set !== "function") {
+      throw new LifecycleError("Session mode API is not available in this Copilot session.");
+    }
+    await modeApi.set({ mode });
+    return modeApi.get();
   }
 
   function registerTools(tools) {
@@ -186,6 +199,7 @@ export function createSessionPort(initialSession = null) {
     sendAndWait,
     openCanvas,
     getRuntimeState,
+    setMode,
     registerTools,
     reloadExtension
   };

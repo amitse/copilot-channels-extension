@@ -43,6 +43,7 @@ Installs:
   skills/tap-create-provider/SKILL.md The /tap-create-provider skill for scaffolding providers
   skills/tap-monitor/SKILL.md         The /tap-monitor skill for self-tuning command monitors
   skills/tap-goal/SKILL.md            The /tap-goal skill for autonomous goal loops
+  skills/tap-orchestrate/SKILL.md     The /tap-orchestrate skill for multi-agent workflows
   copilot-instructions.md         Agent instructions for using ※ tap
 `);
 }
@@ -139,7 +140,7 @@ function removeDeprecatedSkills(targetRoot) {
   }
 
   if (state.removedAny) {
-    console.log(`\n  Use the new namespaced commands: /tap-loop  /tap-monitor  /tap-create-provider`);
+    console.log(`\n  Use the new namespaced commands: /tap-loop  /tap-monitor  /tap-goal  /tap-orchestrate  /tap-create-provider`);
   }
 
   return state.allOk;

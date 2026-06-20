@@ -22,6 +22,13 @@ Prefer structured JSON lines for provider output:
 
 This makes EventFilter rules stable and auditable.
 
+Dependency-free template providers live in `providers/templates/`:
+
+- `ci-review-provider.mjs`
+- `jira-github-provider.mjs`
+- `sast-triage-provider.mjs`
+- `detour-workflow-provider.mjs`
+
 ## Jira + GitHub
 
 Inspired by the Codex Jira/GitHub automation pattern:

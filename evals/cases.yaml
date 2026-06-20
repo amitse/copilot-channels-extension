@@ -275,3 +275,38 @@ cases:
       - One is command/process and one is prompt/loop
       - Channels are not mixed together
       - Classifier or subscription strategy is reasoned about independently per channel
+
+  - id: E021
+    category: orchestration
+    title: Multi-role orchestration setup
+    user_prompt: >
+      Orchestrate a small feature delivery with planner, implementer, reviewer,
+      and validator roles, and use gated handoffs instead of one monolithic prompt.
+    expected_tool_usage:
+      must_call:
+        - tap_start_emitter
+      preferred:
+        prompt: coordinator
+        everySchedule:
+          - 2m
+          - 5m
+          - 10m
+    pass_conditions:
+      - Copilot creates or describes a coordinator PromptEmitter rather than a continuous command monitor
+      - The prompt names role-specific handoffs and verification gates
+      - The workflow uses EventStreams or tap_post records as the handoff surface
+      - It does not spawn duplicate role emitters during setup
+    scoring_method: hybrid
+    required_observations:
+      - Coordinator emitter is prompt-based.
+      - Role handoffs are gated on artifacts or EventStream evidence.
+      - Validation role has a concrete verification surface.
+    prohibited_claims:
+      - Do not claim role emitters have already completed during setup.
+      - Do not use one continuous command emitter for orchestration.
+    rubric: >
+      Pass if the setup creates a coordinator-style prompt emitter with a clear
+      role/gate contract and avoids doing the role work during setup.
+    deterministic_assertions:
+      - contains: tap_start_emitter
+      - contains: coordinator
