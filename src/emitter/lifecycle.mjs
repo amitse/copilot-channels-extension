@@ -19,9 +19,46 @@ function createDefaultProcessAdapter() {
   };
 }
 
+function recordScheduledTrace(emitter, context, { startedAt, endedAt = nowIso(), runIndex, result = null, error = null, consumedRun = true } = {}) {
+  try {
+    context.diagnostics?.trace?.({
+      traceId: `${stableTraceComponent(emitter.name)}-${Number(runIndex ?? emitter.runCount) || 0}-${Date.parse(startedAt ?? endedAt) || Date.now()}`,
+      emitterId: emitter.name,
+      emitterName: emitter.name,
+      runIndex: Number(runIndex ?? emitter.runCount) || null,
+      emitterType: emitter.emitterType,
+      runSchedule: emitter.runSchedule,
+      startedAt: startedAt ?? endedAt,
+      endedAt,
+      status: result?.deferred ? "deferred" : result?.ok ? "success" : "failure",
+      ok: result?.ok === true,
+      consumedRun,
+      lineCount: emitter.lineCount,
+      droppedLineCount: emitter.droppedLineCount,
+      error: error ?? result?.error ?? null,
+      metadata: {
+        every: emitter.every ?? null,
+        everySchedule: emitter.everySchedule ?? null,
+        maxRuns: emitter.maxRuns ?? null,
+        stopRequested: emitter.stopRequested === true
+      }
+    });
+  } catch {
+    // Diagnostics must not interrupt emitter lifecycle.
+  }
+}
+
 const SESSION_ATTACH_RETRY_MS = 100;
 const DEFAULT_STOP_WAIT_TIMEOUT_MS = 10_000;
 const STOP_WAIT_POLL_MS = 50;
+
+function stableTraceComponent(value) {
+  return String(value ?? "unknown")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "") || "unknown";
+}
 
 function errorMessage(error) {
   return error?.message ?? String(error ?? "unknown error");
@@ -423,6 +460,8 @@ async function runScheduledIteration(emitter, context) {
   emitter.status = EMITTER_STATUS.RUNNING;
   emitter.runCount += 1;
   emitter.lastRunAt = nowIso();
+  const traceStartedAt = emitter.lastRunAt;
+  const traceRunIndex = emitter.runCount;
 
   let result;
   try {
@@ -444,6 +483,12 @@ async function runScheduledIteration(emitter, context) {
     if (result?.consumeRun === false) {
       emitter.runCount = previousRunCount;
       emitter.lastRunAt = previousLastRunAt;
+      recordScheduledTrace(emitter, context, {
+        startedAt: traceStartedAt,
+        runIndex: traceRunIndex,
+        result,
+        consumedRun: false
+      });
       if (emitter.stopRequested) {
         applyLifecycleTransition(emitter, {
           type: LIFECYCLE_EVENT.ITERATION_RESULT,
@@ -463,7 +508,20 @@ async function runScheduledIteration(emitter, context) {
       result,
       timestamp: nowIso()
     }, context);
+    recordScheduledTrace(emitter, context, {
+      startedAt: traceStartedAt,
+      runIndex: traceRunIndex,
+      result,
+      consumedRun: true
+    });
   } catch (error) {
+    recordScheduledTrace(emitter, context, {
+      startedAt: traceStartedAt,
+      runIndex: traceRunIndex,
+      result: { ok: false, error: errorMessage(error) },
+      error: errorMessage(error),
+      consumedRun: true
+    });
     recordScheduledTransitionFailure(emitter, error, context);
   } finally {
     emitter.inFlight = false;
@@ -479,7 +537,8 @@ export function createLifecycle({
   sessionPort,
   timerAdapter = createDefaultTimerAdapter(),
   processAdapter = createDefaultProcessAdapter(),
-  loggerAdapter = createDefaultLoggerAdapter(sessionPort)
+  loggerAdapter = createDefaultLoggerAdapter(sessionPort),
+  diagnostics = null
 }) {
   function start(emitter) {
     if (emitter.runSchedule === RUN_SCHEDULE.CONTINUOUS) {
@@ -491,6 +550,7 @@ export function createLifecycle({
   }
 
   function contextStartScheduled(emitter) {
+    const context = { lineRouter, timerAdapter, processAdapter, loggerAdapter, sessionPort, diagnostics };
     const scheduleLabel = emitter.runSchedule === RUN_SCHEDULE.TIMED
       ? (emitter.everySchedule ? `backoff [${emitter.everySchedule.join(", ")}]` : `every ${emitter.every}`)
       : emitter.runSchedule === RUN_SCHEDULE.IDLE
@@ -509,19 +569,19 @@ export function createLifecycle({
 
     if (emitter.runSchedule === RUN_SCHEDULE.IDLE) {
       if (sessionPort.isIdle()) {
-        scheduleIteration(emitter, { lineRouter, timerAdapter, processAdapter, loggerAdapter, sessionPort }, IDLE_PROMPT_DELAY_MS);
+        scheduleIteration(emitter, context, IDLE_PROMPT_DELAY_MS);
       }
       return;
     }
 
-    scheduleIteration(emitter, { lineRouter, timerAdapter, processAdapter, loggerAdapter, sessionPort }, 0);
+    scheduleIteration(emitter, context, 0);
   }
 
   async function stop(emitter) {
     applyLifecycleTransition(
       emitter,
       { type: LIFECYCLE_EVENT.STOP, timestamp: nowIso() },
-      { lineRouter, timerAdapter, processAdapter, loggerAdapter, sessionPort }
+      { lineRouter, timerAdapter, processAdapter, loggerAdapter, sessionPort, diagnostics }
     );
 
     if (isTerminalEmitterStatus(emitter.status)) {

@@ -4,6 +4,8 @@ import assert from "node:assert/strict";
 import { EMITTER_OPERATION_STATUS, EMITTER_TYPE, EVENT_OUTCOME, LIFESPAN, OWNERSHIP, RUN_SCHEDULE } from "../consts.mjs";
 import { createStreamTools } from "./channels.mjs";
 import { createEmitterTools } from "./monitors.mjs";
+import { createDiagnosticsTools } from "./diagnostics.mjs";
+import { createGoalVerificationTools } from "./goal-verification.mjs";
 
 test("tap_start_emitter reports canonical snapshot lifespan", async () => {
   const tools = createEmitterTools({
@@ -151,4 +153,59 @@ test("stream tool handlers forward canonical lifespan and ownership policy field
   assert.ok(enableInjector.parameters.properties.ownership);
   assert.ok(enableInjector.parameters.properties.scope);
   assert.ok(enableInjector.parameters.properties.managedBy);
+});
+
+test("goal verification tools render verification results", async () => {
+  const tools = createGoalVerificationTools({
+    verification: {
+      verifyGoalOutput() {
+        return {
+          passed: false,
+          results: [
+            { index: 0, description: "artifact", passed: false, error: "missing" }
+          ]
+        };
+      },
+      auditClaims() {
+        return {
+          passed: true,
+          results: [
+            { index: 0, claim: "claim", passed: true }
+          ]
+        };
+      }
+    }
+  });
+
+  const verify = tools.find((tool) => tool.name === "tap_verify_goal_output");
+  const audit = tools.find((tool) => tool.name === "tap_audit_claims");
+
+  assert.ok(verify);
+  assert.ok(audit);
+  assert.match(await verify.handler({ checks: [] }), /Goal output verification: failed/);
+  assert.match(await audit.handler({ claims: [] }), /Claim audit: passed/);
+});
+
+test("diagnostics tools include read-only session state when available", async () => {
+  const tools = createDiagnosticsTools({
+    diagnostics: {
+      openCanvas: async () => ({ title: "Tap diagnostics" }),
+      getSessionRuntimeState: async () => ({
+        sessionId: "s1",
+        capabilities: { ui: { elicitation: true } },
+        mode: { ok: true, value: "interactive" },
+        model: { ok: true, value: { modelId: "gpt-5.5", reasoningEffort: "high", contextTier: "long_context" } },
+        tasks: { ok: true, value: { tasks: [1, 2] } },
+        schedules: { ok: true, value: { entries: [] } },
+        openCanvases: { ok: true, value: { openCanvases: [] } }
+      })
+    }
+  });
+  const getState = tools.find((tool) => tool.name === "tap_get_session_state");
+
+  assert.ok(getState);
+  const output = await getState.handler({});
+  assert.match(output, /mode=interactive/);
+  assert.match(output, /tasks=2/);
+  assert.match(output, /elicitation=available/);
 });

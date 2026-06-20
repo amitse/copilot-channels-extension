@@ -3,6 +3,7 @@ import { nowIso } from "../util/time.mjs";
 const DEFAULT_MAX_LOGS = 300;
 const DEFAULT_MAX_EVENTS = 300;
 const DEFAULT_MAX_RUNTIME_EVENTS = 300;
+const DEFAULT_MAX_TRACES = 300;
 const MAX_STRING_LENGTH = 1200;
 const MAX_COLLECTION_ITEMS = 40;
 const MAX_DEPTH = 4;
@@ -156,10 +157,12 @@ export function createDiagnosticsStore(options = {}) {
   const logs = createRingBuffer(options.maxLogs ?? DEFAULT_MAX_LOGS);
   const sessionEvents = createRingBuffer(options.maxSessionEvents ?? DEFAULT_MAX_EVENTS);
   const runtimeEvents = createRingBuffer(options.maxRuntimeEvents ?? DEFAULT_MAX_RUNTIME_EVENTS);
+  const traces = createRingBuffer(options.maxTraces ?? DEFAULT_MAX_TRACES);
   const sessionEventCounts = new Map();
   let logCount = 0;
   let runtimeEventCount = 0;
   let sessionEventCount = 0;
+  let traceCount = 0;
   let cleanupSessionListener = () => {};
 
   function recordLog(source, message, options = {}) {
@@ -186,6 +189,42 @@ export function createDiagnosticsStore(options = {}) {
       type: String(type ?? "runtime"),
       message: truncateString(message, MAX_STRING_LENGTH),
       metadata: safeClone(metadata, {
+        maxDepth: 3,
+        maxStringLength: 700,
+        maxCollectionItems: 20
+      })
+    });
+  }
+
+  function recordTrace(trace = {}) {
+    traceCount += 1;
+    const startedAt = trace.startedAt ?? trace.timestamp ?? nowIso();
+    const endedAt = trace.endedAt ?? nowIso();
+    const startMs = Date.parse(startedAt);
+    const endMs = Date.parse(endedAt);
+    const durationMs = Number.isFinite(startMs) && Number.isFinite(endMs)
+      ? Math.max(0, endMs - startMs)
+      : null;
+
+    return traces.append({
+      id: createId("trace", traceCount),
+      traceId: String(trace.traceId ?? `trace-${traceCount.toString(36)}`),
+      timestamp: endedAt,
+      startedAt,
+      endedAt,
+      durationMs,
+      emitterId: trace.emitterId ?? trace.emitterName ?? null,
+      emitterName: trace.emitterName ?? trace.emitterId ?? null,
+      runIndex: Number.isFinite(Number(trace.runIndex)) ? Number(trace.runIndex) : null,
+      emitterType: trace.emitterType ?? null,
+      runSchedule: trace.runSchedule ?? null,
+      status: trace.status ?? "unknown",
+      ok: trace.ok === true,
+      consumedRun: trace.consumedRun !== false,
+      lineCount: Number.isFinite(Number(trace.lineCount)) ? Number(trace.lineCount) : null,
+      droppedLineCount: Number.isFinite(Number(trace.droppedLineCount)) ? Number(trace.droppedLineCount) : null,
+      error: trace.error ? truncateString(trace.error, MAX_STRING_LENGTH) : null,
+      metadata: safeClone(trace.metadata ?? null, {
         maxDepth: 3,
         maxStringLength: 700,
         maxCollectionItems: 20
@@ -238,11 +277,13 @@ export function createDiagnosticsStore(options = {}) {
       generatedAt: nowIso(),
       logs: logs.snapshot(options.logLimit ?? 140),
       runtimeEvents: runtimeEvents.snapshot(options.runtimeEventLimit ?? 140),
+      traces: traces.snapshot(options.traceLimit ?? 140),
       sessionEvents: sessionEvents.snapshot(options.sessionEventLimit ?? 140),
       sessionEventCounts: Object.fromEntries([...sessionEventCounts.entries()].sort(([left], [right]) => left.localeCompare(right))),
       stats: {
         logs: logs.stats(),
         runtimeEvents: runtimeEvents.stats(),
+        traces: traces.stats(),
         sessionEvents: sessionEvents.stats()
       }
     };
@@ -251,6 +292,7 @@ export function createDiagnosticsStore(options = {}) {
   return {
     log: recordLog,
     event: recordRuntimeEvent,
+    trace: recordTrace,
     attachSession,
     detachSession,
     snapshot

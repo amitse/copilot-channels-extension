@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Added structured emitter-run traces to diagnostics snapshots and the
+  diagnostics canvas.
+- Added read-only `tap_get_session_state` for mode/model/tasks/schedules/canvas
+  awareness.
+- Added `tap_verify_goal_output` and `tap_audit_claims` evidence tools.
+- Added `/tap-orchestrate` as a foundation for coordinator and role-emitter
+  workflows.
+- Added provider integration and control-plane roadmap recipes.
+
 ### Changed
 
 - Strengthened `/tap-goal` with Codex-style goal contracts: outcome,
@@ -18,6 +29,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   iteration records, research claim ledgers, and budget-limited handoffs.
 - Timed prompt deferrals caused by busy sessions no longer consume `maxRuns`
   budget.
+- `/tap-monitor` companion prompts now post structured REVIEW RECORD audit
+  entries.
+- Evals can include rubrics, required/prohibited observations, deterministic
+  assertions, and pass/fail examples in judge prompts.
 
 ## [2.0.1] — 2026-05-06
 

@@ -63,9 +63,25 @@ Steps:
    - Lines that indicate important events (errors, warnings, state changes) → candidates for `{ "match": "...", "outcome": "inject" }`.
    - Lines that are never relevant at all → candidates for tighter keep/drop rules.
 4. Compare what you see against the current filter patterns for emitter '<command-emitter-name>'.
-5. Only update if the evidence clearly justifies a change (signal-to-noise is poor or a pattern is clearly wrong).
-6. If an update is needed, call tap_set_event_filter with the revised patterns for emitter '<command-emitter-name>'.
-7. Do not report your findings to the user unless you made a change. If you made a change, send one short message describing what you updated and why.
+5. Use this shared contract when judging the stream:
+   - stream_purpose: <why the user wanted this monitor>
+   - signal_vocabulary: errors, warnings, failures, state changes, explicit success/failure markers
+   - noise_vocabulary: timestamps-only, heartbeat-only, repeated unchanged status, empty pings
+6. Only update if the evidence clearly justifies a change (signal-to-noise is poor or a pattern is clearly wrong).
+7. If an update is needed, call tap_set_event_filter with the revised patterns for emitter '<command-emitter-name>'.
+8. Always call tap_post with channel '<stream-name>' and a REVIEW RECORD wrapped in markers:
+   === BEGIN_REVIEW_RECORD ===
+   {
+     "reviewed_at": "<ISO timestamp>",
+     "entries_examined": <number>,
+     "issue_type": "noise_pattern|missed_signal|over_filtering|duplicate_inject|no_change",
+     "patterns_changed": ["short label for each change"],
+     "remaining_noise_delta": ["what still looks noisy or uncertain"],
+     "signal_vocabulary": ["terms treated as signal"],
+     "noise_vocabulary": ["terms treated as noise"]
+   }
+   === END_REVIEW_RECORD ===
+9. Do not report your findings to the user unless you made a change. If you made a change, send one short message describing what you updated and why.
 ```
 
 Substitute the real emitter name and stream name into the prompt before passing it to `tap_start_emitter`.

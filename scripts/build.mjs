@@ -67,14 +67,22 @@ copyFileSync(
 );
 console.log("✓ dist/skills/tap-goal/SKILL.md copied");
 
-// 6. Copy copilot-instructions.md
+// 6. Copy tap-orchestrate skill
+mkdirSync(path.join(dist, "skills", "tap-orchestrate"), { recursive: true });
+copyFileSync(
+  path.join(root, "src", "skills", "tap-orchestrate", "SKILL.md"),
+  path.join(dist, "skills", "tap-orchestrate", "SKILL.md")
+);
+console.log("✓ dist/skills/tap-orchestrate/SKILL.md copied");
+
+// 7. Copy copilot-instructions.md
 copyFileSync(
   path.join(root, "src", "copilot-instructions.md"),
   path.join(dist, "copilot-instructions.md")
 );
 console.log("✓ dist/copilot-instructions.md copied");
 
-// 7. Write version.json
+// 8. Write version.json
 const pkg = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8"));
 writeFileSync(
   path.join(dist, "version.json"),

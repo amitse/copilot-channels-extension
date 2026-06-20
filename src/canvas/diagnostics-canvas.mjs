@@ -29,6 +29,7 @@ function sanitizeSnapshotOptions(input = {}) {
   return {
     streamEntryLimit: Number.isFinite(limit) ? Math.max(10, Math.min(200, Math.floor(limit))) : 80,
     logLimit: Number.isFinite(limit) ? Math.max(20, Math.min(300, Math.floor(limit))) : 160,
+    traceLimit: Number.isFinite(limit) ? Math.max(20, Math.min(300, Math.floor(limit))) : 160,
     sessionEventLimit: Number.isFinite(limit) ? Math.max(20, Math.min(300, Math.floor(limit))) : 160,
     runtimeEventLimit: Number.isFinite(limit) ? Math.max(20, Math.min(300, Math.floor(limit))) : 160
   };
@@ -40,9 +41,10 @@ function summarizeSnapshot(snapshot) {
   const streams = Array.isArray(snapshot?.streams) ? snapshot.streams.length : 0;
   const providers = Array.isArray(snapshot?.gateway?.providers) ? snapshot.gateway.providers.length : 0;
   const logs = snapshot?.diagnostics?.stats?.logs?.retained ?? 0;
+  const traces = snapshot?.diagnostics?.stats?.traces?.retained ?? 0;
   const sessionEvents = snapshot?.diagnostics?.stats?.sessionEvents?.retained ?? 0;
 
-  return { streams, runningEmitters, configuredEmitters, providers, logs, sessionEvents };
+  return { streams, runningEmitters, configuredEmitters, providers, logs, traces, sessionEvents };
 }
 
 function createHtml() {
@@ -273,7 +275,7 @@ function createHtml() {
       overflow: auto;
     }
 
-    .stream-grid, .emitter-grid, .provider-grid {
+    .stream-grid, .emitter-grid, .provider-grid, .trace-grid {
       display: grid;
       gap: 12px;
     }
@@ -445,6 +447,16 @@ function createHtml() {
         </div>
       </section>
 
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Goals and traces</h2>
+          <small id="trace-count">0 traces</small>
+        </div>
+        <div class="panel-body">
+          <div class="trace-grid" id="traces"></div>
+        </div>
+      </section>
+
       <section class="panel timeline-panel">
         <div class="panel-head">
           <h2>Evidence timeline</h2>
@@ -481,12 +493,14 @@ function createHtml() {
       const streams = snapshot.streams?.length ?? 0;
       const providers = snapshot.gateway?.providers?.length ?? 0;
       const queue = snapshot.notifications?.queueSize ?? 0;
+      const traces = snapshot.diagnostics?.stats?.traces?.retained ?? 0;
       const sessionEvents = snapshot.diagnostics?.stats?.sessionEvents?.retained ?? 0;
       el("metrics").innerHTML = [
         metric("streams", streams),
         metric("running emitters", running),
         metric("providers", providers),
         metric("queued injections", queue),
+        metric("traces", traces),
         metric("configured emitters", configured),
         metric("session events", sessionEvents)
       ].join("");
@@ -526,6 +540,21 @@ function createHtml() {
       el("providers").innerHTML = gatewayRecord + rows;
     }
 
+    function renderTraces(snapshot) {
+      const traces = snapshot.diagnostics?.traces ?? [];
+      const goalStreams = (snapshot.streams ?? []).filter((stream) => String(stream.name ?? "").startsWith("goal-"));
+      el("trace-count").textContent = traces.length + " traces";
+      const traceRows = traces.slice(-12).reverse().map((trace) => {
+        const tone = trace.ok ? "ready" : trace.status === "deferred" ? "warning" : "error";
+        return '<div class="record"><strong>' + escapeHtml(trace.emitterName ?? trace.emitterId ?? "unknown") + ' <span class="badge ' + tone + '">' + escapeHtml(trace.status ?? "unknown") + '</span></strong><div class="meta">run=' + escapeHtml(trace.runIndex ?? "?") + ' duration=' + escapeHtml(trace.durationMs ?? "?") + 'ms | trace=' + escapeHtml(trace.traceId ?? "?") + '</div>' + (trace.error ? '<div class="details">' + escapeHtml(trace.error) + '</div>' : '') + '</div>';
+      }).join("");
+      const goalRows = goalStreams.map((stream) => {
+        const latest = (stream.entries ?? []).slice(-2).reverse().map((entry) => '<div class="entry"><span class="meta">' + escapeHtml(timeOnly(entry.timestamp)) + '</span>\\n' + escapeHtml(entry.text) + '</div>').join("");
+        return '<div class="record"><strong>' + escapeHtml(stream.name) + ' <span class="badge info">goal stream</span></strong><div class="meta">' + escapeHtml(stream.entries?.length ?? 0) + ' retained entries</div>' + (latest || '<div class="entry">No goal ledger entries retained.</div>') + '</div>';
+      }).join("");
+      el("traces").innerHTML = (traceRows || '<div class="empty">No emitter-run traces retained yet.</div>') + (goalRows ? '<div class="panel-head" style="margin:14px -14px 12px"><h2>Goal ledgers</h2><small>' + goalStreams.length + ' streams</small></div>' + goalRows : "");
+    }
+
     function collectTimeline(snapshot) {
       const items = [];
       for (const stream of snapshot.streams ?? []) {
@@ -541,6 +570,9 @@ function createHtml() {
       }
       for (const event of snapshot.diagnostics?.runtimeEvents ?? []) {
         items.push({ group: "runtime", timestamp: event.timestamp, source: event.type, level: "info", message: event.message, detail: compactJson(event.metadata) });
+      }
+      for (const trace of snapshot.diagnostics?.traces ?? []) {
+        items.push({ group: "runtime", timestamp: trace.endedAt ?? trace.timestamp, source: "trace/" + (trace.emitterName ?? trace.emitterId ?? "unknown"), level: trace.ok ? "info" : "warning", message: "emitter run " + (trace.status ?? "unknown"), detail: compactJson({ traceId: trace.traceId, runIndex: trace.runIndex, durationMs: trace.durationMs, error: trace.error }) });
       }
       return items.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
     }
@@ -565,6 +597,7 @@ function createHtml() {
       renderMetrics(snapshot);
       renderStreams(snapshot);
       renderProviders(snapshot);
+      renderTraces(snapshot);
       renderTimeline(snapshot);
     }
 

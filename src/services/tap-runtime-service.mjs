@@ -5,6 +5,7 @@ import { createProviderPushService } from "./provider-push-service.mjs";
 import { createRuntimeHooks } from "./runtime-hooks.mjs";
 import { createRuntimeSubsystems } from "./runtime-subsystems.mjs";
 import { createStreamService } from "./stream-service.mjs";
+import { createGoalVerificationService } from "./goal-verification-service.mjs";
 import { createDiagnosticsStore } from "../diagnostics/store.mjs";
 import { nowIso } from "../util/time.mjs";
 import { TAP_DIAGNOSTICS_CANVAS_ID } from "../canvas/consts.mjs";
@@ -42,7 +43,10 @@ export function createTapRuntimeService(options = {}) {
     configWorkspace,
     emitterWorkspace,
     persist
-  } = createRuntimeSubsystems(options);
+  } = createRuntimeSubsystems({
+    ...options,
+    diagnostics: diagnosticsStore
+  });
   const streamService = createStreamService({
     streams,
     configStore,
@@ -54,6 +58,10 @@ export function createTapRuntimeService(options = {}) {
     configStore,
     supervisor,
     emitterWorkspace
+  });
+  const goalVerificationService = createGoalVerificationService({
+    getBaseCwd: sessionContext.getBaseCwd,
+    getStreamHistory: (channel, limit) => streamService.getStreamHistory(channel, limit)
   });
   const configBootstrapService = createConfigBootstrapService({
     streams,
@@ -235,6 +243,7 @@ export function createTapRuntimeService(options = {}) {
         input: canvasInput
       });
     },
+    getSessionRuntimeState: () => sessionPort.getRuntimeState(),
     attachSession: diagnosticsStore.attachSession,
     detachSession: diagnosticsStore.detachSession
   };
@@ -243,12 +252,14 @@ export function createTapRuntimeService(options = {}) {
     tools: {
       streams: streamCapabilities,
       emitters: emitterCapabilities,
-      diagnostics: diagnosticsCapabilities
+      diagnostics: diagnosticsCapabilities,
+      verification: goalVerificationService
     },
     hooks: hookCapabilities,
     session: sessionCapabilities,
     provider: providerCapabilities,
     diagnostics: diagnosticsCapabilities,
+    verification: goalVerificationService,
     getBaseCwd: sessionContext.getBaseCwd,
     getSessionInfo,
     attachSession,

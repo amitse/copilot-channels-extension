@@ -22,20 +22,21 @@ const ROLLBACK_STOP_WAIT_TIMEOUT_MS = 10_000;
  * @property {Object} emitterWorkspace - Runtime workspace capability for emitter cwd resolution
  * @property {Function} persist - Function to persist config
  * @property {Object} [lifecycle] - Optional lifecycle adapter seam for tests
+ * @property {Object} [diagnostics] - Optional diagnostics recorder
  */
 
 /**
  * Create emitter supervisor with minimal dependency injection.
  * @param {SupervisorDeps} deps
  */
-export function createEmitterSupervisor({ streams, configStore, notifications, sessionPort, emitterWorkspace, persist, lifecycle: lifecycleOverride }) {
+export function createEmitterSupervisor({ streams, configStore, notifications, sessionPort, emitterWorkspace, persist, lifecycle: lifecycleOverride, diagnostics = null }) {
   const emitters = new Map();
   const lineRouter = createLineRouter({
     streams,
     notifications,
     surface: (message, options) => sessionPort.log(message, options)
   });
-  const lifecycle = lifecycleOverride ?? createLifecycle({ lineRouter, sessionPort });
+  const lifecycle = lifecycleOverride ?? createLifecycle({ lineRouter, sessionPort, diagnostics });
 
   function hasExplicitPolicyValue(value) {
     return value !== undefined && value !== null;

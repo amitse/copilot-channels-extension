@@ -27,6 +27,28 @@ cases:
       - Session monitor exists with workType=command and execution=process
       - Channel receives heartbeat lines
       - Updates can be surfaced without waiting for transcript events
+    scoring_method: hybrid
+    required_observations:
+      - The assistant used tap_start_emitter to start a command emitter.
+      - The monitor was temporary and subscribed for proactive delivery.
+      - The heartbeat command output was treated as stream data.
+    prohibited_claims:
+      - Do not claim the monitor is persistent unless persistent scope was requested.
+      - Do not claim success without evidence that an emitter was started.
+    rubric: >
+      Pass if the executor starts a temporary command emitter for the heartbeat
+      script, subscribes or otherwise enables proactive delivery, and does not
+      invent persistence or unrelated filter behavior. Partial credit is allowed
+      if the emitter starts but delivery or evidence is incomplete.
+    deterministic_assertions:
+      - contains: tap_start_emitter
+      - not_contains: "scope=persistent"
+    suggested_pass_example: >
+      Started a temporary command emitter for node ./examples/heartbeat.mjs with
+      subscription enabled and confirmed the stream receives heartbeat lines.
+    suggested_fail_example: >
+      Only described how to start a monitor, or created a persistent emitter
+      without the user asking for persistence.
 
   - id: E002
     category: line-processing

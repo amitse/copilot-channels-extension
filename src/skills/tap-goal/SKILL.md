@@ -133,13 +133,19 @@ Continuation rules:
 - If only 1 iteration remains and the goal is not complete, do not start broad new work. Produce a budget-limited handoff instead.
 - Do not treat budget exhaustion or a lifecycle "reached run budget" message as success.
 - If this iteration makes no progress-producing tool calls beyond required status/ledger bookkeeping and does not change evidence, call `tap_post` with `channel='<goal-emitter-name>'` and a no-action handoff, then stop the emitter rather than spinning.
+- If the remaining delta is unchanged from the previous ITERATION RECORD, post a STALLED LOOP record and stop rather than spending the rest of the budget.
 
 Evidence-audit rules:
 - Before marking complete, identify the verification surface from the goal contract.
 - Check the evidence directly: test output, benchmark result, file content, diff, generated artifact, source material, or other concrete proof.
+- When the evidence is a workspace file, EventStream entry, or already-run command result, call `tap_verify_goal_output` or `tap_audit_claims` before GOAL COMPLETE.
 - Check listed constraints for regressions.
 - If the verification surface cannot be checked, treat the goal as blocked, not complete.
 - Completion requires an explicit evidence audit in the final response and in the EventStream.
+- Wrap machine-readable EventStream records with explicit markers:
+  `=== BEGIN_ITERATION_RECORD ===` / `=== END_ITERATION_RECORD ===`,
+  `=== BEGIN_GOAL_COMPLETE ===` / `=== END_GOAL_COMPLETE ===`,
+  `=== BEGIN_GOAL_BLOCKED ===` / `=== END_GOAL_BLOCKED ===`.
 
 Research/audit goal rules:
 - For research, reproduction, audit, or investigation goals, maintain a claim ledger.
@@ -148,21 +154,26 @@ Research/audit goal rules:
 
 On this iteration:
 1. Briefly assess current progress toward the goal and the remaining iteration budget.
-2. If the goal is already achieved, first call `tap_post` with `channel='<goal-emitter-name>'` and a GOAL COMPLETE evidence audit in `message`, then call tap_stop_emitter for '<goal-emitter-name>' with scope='temporary', report that the goal is complete, and stop.
+2. If the goal is already achieved, first call `tap_verify_goal_output` or `tap_audit_claims` against the verification surface. If verification passes, call `tap_post` with `channel='<goal-emitter-name>'` and a marked GOAL COMPLETE evidence audit in `message`, then call tap_stop_emitter for '<goal-emitter-name>' with scope='temporary', report that the goal is complete, and stop.
 3. If the goal is blocked by missing information, permissions, failing external systems, or an unsafe action, first call `tap_post` with `channel='<goal-emitter-name>'` and a GOAL BLOCKED report in `message`, then call tap_stop_emitter for '<goal-emitter-name>' with scope='temporary', report the blocker, and stop.
-4. If this is the final iteration and the goal is not complete, do not start substantive new work. Call `tap_post` with `channel='<goal-emitter-name>'` and a BUDGET LIMITED summary in `message`: progress, evidence gathered, remaining work, and recommended next goal or budget. Then leave a concise handoff.
+4. If this is the final iteration and the goal is not complete, do not start substantive new work. Call `tap_post` with `channel='<goal-emitter-name>'` and a BUDGET LIMITED summary in `message`: progress, evidence gathered, remaining work, recommended next `/tap-goal ...` invocation, and suggested fresh budget. Then leave a concise handoff.
 5. Otherwise, choose the next smallest useful action toward the goal that fits the remaining budget and perform it.
 6. Validate the action using the repository's existing checks when relevant.
 7. End by calling `tap_post` with `channel='<goal-emitter-name>'` and an ITERATION RECORD in `message` containing:
    - iteration and budget used
    - action taken
    - evidence checked and result
+   - claim ledger entries when this is a research/audit goal
+   - remaining_delta or unchanged_delta status
    - current status: progressing, complete, blocked, or budget-limited
    - next best action
+   - branch, commit SHA, PR URL, run URL, or issue key when relevant
 8. End the user-visible response with the same concise progress update, what remains, and the next best step if the loop stops before completion.
 
 Safety rules:
 - Do not make unrelated changes.
+- Do not modify this goal emitter's own `every`, `everySchedule`, `maxRuns`, event filter, or goal contract while it is running unless the user explicitly asks.
+- Do not spawn additional emitters from this goal unless orchestration is explicitly part of the goal contract.
 - Do not mark the goal complete unless the objective is actually achieved and no required work remains.
 - Do not treat reaching the iteration budget as success.
 - Do not continue if the next step requires explicit user approval.

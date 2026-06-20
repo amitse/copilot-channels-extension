@@ -123,6 +123,30 @@ export function createSessionPort(initialSession = null) {
     return canvasApi.open(params);
   }
 
+  async function getRuntimeState() {
+    if (!session) {
+      throw new LifecycleError("Session is not attached; cannot inspect runtime state.");
+    }
+    const rpc = session.rpc ?? {};
+    const read = async (label, fn) => {
+      try {
+        return { ok: true, value: await fn() };
+      } catch (error) {
+        return { ok: false, error: error?.message ?? String(error ?? "unknown error") };
+      }
+    };
+    return {
+      sessionId: session.sessionId ?? null,
+      capabilities: session.capabilities ?? null,
+      mode: await read("mode", () => rpc.mode?.get?.()),
+      model: await read("model", () => rpc.model?.getCurrent?.()),
+      tasks: await read("tasks", () => rpc.tasks?.list?.()),
+      schedules: await read("schedules", () => rpc.schedule?.list?.()),
+      skills: await read("skills", () => rpc.skills?.list?.()),
+      openCanvases: await read("openCanvases", () => rpc.canvas?.listOpen?.())
+    };
+  }
+
   function registerTools(tools) {
     if (!session) return;
     try {
@@ -161,6 +185,7 @@ export function createSessionPort(initialSession = null) {
     send,
     sendAndWait,
     openCanvas,
+    getRuntimeState,
     registerTools,
     reloadExtension
   };

@@ -289,6 +289,8 @@ PLAN.md                         # ubiquitous language and design decisions
 | [Use cases and patterns](./docs/use-cases.md) | Recipes for deploy watchers, PR monitors, log tailers, and more |
 | [Copilot SDK canvas surfaces](./docs/recipes/copilot-sdk-canvas.md) | Local SDK findings for extension-owned canvas UI surfaces |
 | [Codex Goals lessons for tap-goal](./docs/recipes/codex-goals-for-tap-goal.md) | Goal-loop contract, evidence audit, and autopilot scheduling guidance |
+| [Tap control-plane roadmap](./docs/recipes/tap-control-plane-roadmap.md) | Implemented and deferred control-plane slices from the Codex/Copilot audit |
+| [Provider integration patterns](./docs/recipes/provider-integration-patterns.md) | Jira/GitHub, CI auto-fix, code review, SAST, and browser/Detour provider recipes |
 | [Evals](./docs/evals.md) | Run or extend the automated test suite |
 | [Copilot instructions](./src/copilot-instructions.md) | Understand or customize how the agent uses this extension |
 | [Implementation plan](./PLAN.md) | Ubiquitous language and naming conventions for contributors |

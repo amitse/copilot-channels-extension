@@ -161,10 +161,20 @@ switching into wrap-up mode when the remaining iteration budget is low, posting
 structured iteration records to their EventStream with `tap_post`, and stopping
 themselves when complete or blocked. Completion requires an evidence audit
 against concrete files, tests, logs, benchmark output, or generated artifacts.
+Use `tap_verify_goal_output` and `tap_audit_claims` when the verification surface
+is a workspace file, stream entry, or already-run command result.
 If the session may stay continuously busy (for example in autopilot-heavy
 flows), use a timed PromptEmitter with a backoff schedule such as
 `everySchedule=["2m","5m","10m"]` instead of relying on idle to trigger the next
 goal step.
+
+Use `tap_get_session_state` before mode-sensitive work. It reads the current
+Copilot mode, model/reasoning effort, tasks, schedules, open canvases, and UI
+capabilities without mutating the session.
+
+For genuinely multi-role work, prefer `/tap-orchestrate`: create one coordinator
+PromptEmitter that gates role-specific sub-emitters using EventStream handoffs.
+Do not use orchestration for tasks a single `/tap-goal` loop can complete.
 
 ## Borrow from the official SDK examples
 

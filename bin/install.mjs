@@ -269,6 +269,11 @@ function buildAncillaryArtifacts(targetRoot) {
       label: "skills/tap-goal/SKILL.md"
     },
     {
+      src: path.join(distDir, "skills", "tap-orchestrate", "SKILL.md"),
+      dest: path.join(targetRoot, "skills", "tap-orchestrate", "SKILL.md"),
+      label: "skills/tap-orchestrate/SKILL.md"
+    },
+    {
       src: path.join(distDir, "copilot-instructions.md"),
       dest: path.join(targetRoot, "copilot-instructions.md"),
       label: "copilot-instructions.md"

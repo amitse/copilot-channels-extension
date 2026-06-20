@@ -23,7 +23,8 @@ export function createRuntimeSubsystems(options = {}) {
     notifications,
     sessionPort,
     emitterWorkspace,
-    persist
+    persist,
+    diagnostics: options.diagnostics
   });
 
   return {

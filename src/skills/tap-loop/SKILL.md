@@ -7,6 +7,12 @@ user-invocable: true
 
 Create a timed or idle PromptEmitter with `tap_start_emitter`.
 
+If the request includes a completion condition such as "until", "keep going
+until", "stop when", "work until done", or "iterate until complete", do not
+create a plain loop. Redirect to `/tap-goal` semantics instead, because the
+user is asking for a completion contract with evidence, budget, and stop
+conditions rather than a recurring prompt.
+
 ## Expected input
 
 Interpret the invocation as:

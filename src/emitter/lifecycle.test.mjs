@@ -365,6 +365,8 @@ test("mock timer advances scheduled prompt emitter", async () => {
   const timerAdapter = createMockTimerAdapter();
   const processAdapter = createMockProcessAdapter();
   const loggerAdapter = createMockLoggerAdapter();
+  const traces = [];
+  const diagnostics = { trace: (entry) => traces.push(entry) };
   const sent = [];
   const lineRouter = {
     appendSystemMessage() {},
@@ -379,7 +381,7 @@ test("mock timer advances scheduled prompt emitter", async () => {
       sent.push(prompt);
     }
   };
-  const lifecycle = createLifecycle({ lineRouter, sessionPort, timerAdapter, processAdapter, loggerAdapter });
+  const lifecycle = createLifecycle({ lineRouter, sessionPort, timerAdapter, processAdapter, loggerAdapter, diagnostics });
   const emitter = {
     name: "demo",
     emitterType: EMITTER_TYPE.PROMPT,
@@ -408,6 +410,13 @@ test("mock timer advances scheduled prompt emitter", async () => {
   assert.equal(sent.at(-1), "hello");
   assert.equal(emitter.status, EMITTER_STATUS.COMPLETED);
   assert.equal(emitter.lineCount, 1);
+  assert.equal(traces.length, 1);
+  assert.match(traces[0].traceId, /^demo-1-/);
+  assert.equal(traces[0].emitterId, "demo");
+  assert.equal(traces[0].runIndex, 1);
+  assert.equal(traces[0].status, "success");
+  assert.equal(traces[0].ok, true);
+  assert.equal(traces[0].consumedRun, true);
 });
 
 test("scheduled prompt waits for session attach without consuming a run", async () => {

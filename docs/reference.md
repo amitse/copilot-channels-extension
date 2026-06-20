@@ -74,6 +74,9 @@ Start with no filter rules (keep-all bootstrap), observe the stream with `tap_st
 | `tap_enable_injector` | Enable proactive session delivery |
 | `tap_disable_injector` | Disable proactive delivery |
 | `tap_open_diagnostics_canvas` | Open/focus the live diagnostics canvas |
+| `tap_get_session_state` | Read current Copilot mode/model/tasks/schedules/canvas state |
+| `tap_verify_goal_output` | Verify goal evidence from files, streams, or caller-supplied command evidence |
+| `tap_audit_claims` | Audit structured goal claims against concrete evidence surfaces |
 
 ## Diagnostics canvas
 
@@ -90,6 +93,8 @@ The canvas is a bounded local flight recorder for:
 - EventFilter and SessionInjector state
 - provider gateway state and registered tools
 - notification queue state
+- emitter-run traces and goal ledger streams
+- current eval/control-plane evidence when available
 - tap runtime logs
 - recent SDK session events
 

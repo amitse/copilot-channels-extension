@@ -67,7 +67,7 @@ function usage() {
     "  --judge-timeout-ms <n> Timeout for the judge Copilot session",
     "  --concurrency <n>     Max simultaneous eval cases (default 1). Cases that touch persistent config still run serially.",
     "  --dry-run             Print prompts without invoking Copilot"
-  ].join("\n");
+  ].filter(Boolean).join("\n");
 }
 
 function createDefaultOptions(command) {
@@ -260,6 +260,15 @@ function buildJudgePrompt(caseDef, artifacts) {
   const passConditions = ensureArray(caseDef.pass_conditions)
     .map((condition) => `- ${condition}`)
     .join("\n");
+  const requiredObservations = ensureArray(caseDef.required_observations)
+    .map((condition) => `- ${condition}`)
+    .join("\n");
+  const prohibitedClaims = ensureArray(caseDef.prohibited_claims)
+    .map((condition) => `- ${condition}`)
+    .join("\n");
+  const deterministicAssertions = ensureArray(caseDef.deterministic_assertions)
+    .map((assertion) => `- ${typeof assertion === "string" ? assertion : JSON.stringify(assertion)}`)
+    .join("\n");
 
   return [
     `You are the validation Copilot for eval case ${caseDef.id}: ${caseDef.title}.`,
@@ -267,6 +276,13 @@ function buildJudgePrompt(caseDef, artifacts) {
     "Return exactly one JSON object on a single line, with no markdown fences and no extra commentary.",
     'Schema: {"caseId":"E001","verdict":"pass|partial|fail","summary":"short explanation","checks":[{"condition":"text","status":"pass|partial|fail","evidence":"text"}],"notes":["optional note"]}',
     "Inside every string value, do not emit unescaped double-quote characters. Do not paste raw JSON or code snippets into evidence strings; paraphrase instead (for example, write: the monitors array is empty). If you must quote something, use single quotes or escape each inner double quote as \\\".",
+    caseDef.scoring_method ? `Scoring method: ${caseDef.scoring_method}` : null,
+    caseDef.rubric ? `Rubric:\n${truncateText(caseDef.rubric, 1600)}` : null,
+    requiredObservations ? `Required observations:\n${requiredObservations}` : null,
+    prohibitedClaims ? `Prohibited claims:\n${prohibitedClaims}` : null,
+    deterministicAssertions ? `Deterministic assertions to consider:\n${deterministicAssertions}` : null,
+    caseDef.suggested_pass_example ? `Suggested pass example:\n${truncateText(caseDef.suggested_pass_example, 800)}` : null,
+    caseDef.suggested_fail_example ? `Suggested fail example:\n${truncateText(caseDef.suggested_fail_example, 800)}` : null,
     `Executor status: ${artifacts.executorStatus}`,
     `Executor timed out: ${artifacts.executorTimedOut ? "yes" : "no"}`,
     `Executor error: ${truncateText(artifacts.executorError || "[none]", 600)}`,
