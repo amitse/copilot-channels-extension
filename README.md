@@ -212,13 +212,15 @@ The prompt fires immediately, then re-fires after each idle period. It stops aft
 
 **Work toward a goal autonomously**
 
-Use `/tap-goal` to create an idle goal loop that keeps advancing a concrete objective until it finishes, hits a blocker, or reaches its iteration budget. Goals are explicit, control commands are user-owned, and the loop should stop itself only when the objective is actually complete or blocked.
+Use `/tap-goal` to create a goal loop that keeps advancing a concrete objective until it finishes, hits a blocker, or reaches its iteration budget. Goals are explicit completion contracts, control commands are user-owned, and the loop should stop itself only when the objective is actually complete, blocked, or budget-limited.
 
 ```
 /tap-goal migrate the repo to the new API and keep going until tests pass
 ```
 
-The skill creates a temporary idle PromptEmitter with a self-contained goal prompt. Each iteration inspects its own emitter state, assesses progress, takes the next small action, validates when relevant, and stops the emitter when the goal is complete or blocked. As the remaining iteration budget gets low, the prompt shifts into wrap-up mode so it leaves a useful handoff instead of starting broad new work.
+The skill creates a temporary PromptEmitter with a self-contained goal prompt. Conservative goals use an idle schedule; autopilot-style goals use a timed backoff schedule so the objective can keep nudging the session even when Copilot stays busy. Each iteration inspects its own emitter state, works against a six-part goal contract, records structured progress to its EventStream, validates when relevant, and stops the emitter when the goal is complete, blocked, or budget-limited.
+
+A strong goal names the outcome, verification surface, constraints, boundaries, iteration policy, and blocked stop condition. Completion requires an evidence audit against concrete files, tests, logs, benchmark output, generated artifacts, or research evidence.
 
 Goal loops default to 50 iterations unless you specify another budget.
 
@@ -228,7 +230,7 @@ Use `/tap-goal stop <name>` or `/tap-goal clear <name>` to stop a specific goal 
 
 Use `/tap-goal resume <objective>` to start a new loop from an objective. Stopped goal loops do not preserve resumable internal state; resuming creates a new emitter from the supplied objective.
 
-Because `/tap-goal` uses an idle PromptEmitter, it is best when the session has natural idle gaps. For always-busy autopilot-style flows, prefer a timed prompt loop or hook/session-injector based delivery so follow-up context can still reach the session.
+Because `/tap-goal` can use either idle or timed PromptEmitters, choose idle for conservative continuation and timed-autopilot mode for always-busy flows. Timed prompt deferrals do not consume the run budget; budget exhaustion still means "handoff needed," not success.
 
 **Tune the filter live**
 
@@ -286,6 +288,7 @@ PLAN.md                         # ubiquitous language and design decisions
 | [Provider guide](./docs/providers.md) | Add external tools to Copilot via the WebSocket provider interface |
 | [Use cases and patterns](./docs/use-cases.md) | Recipes for deploy watchers, PR monitors, log tailers, and more |
 | [Copilot SDK canvas surfaces](./docs/recipes/copilot-sdk-canvas.md) | Local SDK findings for extension-owned canvas UI surfaces |
+| [Codex Goals lessons for tap-goal](./docs/recipes/codex-goals-for-tap-goal.md) | Goal-loop contract, evidence audit, and autopilot scheduling guidance |
 | [Evals](./docs/evals.md) | Run or extend the automated test suite |
 | [Copilot instructions](./src/copilot-instructions.md) | Understand or customize how the agent uses this extension |
 | [Implementation plan](./PLAN.md) | Ubiquitous language and naming conventions for contributors |

@@ -243,7 +243,7 @@ test("lifecycle transition exhausts maxRuns after failed scheduled attempt", () 
   ]);
 });
 
-test("lifecycle transition exhausts maxRuns after deferred scheduled attempt", () => {
+test("lifecycle transition preserves budget after deferred scheduled attempt", () => {
   const transition = computeTransition(
     {
       name: "demo",
@@ -261,16 +261,15 @@ test("lifecycle transition exhausts maxRuns after deferred scheduled attempt", (
     }
   );
 
-  assert.equal(transition.nextState.status, EMITTER_STATUS.ERROR);
-  assert.equal(transition.nextState.lastRunStatus, RUN_STATUS.FAILURE);
+  assert.equal(transition.nextState.status, EMITTER_STATUS.WAITING);
   assert.deepEqual(identifyActions(transition), [
     {
-      type: LIFECYCLE_ACTION.APPEND_SYSTEM_MESSAGE,
-      text: "Emitter 'demo' exhausted its run budget (1 of 1 attempts) after a deferred prompt run."
+      type: LIFECYCLE_ACTION.SCHEDULE_TIMER,
+      delayMs: 300_000
     },
     {
-      type: LIFECYCLE_ACTION.LOG_MESSAGE,
-      message: "Emitter 'demo' exhausted its run budget (1 of 1 attempts) after a deferred prompt run."
+      type: LIFECYCLE_ACTION.APPEND_SYSTEM_MESSAGE,
+      text: "Emitter 'demo' deferred this prompt run because the session was still busy. Next attempt in 5m."
     }
   ]);
 });
@@ -470,6 +469,53 @@ test("scheduled prompt waits for session attach without consuming a run", async 
   assert.equal(emitter.runCount, 1);
   assert.equal(emitter.lineCount, 1);
   assert.equal(emitter.status, EMITTER_STATUS.COMPLETED);
+});
+
+test("scheduled prompt busy deferral does not consume run budget", async () => {
+  const timerAdapter = createMockTimerAdapter();
+  const processAdapter = createMockProcessAdapter();
+  const loggerAdapter = createMockLoggerAdapter();
+  const { appended, lineRouter } = createLineRouterHarness();
+  const sessionPort = {
+    isIdle: () => false,
+    isAttached: () => true,
+    log: async () => {},
+    send: async () => {
+      throw new Error("session.idle has not been reached yet");
+    }
+  };
+  const lifecycle = createLifecycle({ lineRouter, sessionPort, timerAdapter, processAdapter, loggerAdapter });
+  const emitter = {
+    name: "demo",
+    emitterType: EMITTER_TYPE.PROMPT,
+    runSchedule: RUN_SCHEDULE.TIMED,
+    every: "5m",
+    everyMs: 300_000,
+    everyScheduleMs: null,
+    maxRuns: 1,
+    status: EMITTER_STATUS.QUEUED,
+    stopRequested: false,
+    inFlight: false,
+    command: null,
+    cwd: process.cwd(),
+    prompt: "hello",
+    process: null,
+    stdoutReader: null,
+    stderrReader: null,
+    lineCount: 0,
+    runCount: 0,
+    lastRunAt: null
+  };
+
+  lifecycle.start(emitter);
+  timerAdapter.advance(0);
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(emitter.runCount, 0);
+  assert.equal(emitter.lineCount, 0);
+  assert.equal(emitter.status, EMITTER_STATUS.WAITING);
+  assert.equal(timerAdapter.pendingCount, 1);
+  assert.ok(appended.some((entry) => /deferred this prompt run because the session was still busy/.test(entry.text)));
 });
 
 test("command emitter stderr routing honors includeStderr policy", () => {

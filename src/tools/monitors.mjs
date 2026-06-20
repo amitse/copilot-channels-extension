@@ -56,12 +56,12 @@ export function createEmitterTools(deps) {
         properties: {
           name: { type: "string", description: "Unique emitter name." },
           command: { type: "string", description: "Shell command to run (creates a CommandEmitter). Output goes through EventFilter rules to determine whether lines are kept, surfaced, or injected. Use for log tailing, process monitoring, or any external command with stdout." },
-          prompt: { type: "string", description: "Prompt to send to the agent (creates a PromptEmitter). Always injects — bypasses EventFilter entirely. Use for repeated agent tasks, status checks, or simple messages." },
+          prompt: { type: "string", description: "Prompt to send to the agent (creates a PromptEmitter). Always injects — bypasses EventFilter entirely. Use for repeated agent tasks, status checks, simple messages, or autonomous goal loops." },
           description: { type: "string", description: "Short summary." },
           channel: { type: "string", description: "EventStream to receive accepted events." },
           cwd: { type: "string", description: "Optional subdirectory relative to the session cwd. Absolute paths and paths that escape the session cwd are rejected." },
-          every: { type: "string", description: "Optional repeat interval like 30s, 5m, 2h, or 1d (maximum about 24 days). Use 'idle' for prompts that re-run whenever the session is idle. When omitted, commands run continuously and prompts run once." },
-          everySchedule: { type: "array", minItems: 1, items: { type: "string" }, description: "Optional backoff schedule — an ordered non-empty list of interval strings (e.g. ['10s','20s','30s','1m','2m','5m','10m']; each maximum about 24 days). The emitter uses each interval in sequence, then repeats the last one forever. Overrides 'every' when provided. Cannot be 'idle' entries." },
+          every: { type: "string", description: "Optional repeat interval like 30s, 5m, 2h, or 1d (maximum about 24 days). Use 'idle' for conservative prompt loops that re-run only when the session is idle. When omitted, commands run continuously and prompts run once." },
+          everySchedule: { type: "array", minItems: 1, items: { type: "string" }, description: "Optional backoff schedule — an ordered non-empty list of interval strings (e.g. ['10s','20s','30s','1m','2m','5m','10m']; each maximum about 24 days). The emitter uses each interval in sequence, then repeats the last one forever. Overrides 'every' when provided. Cannot be 'idle' entries. Prefer this for autopilot-compatible goal loops that may need timed nudges while the session stays busy." },
           lifespan: policyLifespanParameter(),
           ownership: policyOwnershipParameter(),
           scope: policyScopeParameter(),
@@ -71,7 +71,7 @@ export function createEmitterTools(deps) {
           eventFilter: EVENT_FILTER_PARAMETER_SCHEMA,
           subscribe: { type: "boolean", description: "Whether to attach a session injector to the stream as part of emitter creation." },
           delivery: { type: "string", description: "Session injector delivery mode. 'important'/'inject' only send inject-outcome lines, 'surface' surfaces surface outcomes and sends inject outcomes, 'all' surfaces all accepted lines while inject outcomes still push into the conversation, and 'keep'/'drop' store without proactive delivery." },
-          maxRuns: { type: "integer", description: "Maximum number of iterations before the emitter auto-completes. Useful for idle and timed loops." },
+          maxRuns: { type: "integer", description: "Maximum number of real iterations before the emitter stops. Useful for idle and timed loops. For goal loops this is a budget limit, not proof that the objective is complete." },
           force: policyForceParameter("emitter")
         },
         required: ["name"]

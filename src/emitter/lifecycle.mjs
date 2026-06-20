@@ -344,14 +344,15 @@ async function runPromptIteration(emitter, context) {
   } catch (error) {
     const message = error?.message ?? String(error ?? "unknown error");
     const sessionNotAttached = isSessionNotAttachedMessage(message);
+    const deferred =
+      sessionNotAttached ||
+      (emitter.runSchedule === RUN_SCHEDULE.TIMED || emitter.runSchedule === RUN_SCHEDULE.IDLE) &&
+      /\bsession\.idle\b/i.test(message);
     return {
       ok: false,
       error: message,
-      deferred:
-        sessionNotAttached ||
-        (emitter.runSchedule === RUN_SCHEDULE.TIMED || emitter.runSchedule === RUN_SCHEDULE.IDLE) &&
-        /\bsession\.idle\b/i.test(message),
-      consumeRun: sessionNotAttached ? false : true,
+      deferred,
+      consumeRun: deferred ? false : true,
       deferredReason: sessionNotAttached ? "session-not-attached" : null
     };
   }

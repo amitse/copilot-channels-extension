@@ -145,20 +145,26 @@ If the work is mostly reasoning rather than data collection, prefer a PromptEmit
 
 - prompt once for a background check (oneTime)
 - prompt + `every="<interval>"` for a fixed maintenance loop (timed)
-- prompt + `every="idle"` + `maxRuns` for autonomous goal loops with explicit iteration budgets (`/tap-goal`)
+- prompt + `every="idle"` + `maxRuns` for conservative autonomous goal loops with explicit iteration budgets (`/tap-goal`)
+- prompt + `everySchedule=[...]` + `maxRuns` for autopilot-compatible goals that need timed nudges while the session may stay busy
 
 This is the closest analogue to Claude's session-scoped `/tap-loop` behavior in this extension.
 
 For "keep working until done" requests, prefer `/tap-goal`: create an
-idle PromptEmitter with a self-contained goal prompt, an explicit `maxRuns`
-budget, and instructions to stop itself when complete or blocked. Goals must be
-explicit user requests; do not infer them from ordinary one-shot tasks, and do
-not treat budget exhaustion as successful completion. Goal prompts should
-self-steer by reading their own emitter state with `tap_list_emitters` and
-switching into wrap-up mode when the remaining iteration budget is low.
+PromptEmitter with a self-contained goal prompt and an explicit `maxRuns`
+budget. A strong goal is a six-part completion contract: outcome, verification
+surface, constraints, boundaries, iteration policy, and blocked stop condition.
+Goals must be explicit user requests; do not infer them from ordinary one-shot
+tasks, and do not treat budget exhaustion as successful completion. Goal prompts
+should self-steer by reading their own emitter state with `tap_list_emitters`,
+switching into wrap-up mode when the remaining iteration budget is low, posting
+structured iteration records to their EventStream with `tap_post`, and stopping
+themselves when complete or blocked. Completion requires an evidence audit
+against concrete files, tests, logs, benchmark output, or generated artifacts.
 If the session may stay continuously busy (for example in autopilot-heavy
-flows), prefer a timed PromptEmitter or hook-driven/session-injector delivery
-instead of relying on idle to trigger the next goal step.
+flows), use a timed PromptEmitter with a backoff schedule such as
+`everySchedule=["2m","5m","10m"]` instead of relying on idle to trigger the next
+goal step.
 
 ## Borrow from the official SDK examples
 

@@ -62,7 +62,7 @@ function buildCompleteMessage(state) {
     return `Emitter '${state.name}' completed one run of ${state.emitterType} work.`;
   }
   if (state.maxRuns && state.runCount >= state.maxRuns) {
-    return `Emitter '${state.name}' completed ${state.runCount} of ${state.maxRuns} runs.`;
+    return `Emitter '${state.name}' reached its run budget (${state.runCount} of ${state.maxRuns} runs). This stops the emitter; goal-style loops must use their final evidence summary to decide whether the objective is complete.`;
   }
   return null;
 }
@@ -234,12 +234,12 @@ function computeDeferredIterationTransition(currentState, state) {
 }
 
 function computeFailedIterationTransition(currentState, state, event, result) {
-  if (isRunBudgetExhausted(state)) {
-    return computeRunBudgetExhaustedTransition(currentState, state, event, result);
-  }
-
   if (result.deferred) {
     return computeDeferredIterationTransition(currentState, state);
+  }
+
+  if (isRunBudgetExhausted(state)) {
+    return computeRunBudgetExhaustedTransition(currentState, state, event, result);
   }
 
   if (state.runSchedule === RUN_SCHEDULE.ONE_TIME) {

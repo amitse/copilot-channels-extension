@@ -116,13 +116,17 @@ The repo also ships a **`tap-loop` skill** (`src/skills/tap-loop`) for quick set
 For long-horizon work, the repo also ships a **`tap-goal` skill**
 (`src/skills/tap-goal`). A goal is explicit, status/control commands are
 user-owned, and completion should only be reported when the objective is
-actually achieved. In ※ tap it is implemented as an idle PromptEmitter with a
-required iteration budget so the agent can keep taking small steps until the
-goal is complete, blocked, or out of iterations. The prompt also self-steers by
-reading its own emitter state and shifting into wrap-up mode when the remaining
-budget is low. Because it runs on idle, it is best for sessions that have
-natural idle gaps; for always-busy autopilot flows, prefer timed prompts or
-hook/session-injector delivery instead:
+actually achieved. In ※ tap it is implemented as a PromptEmitter with a required
+iteration budget. Conservative goals use `every="idle"`; autopilot-compatible
+goals use a timed backoff schedule such as `everySchedule=["2m","5m","10m"]` so
+the objective can keep nudging the session while Copilot may stay busy.
+
+A strong tap goal follows the Codex-style goal contract: outcome, verification
+surface, constraints, boundaries, iteration policy, and blocked stop condition.
+Each iteration self-steers by reading its own emitter state, posts a structured
+iteration record to its EventStream, validates against concrete evidence when
+relevant, and shifts into wrap-up mode when the remaining budget is low. Budget
+exhaustion is a handoff state, not success:
 
 ```text
 /tap-goal migrate the repo to the new API and keep going until tests pass

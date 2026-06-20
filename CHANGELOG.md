@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Strengthened `/tap-goal` with Codex-style goal contracts: outcome,
+  verification surface, constraints, boundaries, iteration policy, and blocked
+  stop condition.
+- `/tap-goal` now chooses timed backoff PromptEmitters for autopilot-compatible
+  goals while keeping idle PromptEmitters for conservative continuation.
+- Goal-loop prompts now require evidence audits, structured EventStream
+  iteration records, research claim ledgers, and budget-limited handoffs.
+- Timed prompt deferrals caused by busy sessions no longer consume `maxRuns`
+  budget.
+
 ## [2.0.1] — 2026-05-06
 
 ### Added

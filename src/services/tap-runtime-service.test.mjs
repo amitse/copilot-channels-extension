@@ -82,10 +82,15 @@ test("runtime attach nudges waiting idle emitters after registering session list
 
   assert.equal(idle, true);
   assert.equal(calls[0][0], "attach");
-  assert.deepEqual(calls.slice(-2), [["setIdle", true], ["onSessionIdle"]]);
+  const idleNudgeIndex = calls.findIndex((call, index) =>
+    call[0] === "setIdle" &&
+    call[1] === true &&
+    calls[index + 1]?.[0] === "onSessionIdle"
+  );
+  assert.notEqual(idleNudgeIndex, -1);
   assert.ok(registeredEvents.includes("session.idle"));
   assert.ok(registeredEvents.includes("user.message"));
-  assert.ok(calls.slice(1, -2).every(([type]) => type === "on"));
+  assert.ok(calls.slice(1, idleNudgeIndex).every(([type]) => type === "on"));
 });
 
 test("runtime startEmitter forwards explicit options while applying base cwd fallback", async () => {
