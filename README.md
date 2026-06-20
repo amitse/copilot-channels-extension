@@ -30,6 +30,7 @@ Background commands and agent prompts produce output line by line. An EventFilte
 - You poll an API or dashboard and want the agent to react when something changes.
 - You re-ask the same prompt periodically and want it on a timer or running whenever idle.
 - You build external tools in any language and want them available inside Copilot without touching the SDK.
+- You want a live visual flight recorder for tap streams, emitters, provider state, logs, and session events.
 
 ## Get started
 
@@ -114,6 +115,8 @@ Once inside the session, describe what you want in natural language. You can als
 > _"/tap-goal migrate the repo to the new API and keep going until tests pass"_
 
 > _"Tail the API logs, inject errors, drop health checks"_
+
+> _"Open the tap diagnostics canvas"_
 
 The agent translates these into emitter and filter configurations behind the scenes.
 
@@ -239,6 +242,12 @@ The recommended approach is a **keep-all bootstrap**: start with no EventFilter 
 
 Rules can be added or changed while the emitter is running. You never need to restart it to adjust filtering.
 
+**Inspect tap with a live diagnostics canvas**
+
+Use the `tap_open_diagnostics_canvas` tool to open a local canvas that shows tap's retained EventStreams, emitter state, provider gateway state, injection queue, runtime logs, and recent session events in one place.
+
+The canvas is bounded and redacted: it keeps recent diagnostic evidence without exposing provider auth tokens or unbounded transcript payloads.
+
 ## Repo layout
 
 ```text
@@ -276,6 +285,7 @@ PLAN.md                         # ubiquitous language and design decisions
 | [Reference](./docs/reference.md) | Look up tool parameters, config fields, or the event pipeline |
 | [Provider guide](./docs/providers.md) | Add external tools to Copilot via the WebSocket provider interface |
 | [Use cases and patterns](./docs/use-cases.md) | Recipes for deploy watchers, PR monitors, log tailers, and more |
+| [Copilot SDK canvas surfaces](./docs/recipes/copilot-sdk-canvas.md) | Local SDK findings for extension-owned canvas UI surfaces |
 | [Evals](./docs/evals.md) | Run or extend the automated test suite |
 | [Copilot instructions](./src/copilot-instructions.md) | Understand or customize how the agent uses this extension |
 | [Implementation plan](./PLAN.md) | Ubiquitous language and naming conventions for contributors |

@@ -715,6 +715,7 @@ export function createProviderConnection(ws, options, adapters = {}) {
     get providerName() { return providerName; },
     get sessionId() { return sessionId; },
     get tools() { return tools; },
+    get pendingCallCount() { return pendingCalls.size; },
     sendToolCall: sendToolCallMsg,
     sendToolCancel: sendToolCancelMsg,
     sendLifecycle,

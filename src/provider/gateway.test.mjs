@@ -164,12 +164,13 @@ test("gateway binds websocket server to loopback host by default", () => {
   gateway.stop();
 });
 
-test("gateway clears startup state after bind error and can retry", () => {
+test("gateway treats an occupied provider port as an existing mesh owner", () => {
   const servers = [];
+  const logs = [];
   const gateway = createProviderGateway({
     tapTools: () => [],
     getSessionInfo: () => null,
-    log: () => {}
+    log: (message) => logs.push(message)
   }, {
     ...createIsolatedAdapters({
       webSocketServerFactory: createFakeServerFactory(servers)
@@ -182,6 +183,9 @@ test("gateway clears startup state after bind error and can retry", () => {
   assert.equal(gateway.isRunning(), false);
   assert.equal(gateway.getToken(), null);
   assert.equal(servers[0].closed, true);
+  assert.match(logs.at(-1), /mesh already has an owner/);
+  assert.match(logs.at(-1), /No action is needed unless provider tools are missing/);
+  assert.doesNotMatch(logs.at(-1), /Failed|stale|stop the stale process/i);
 
   gateway.start();
 

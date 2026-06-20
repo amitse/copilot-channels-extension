@@ -1,6 +1,7 @@
 node_modules
 copilot-channels.config.json
 *.log
+report.*.json
 evals/results
 icons/
 dist/

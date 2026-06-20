@@ -1,0 +1,147 @@
+# Copilot SDK canvas surfaces
+
+These notes reflect the canvas API surface found in the local Copilot CLI 1.0.61 SDK. The canvas APIs are marked experimental in the SDK types, so treat exact names and runtime behavior as subject to change.
+
+## What a canvas is
+
+A canvas is an extension-owned UI surface declared through the Copilot SDK:
+
+```js
+import { joinSession, createCanvas } from "@github/copilot-sdk/extension";
+
+await joinSession({
+  canvases: [
+    createCanvas({
+      id: "tap-dashboard",
+      displayName: "Tap Dashboard",
+      description: "Inspect live tap streams and emitter state.",
+      open: async (ctx) => ({
+        title: "Tap Dashboard",
+        status: `Instance ${ctx.instanceId}`,
+        url: "http://127.0.0.1:5173/",
+      }),
+    }),
+  ],
+});
+```
+
+The extension process is the live provider for that canvas. The runtime routes `canvas.open`, `canvas.close`, and `canvas.action.invoke` requests back into the SDK process, and the SDK dispatches them to the handlers bound by `createCanvas`.
+
+Use canvases when a workflow needs a persistent visual panel, inspector, or control surface instead of plain text tool output. Examples that fit tap well: stream dashboards, emitter graphs, PR-review status boards, browser-debug panels, and interactive incident timelines.
+
+## Declaration shape
+
+`createCanvas(options)` returns a `Canvas` that can be passed in `joinSession({ canvases })`.
+
+| Field | Required | Notes |
+| --- | --- | --- |
+| `id` | yes | Provider-local canvas id, unique within the declaring extension connection. |
+| `displayName` | yes | Human-readable name shown in discovery/UI chrome. |
+| `description` | yes | Short single-sentence description shown to the agent. |
+| `inputSchema` | no | JSON Schema for the `open` input payload. |
+| `actions` | no | Agent/host-invocable actions for an open instance. |
+| `open(ctx)` | yes | Called when the host or agent opens/focuses an instance. |
+| `onClose(ctx)` | no | Called when an instance is closed; use it to release resources. |
+
+Action names are unique within the canvas and must not start with `canvas.` because that prefix is reserved for lifecycle verbs.
+
+## Open lifecycle
+
+The host or agent opens a canvas with a `canvasId`, stable caller-supplied `instanceId`, and optional `extensionId` when multiple providers declare the same `canvasId`. The SDK calls:
+
+```js
+open: async ({ sessionId, extensionId, canvasId, instanceId, input, host }) => {
+  return {
+    title: "Rendered title",
+    status: "ready",
+    url: "http://127.0.0.1:49152/",
+  };
+}
+```
+
+The response may include:
+
+| Field | Meaning |
+| --- | --- |
+| `url` | Web renderer URL for the host to render. Optional for native canvases. |
+| `title` | Title shown in host chrome. |
+| `status` | Provider-supplied status text shown in host chrome. |
+
+Re-opening the same `instanceId` is idempotent and focuses/reuses the existing panel. Open snapshots and `session.canvas.opened` events include `reopen: true` when the notification represents such a reopen.
+
+The CLI canvas scaffold uses a practical default for web canvases: start a loopback HTTP server on port `0`, let the OS choose a free ephemeral port, keep one server per `instanceId`, and close that server from `onClose` so ports do not leak.
+
+## Actions
+
+Canvas actions let the agent or host interact with an already-open instance:
+
+```js
+createCanvas({
+  id: "tap-dashboard",
+  displayName: "Tap Dashboard",
+  description: "Inspect live tap streams and emitter state.",
+  actions: [
+    {
+      name: "refresh_stream",
+      description: "Refresh the stream snapshot shown in the canvas.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          limit: { type: "integer", minimum: 1, maximum: 100 },
+        },
+      },
+      handler: async ({ instanceId, input }) => {
+        return { ok: true, instanceId, limit: input?.limit ?? 25 };
+      },
+    },
+  ],
+  open: async () => ({ title: "Tap Dashboard", url: "http://127.0.0.1:5173/" }),
+});
+```
+
+At the model/tool layer, actions are discovered through `list_canvas_capabilities` and invoked through `invoke_canvas_action`. At the SDK RPC layer, renderer-capable clients can call `session.rpc.canvas.invokeAction(...)`.
+
+## Renderer and RPC APIs
+
+The SDK exposes an experimental `session.rpc.canvas` API for SDK clients that can render or coordinate canvases:
+
+| Method | Purpose |
+| --- | --- |
+| `list()` | List canvas declarations available in the session. |
+| `listOpen()` | List currently open canvas instances. |
+| `open({ canvasId, instanceId, input, extensionId? })` | Open or focus an instance. |
+| `close({ instanceId })` | Close an open instance. |
+| `invokeAction({ instanceId, actionName, input })` | Invoke an action on an open instance. |
+
+Set `requestCanvasRenderer: true` only for SDK session clients that can display canvases. That opt-in surfaces the model tools `list_canvas_capabilities`, `open_canvas`, and `invoke_canvas_action`. Extension canvases generated by `extensions_manage({ kind: "canvas" })` only declare `canvases`; they do not set `requestCanvasRenderer`.
+
+For resumed SDK sessions, `openCanvases` can be supplied with the prior open-instance snapshot so the runtime can rehydrate canvas state without re-opening everything manually.
+
+## Events and capability signals
+
+Canvas-related session events are transient (`ephemeral: true`):
+
+| Event | Key payload |
+| --- | --- |
+| `capabilities.changed` | `data.ui.canvases` indicates whether canvas rendering is supported. |
+| `session.canvas.registry_changed` | Current canvas declarations: ids, display names, descriptions, input schemas, and actions. |
+| `session.canvas.opened` | Open instance snapshot: `instanceId`, `canvasId`, `extensionId`, `url`, `title`, `status`, `input`, `reopen`, and `availability`. |
+
+Open instances report `availability: "ready"` while the provider connection is live and `"stale"` if the provider has gone away. In stale/unavailable cases, action routing can fail until the agent re-opens the canvas or the provider reconnects.
+
+## Tap integration notes
+
+Tap's external provider protocol is intentionally not the Copilot SDK. External tap providers can register tools, update tools, and push/keep/surface/inject events, but they cannot declare Copilot SDK canvases over the WebSocket provider protocol today.
+
+To add a canvas-backed tap experience, implement the canvas in the tap extension layer with `createCanvas`, or add an explicit gateway/protocol extension that maps provider UI declarations into SDK canvases. Keep provider-side browser or local services behind loopback URLs and pass only the URL/title/status through the canvas `open` response.
+
+Tap now includes a built-in example: the `tap-diagnostics` canvas. It is declared by the extension and can be opened with `tap_open_diagnostics_canvas`. The canvas serves a loopback-only renderer and streams bounded diagnostics snapshots over SSE.
+
+## Best practices
+
+1. Keep renderer servers on loopback (`127.0.0.1`) and use ephemeral ports unless the port is user-configured.
+2. Key per-instance resources by `instanceId` and release them in `onClose`.
+3. Validate `open` and action inputs with JSON Schema; avoid broad casts or unstructured payloads.
+4. Keep action names stable, descriptive, and free of the reserved `canvas.` prefix.
+5. Treat all canvas APIs as experimental and guard optional host capabilities such as `host?.capabilities?.canvases`.
+6. Use `session.log()` for extension diagnostics; do not write diagnostics to stdout because stdout is reserved for JSON-RPC.

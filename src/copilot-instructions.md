@@ -170,6 +170,10 @@ When working on the extension itself, not just using its emitter tools, prefer t
 - use `session.send()` for asynchronous follow-up prompts and `session.sendAndWait()` only when the extension must wait for an answer
 - use `onPermissionRequest` and `onUserInputRequest` for guarded flows instead of custom ad hoc prompting
 - use `fs.watch` or `watchFile` when the extension should react to manual file edits or workspace artifacts such as `plan.md`
+- use `createCanvas` with `joinSession({ canvases: [...] })` for extension-owned UI panels when text-only EventStreams are not enough; `open()` returns `title`, `status`, and a renderer `url`, actions power `invoke_canvas_action`, and per-instance state should be keyed by `instanceId`
+- treat canvas support as experimental: action names must not start with `canvas.`, guard optional host canvas capabilities, prefer loopback HTTP renderers on ephemeral ports, and clean them up in `onClose`
+- remember that external tap providers cannot declare Copilot SDK canvases over the current WebSocket protocol; implement canvases in the extension layer or explicitly extend the gateway protocol first
+- open the built-in `tap-diagnostics` canvas with `tap_open_diagnostics_canvas` when users ask to inspect tap internals, diagnostics, logs, stream history, provider state, or "everything tap is doing"
 
 Good non-emitter examples to adapt into this repo:
 
@@ -177,6 +181,7 @@ Good non-emitter examples to adapt into this repo:
 - watch a config file and refresh the corresponding emitter when the user edits it
 - add a helper tool that fetches one-shot data from an API while emitters continue to watch background streams
 - log EventFilter updates and emitter lifecycle events to the timeline for observability
+- add a canvas dashboard for stream/emitter inspection when a workflow benefits from a persistent visual surface
 
 ## What not to do
 

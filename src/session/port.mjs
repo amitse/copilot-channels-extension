@@ -112,6 +112,17 @@ export function createSessionPort(initialSession = null) {
     return session.sendAndWait({ prompt });
   }
 
+  async function openCanvas(params) {
+    if (!session) {
+      throw new LifecycleError("Session is not attached; cannot open canvas.");
+    }
+    const canvasApi = session.rpc?.canvas;
+    if (!canvasApi || typeof canvasApi.open !== "function") {
+      throw new LifecycleError("Canvas renderer API is not available in this Copilot session.");
+    }
+    return canvasApi.open(params);
+  }
+
   function registerTools(tools) {
     if (!session) return;
     try {
@@ -149,6 +160,7 @@ export function createSessionPort(initialSession = null) {
     log,
     send,
     sendAndWait,
+    openCanvas,
     registerTools,
     reloadExtension
   };

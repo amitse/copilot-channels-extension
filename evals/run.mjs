@@ -3,7 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFileSync, spawn } from "node:child_process";
 
-import { CopilotClient, approveAll } from "@github/copilot-sdk";
+import { CopilotClient, RuntimeConnection, approveAll } from "@github/copilot-sdk";
 import { parse } from "yaml";
 
 import { createCopilotChannelsRuntime } from "../src/tap-runtime.mjs";
@@ -21,6 +21,27 @@ const defaultExecModel = "gpt-5.4-mini";
 const defaultJudgeModel = "gpt-5.4-mini";
 const acpSessionClientName = "copilot-channels-evals";
 const acpCliArgs = ["--acp"];
+
+function resolveOptionalPackagePath(specifier) {
+  try {
+    return fileURLToPath(import.meta.resolve(specifier));
+  } catch {
+    return null;
+  }
+}
+
+function resolveCopilotCliPath() {
+  return resolveOptionalPackagePath("@github/copilot-win32-x64")
+    ?? resolveOptionalPackagePath("@github/copilot-linux-x64")
+    ?? resolveOptionalPackagePath("@github/copilot-linux-arm64")
+    ?? resolveOptionalPackagePath("@github/copilot-linuxmusl-x64")
+    ?? resolveOptionalPackagePath("@github/copilot-linuxmusl-arm64")
+    ?? resolveOptionalPackagePath("@github/copilot-darwin-x64")
+    ?? resolveOptionalPackagePath("@github/copilot-darwin-arm64")
+    ?? resolveOptionalPackagePath("@github/copilot")
+    ?? process.env.COPILOT_CLI_PATH
+    ?? null;
+}
 
 function usage() {
   return [
@@ -853,13 +874,15 @@ async function runCopilotPrompt(prompt, options) {
 }
 
 async function startAcpClient(options) {
+  const copilotCliPath = resolveCopilotCliPath();
   const client = new CopilotClient({
-    cwd: repoRoot,
-    useStdio: false,
-    port: options.acpPort,
-    cliArgs: [...acpCliArgs],
-    logLevel: "error",
-    autoRestart: false
+    workingDirectory: repoRoot,
+    connection: RuntimeConnection.forTcp({
+      port: options.acpPort,
+      path: copilotCliPath ?? undefined,
+      args: [...acpCliArgs]
+    }),
+    logLevel: "error"
   });
 
   await client.start();
@@ -930,7 +953,9 @@ async function runAcpPrompt(client, prompt, options) {
   }
 
   try {
-    events = await session.getMessages();
+    events = typeof session.getEvents === "function"
+      ? await session.getEvents()
+      : await session.getMessages();
   } catch {
     events = [];
   }

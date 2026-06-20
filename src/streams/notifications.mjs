@@ -180,5 +180,22 @@ export function createNotificationDispatcher({
     return { cleared, generation };
   }
 
-  return { enqueue, clear, dispose: clear };
+  function snapshot(options = {}) {
+    const limit = Math.max(0, Math.min(Number(options.limit ?? 20) || 20, queueLimit));
+    return {
+      queueSize: queue.length,
+      maxQueueSize: queueLimit,
+      inFlight,
+      retryScheduled: retryTimer !== null,
+      generation,
+      queued: queue.slice(0, limit).map((entry) => ({
+        channel: entry.channel,
+        monitorName: entry.monitorName,
+        stream: entry.stream,
+        text: String(entry.text ?? "").slice(0, 500)
+      }))
+    };
+  }
+
+  return { enqueue, clear, dispose: clear, snapshot };
 }

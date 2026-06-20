@@ -315,7 +315,29 @@ These are powerful in this repo for guarded workflows:
 - request confirmation before overriding a userOwned EventFilter
 - collect thresholds or keywords interactively instead of hardcoding them
 
-### 8. Keep it cross-platform
+### 8. Add canvas surfaces for visual workflows
+
+The local Copilot CLI SDK exposes experimental canvas support through `createCanvas` and `joinSession({ canvases: [...] })`. A canvas is an extension-owned UI surface that the agent or host can open, focus, close, and invoke actions against.
+
+This is useful when text-only EventStreams are not enough:
+
+- stream dashboards that show emitter health and recent events
+- dependency graphs or PR-review boards
+- browser-debug panels backed by a local loopback renderer
+- incident timelines with action buttons for refresh, filter, or acknowledge
+- tap's built-in diagnostics canvas, opened through `tap_open_diagnostics_canvas`, which combines streams, emitters, providers, logs, queues, and session events
+
+Important constraints for this repo:
+
+- canvas actions are declared with JSON Schema and invoked through `invoke_canvas_action`
+- `open()` returns host chrome metadata such as `title`, `status`, and a renderer `url`
+- per-instance resources should be keyed by `instanceId` and cleaned up in `onClose`
+- external tap providers cannot declare Copilot SDK canvases over the current WebSocket protocol; canvas work belongs in the extension layer unless the provider protocol is explicitly extended
+- diagnostics canvases should use bounded/redacted snapshots rather than unbounded raw transcript or token payloads
+
+See [Copilot SDK canvas surfaces](./recipes/copilot-sdk-canvas.md) for the detailed local SDK findings and a working skeleton.
+
+### 9. Keep it cross-platform
 
 The examples call out Windows-specific concerns:
 

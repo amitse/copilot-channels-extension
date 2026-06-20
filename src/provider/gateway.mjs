@@ -39,6 +39,22 @@ function createDefaultPathAdapter() {
   };
 }
 
+function formatGatewayBindMessage(err, { host, port }) {
+  const message = String(err?.message ?? err ?? "unknown error");
+  const code = String(err?.code ?? "");
+  const isPortInUse = code === "EADDRINUSE" || /\bEADDRINUSE\b|address already in use/i.test(message);
+
+  if (!isPortInUse) {
+    return `Provider gateway could not start on ${host}:${port}: ${message}`;
+  }
+  return [
+    `Provider gateway mesh already has an owner at ${host}:${port}; this tap session is joining without binding another listener.`,
+    "Core tap tools remain available.",
+    "External providers should keep using the existing gateway.",
+    "No action is needed unless provider tools are missing."
+  ].join(" ");
+}
+
 export function createProviderGateway(options = {}, adapters = {}) {
   const {
     tapTools,
@@ -364,7 +380,7 @@ export function createProviderGateway(options = {}, adapters = {}) {
   }
 
   function resetFailedStart(server, err) {
-    log(`Failed to start provider gateway on port ${GATEWAY_PORT}: ${err.message}`);
+    log(formatGatewayBindMessage(err, { host, port: GATEWAY_PORT }));
     starting = false;
     if (wss === server) {
       wss = null;
@@ -446,6 +462,43 @@ export function createProviderGateway(options = {}, adapters = {}) {
     return registry.buildSessionTools(tap, dispatchToolCall);
   }
 
+  function projectProviderTool(tool) {
+    return {
+      name: tool.name,
+      description: tool.description ?? "",
+      timeout: tool.timeout ?? null
+    };
+  }
+
+  function getDiagnosticState() {
+    const connections = [...connectionsByProviderId.values()];
+    return {
+      running,
+      starting,
+      host,
+      port: GATEWAY_PORT,
+      reloadPending,
+      reloadTimerActive: Boolean(reloadTimer),
+      tokenPresent: Boolean(token),
+      providerTokenFilePath: providerTokenFilePath ? "[redacted]" : null,
+      gracefulShutdownActive,
+      connectionCount: connectionsByWs.size,
+      boundConnectionCount: connections.filter((conn) => conn.state === CONNECTION_STATE.BOUND).length,
+      providers: registry.listProviders().map((provider) => {
+        const conn = connectionsByProviderId.get(provider.id);
+        return {
+          id: provider.id,
+          name: provider.name,
+          sessionId: provider.sessionId,
+          state: conn?.state ?? "unknown",
+          pendingCallCount: conn?.pendingCallCount ?? 0,
+          toolCount: provider.tools.length,
+          tools: provider.tools.map(projectProviderTool)
+        };
+      })
+    };
+  }
+
   function dispatchToolCall(providerId, toolName, callId, args) {
     const conn = connectionsByProviderId.get(providerId);
     if (!conn || conn.state === CONNECTION_STATE.DISCONNECTED) {
@@ -486,6 +539,7 @@ export function createProviderGateway(options = {}, adapters = {}) {
     getToken,
     getRegistry,
     getAllTools,
+    getDiagnosticState,
     dispatchToolCall,
     broadcastLifecycle,
     onToolsChanged,

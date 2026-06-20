@@ -1,10 +1,14 @@
 import { joinSession } from "@github/copilot-sdk/extension";
 
 import { createCopilotChannelsRuntime } from "./tap-runtime.mjs";
+import { createDiagnosticsStore } from "./diagnostics/store.mjs";
 
 // Verbose stderr logger — CLI captures stderr; these lines appear in the process log.
+const diagnostics = globalThis.__tapDiagnostics ??= createDiagnosticsStore();
+
 function tapLog(msg) {
   const ts = new Date().toISOString();
+  diagnostics.log("extension", msg);
   process.stderr.write(`[tap ${ts}] ${msg}\n`);
 }
 
@@ -15,7 +19,8 @@ tapLog(`extension.mjs loading — pid=${process.pid} cwd=${process.cwd()} SESSIO
 const isResume = Boolean(globalThis.__tapRuntime);
 tapLog(`runtime ${isResume ? "resuming (cached)" : "creating (fresh)"}`);
 const runtime = globalThis.__tapRuntime ??= createCopilotChannelsRuntime({
-  cwd: process.cwd()
+  cwd: process.cwd(),
+  diagnostics
 });
 tapLog("runtime ready");
 
@@ -24,6 +29,7 @@ let session;
 try {
   session = await joinSession({
     tools: runtime.getTools(),
+    canvases: runtime.getCanvases(),
     hooks: runtime.hooks
   });
   tapLog(`joinSession OK — session.id=${session.id ?? "(none)"}`);

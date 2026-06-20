@@ -4,6 +4,7 @@ import { createHooks } from "../hooks.mjs";
 import { createProviderGateway } from "../provider/gateway.mjs";
 import { SESSION_LIFECYCLE_STATE } from "../provider/consts.mjs";
 import { createTapRuntimeService } from "../services/tap-runtime-service.mjs";
+import { createTapDiagnosticsCanvas } from "../canvas/diagnostics-canvas.mjs";
 
 const PROVIDER_SHUTDOWN_DEADLINE_MS = 10_000;
 const EMITTER_SHUTDOWN_WAIT_TIMEOUT_MS = 10_000;
@@ -31,9 +32,16 @@ export function createCopilotChannelsRuntime(options = {}) {
     ...(options.runtimeServiceOptions ?? {}),
     cwd: options.cwd,
     session: options.session,
+    diagnostics: options.diagnostics,
     shutdownSession: () => handleSessionShutdown(activeSession)
   });
-  process.stderr.write(`[tap-runtime] init — cwd=${runtimeService.session.getBaseCwd()}\n`);
+
+  function logRuntime(message, options = {}) {
+    runtimeService.diagnostics?.log?.("runtime", message, options);
+    process.stderr.write(`[tap-runtime] ${message}\n`);
+  }
+
+  logRuntime(`init — cwd=${runtimeService.session.getBaseCwd()}`);
 
   const tools = createTools({ tools: runtimeService.tools });
   const hooks = createHooks({ runtime: runtimeService.hooks });
@@ -45,7 +53,21 @@ export function createCopilotChannelsRuntime(options = {}) {
     deliverPush: runtimeService.provider.deliverPush,
     log: runtimeService.provider.log
   });
-  process.stderr.write(`[tap-runtime] gateway created\n`);
+  logRuntime("gateway created");
+
+  function getDiagnosticSnapshot(options = {}) {
+    return runtimeService.diagnostics.snapshot(options, {
+      gateway: typeof gateway.getDiagnosticState === "function" ? gateway.getDiagnosticState() : null,
+      tools: gateway.isRunning() ? gateway.getAllTools(tools) : tools
+    });
+  }
+
+  const canvases = [
+    createTapDiagnosticsCanvas({
+      getSnapshot: getDiagnosticSnapshot,
+      diagnostics: runtimeService.diagnostics
+    })
+  ];
 
   // When provider tools change, re-register all tools and trigger extension reload
   gateway.onToolsChanged(runtimeService.provider.replaceSessionTools);
@@ -76,7 +98,7 @@ export function createCopilotChannelsRuntime(options = {}) {
         return;
       }
       handled = true;
-      process.stderr.write("[tap-runtime] session.shutdown received — stopping runtime\n");
+      logRuntime("session.shutdown received — stopping runtime");
       void handleSessionShutdown(session).catch((error) => {
         logShutdownFailure(session, error);
       });
@@ -153,17 +175,17 @@ export function createCopilotChannelsRuntime(options = {}) {
     }
 
     try {
-      process.stderr.write(`[tap-runtime] starting gateway…\n`);
+      logRuntime("starting gateway...");
       gateway.start();
-      process.stderr.write(`[tap-runtime] gateway started\n`);
+      logRuntime("gateway start requested");
     } catch (err) {
-      process.stderr.write(`[tap-runtime] gateway start failed: ${err?.message ?? err}\n`);
+      logRuntime(`gateway start request failed: ${err?.message ?? err}`, { level: "warning" });
       // Gateway startup must never block session attach
     }
   }
 
   function attachSession(nextSession) {
-    process.stderr.write(`[tap-runtime] attachSession — id=${nextSession?.id ?? "(none)"}\n`);
+    logRuntime(`attachSession — id=${nextSession?.id ?? "(none)"}`);
     activeSession = nextSession ?? null;
     if (shutdownRecord?.settled) {
       shutdownRecord = null;
@@ -177,11 +199,13 @@ export function createCopilotChannelsRuntime(options = {}) {
     attachSession,
     tools,
     hooks,
+    canvases,
     stopAllEmitters,
     stopAllEmittersAndWait,
     handleSessionShutdown,
     appendStreamMessage: runtimeService.session.appendStreamMessage,
     getTools: () => gateway.isRunning() ? gateway.getAllTools(tools) : tools,
+    getCanvases: () => canvases,
     DEFAULT_STREAM
   };
 }

@@ -73,6 +73,27 @@ Start with no filter rules (keep-all bootstrap), observe the stream with `tap_st
 | `tap_list_streams` | List all EventStreams + injector state |
 | `tap_enable_injector` | Enable proactive session delivery |
 | `tap_disable_injector` | Disable proactive delivery |
+| `tap_open_diagnostics_canvas` | Open/focus the live diagnostics canvas |
+
+## Diagnostics canvas
+
+Tap declares an experimental Copilot SDK canvas named `tap-diagnostics`. Open it with:
+
+```text
+tap_open_diagnostics_canvas
+```
+
+The canvas is a bounded local flight recorder for:
+
+- EventStreams and recent entries
+- running and configured emitters
+- EventFilter and SessionInjector state
+- provider gateway state and registered tools
+- notification queue state
+- tap runtime logs
+- recent SDK session events
+
+The renderer is served from a loopback-only ephemeral HTTP server and is closed when the canvas instance closes. Sensitive gateway token values are redacted, and retained event payloads are bounded so the canvas stays responsive.
 
 ## Loop semantics
 
