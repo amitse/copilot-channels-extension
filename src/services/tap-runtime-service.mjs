@@ -62,7 +62,8 @@ export function createTapRuntimeService(options = {}) {
     sessionPort,
     configWorkspace
   });
-  const { loadPersistentConfig } = configBootstrapService;
+  const { loadPersistentConfig: loadPersistentConfigRaw } = configBootstrapService;
+  let persistentConfigLoadPromise = null;
   const sessionActivityBridge = createSessionActivityBridge({ sessionPort, supervisor });
   const providerPushService = createProviderPushService({
     streams,
@@ -76,6 +77,20 @@ export function createTapRuntimeService(options = {}) {
     return sessionContext.getSessionInfo(session);
   }
 
+  function loadPersistentConfigOnce(inputCwd) {
+    if (persistentConfigLoadPromise) {
+      return persistentConfigLoadPromise;
+    }
+
+    persistentConfigLoadPromise = Promise.resolve()
+      .then(() => loadPersistentConfigRaw(inputCwd))
+      .catch((error) => {
+        persistentConfigLoadPromise = null;
+        throw error;
+      });
+    return persistentConfigLoadPromise;
+  }
+
   function attachSession(session) {
     sessionContext.attachSession(session);
     sessionPort.attach(session);
@@ -83,6 +98,12 @@ export function createTapRuntimeService(options = {}) {
     // initial idle lifecycle nudge for emitters started during hook startup.
     sessionActivityBridge.attach(session);
     diagnosticsStore.attachSession(session);
+    void loadPersistentConfigOnce(sessionContext.getBaseCwd()).then((summary) => {
+      void sessionPort.log(summary);
+    }).catch((error) => {
+      const message = error?.message ?? String(error ?? "unknown error");
+      void sessionPort.log(`Config load failed during extension attach: ${message}`, { level: "warning" });
+    });
   }
 
   function clearNotificationsForLifecycle(options = {}) {
@@ -144,7 +165,7 @@ export function createTapRuntimeService(options = {}) {
   } = createRuntimeHooks({
     streams,
     sessionPort,
-    loadPersistentConfig,
+    loadPersistentConfig: loadPersistentConfigOnce,
     stopAllEmitters,
     stopAllEmittersAndWait,
     shutdownSession,
@@ -236,7 +257,7 @@ export function createTapRuntimeService(options = {}) {
     appendStreamMessage,
     getSessionStartContext,
     getPromptContext,
-    loadPersistentConfig,
+    loadPersistentConfig: loadPersistentConfigOnce,
     listEmitters: emitterCapabilities.listEmitters,
     listStreams: streamCapabilities.listStreams,
     postToStream: streamCapabilities.postToStream,
